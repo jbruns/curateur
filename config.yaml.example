@@ -2,12 +2,8 @@
 # Copy this file to config.yaml and customize each section as needed.
 
 screenscraper:
-  # Developer credentials obtained from ScreenScraper (required)
-  dev_id: ""
-  dev_password: ""
-  # Software name registered with ScreenScraper (keep default unless instructed)
-  soft_name: "curateur"
-  # ScreenScraper user credentials (required)
+  # ScreenScraper user credentials (required - obtain from screenscraper.fr)
+  # Note: Developer credentials are hardcoded in the application
   user_id: ""
   user_password: ""
 

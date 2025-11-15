@@ -1,0 +1,41 @@
+screenscraper:
+  user_id: "test_user"
+  user_password: "test_password"
+
+paths:
+  roms: ./tests/fixtures/roms
+  media: ./tests/fixtures/media
+  gamelists: ./tests/fixtures/gamelists
+  es_systems: ./tests/fixtures/es_systems.xml
+
+scraping:
+  systems: []
+  media_types:
+    - covers
+    - screenshots
+    - titlescreens
+    - marquees
+  preferred_regions: [us, wor, eu, jp]
+  preferred_language: en
+  crc_size_limit: 1073741824
+  image_min_dimension: 50
+  skip_mode: false
+  update_mode: false
+  clean_mismatched_media: false
+  checkpoint_interval: 0
+  name_verification: normal
+
+api:
+  request_timeout: 30
+  max_retries: 3
+  retry_backoff_seconds: 5
+
+logging:
+  level: INFO
+  console: true
+  file: null
+
+runtime:
+  dry_run: false
+  enable_search_fallback: false
+  threads: 1

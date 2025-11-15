@@ -1,0 +1,12 @@
+# curateur - ScreenScraper ROM Metadata & Media Scraper
+# Python package dependencies
+
+# Core dependencies
+PyYAML>=6.0
+lxml>=4.9.0
+requests>=2.31.0
+Pillow>=10.0.0
+
+# Development dependencies (optional)
+pytest>=7.4.0
+pytest-cov>=4.1.0
