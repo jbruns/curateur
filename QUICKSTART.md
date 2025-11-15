@@ -54,6 +54,43 @@ for s in systems:
 "
 ```
 
+#### Test ROM Scanner
+```bash
+python demo_scanner.py
+# Shows all detected ROMs with types, sizes, and metadata
+```
+
+#### Test Specific System Scanning
+```bash
+python -c "
+from curateur.config.es_systems import parse_es_systems
+from curateur.scanner.rom_scanner import scan_system
+from pathlib import Path
+
+systems = parse_es_systems(Path('tests/fixtures/es_systems.xml'))
+nes = next(s for s in systems if s.platform == 'nes')
+roms = scan_system(nes)
+
+print(f'Found {len(roms)} NES ROMs')
+for rom in roms:
+    print(f'  - {rom.filename}')
+"
+```
+
+#### Test M3U Parser
+```bash
+python -c "
+from curateur.scanner.m3u_parser import parse_m3u
+from pathlib import Path
+
+m3u = Path('tests/fixtures/roms/psx/Sample Saga.m3u')
+discs = parse_m3u(m3u)
+print(f'M3U has {len(discs)} discs:')
+for i, disc in enumerate(discs, 1):
+    print(f'  Disc {i}: {disc.name}')
+"
+```
+
 #### Test Platform Mapping
 ```bash
 python -c "
@@ -92,15 +129,15 @@ cp config.yaml.example config.yaml
 python -m curateur.cli --config config.yaml --dry-run
 ```
 
-### Next Phase: ROM Scanner
+### Next Phase: API Client & Verification
 
-The next implementation phase will add ROM scanning functionality. See `TODO.md` Phase 2 for tasks.
+The next implementation phase will add ScreenScraper API integration. See `TODO.md` Phase 3 for tasks.
 
 Key files to implement:
-- `curateur/scanner/rom_scanner.py`: Main scanning logic
-- `curateur/scanner/m3u_parser.py`: M3U playlist handling
-- `curateur/scanner/disc_handler.py`: Disc subdirectory support
-- `curateur/scanner/hash_calculator.py`: CRC32 computation
+- `curateur/api/client.py`: ScreenScraper API client
+- `curateur/api/name_verifier.py`: Fuzzy name matching
+- `curateur/api/error_handler.py`: Unified error handling
+- `curateur/api/rate_limiter.py`: API rate limit management
 
 ### Development Tools
 
@@ -132,7 +169,14 @@ python -m curateur.tools.setup_dev_credentials --verify
 - Platform mapping
 - CLI framework
 
-🚧 **Phase 2 In Progress** - ROM scanner
-📋 **Phases 3-6 Planned** - API client, media downloader, gamelist generator, runtime
+✅ **Phase 2 Complete** - ROM scanner ready
+- Standard ROM file detection
+- M3U playlist parsing
+- Disc subdirectory handling
+- CRC32 hash calculation
+- Conflict detection
+
+🚧 **Phase 3 In Progress** - API client
+📋 **Phases 4-6 Planned** - Media downloader, gamelist generator, runtime
 
 See `IMPLEMENTATION_PLAN.md` for full architecture details.

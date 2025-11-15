@@ -152,13 +152,15 @@ pytest tests/
 - Platform-to-systemeid mapping
 - CLI framework with argument parsing
 
-### MVP Phase 2 - ROM Scanner (IN PROGRESS)
-- Standard ROM scanning
-- M3U playlist handling
+### MVP Phase 2 - ROM Scanner ✓ COMPLETED
+- Standard ROM file scanning
+- M3U playlist handling and parsing
 - Disc subdirectory support
-- CRC32 hash calculation
+- CRC32 hash calculation with size limits
+- ROM type detection and classification
+- Conflict detection between M3U and disc subdirs
 
-### MVP Phase 3 - API Client & Verification (PLANNED)
+### MVP Phase 3 - API Client & Verification (IN PROGRESS)
 - ScreenScraper API integration
 - Name verification and fuzzy matching
 - Error handling and retry logic

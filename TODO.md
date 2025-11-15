@@ -14,19 +14,29 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 - [x] Create project structure with proper package organization.
 - [x] Add `requirements.txt` and `pyproject.toml` for dependencies.
 
-## MVP Phase 2 - ROM Scanner (IN PROGRESS)
-- [ ] Implement `scan_system` covering standard ROMs, M3U parsing, disc subdirectories (AT-2.2–2.4).
-- [ ] Add conflict detection between M3U and disc subdirs (AT-2.4).
-- [ ] Implement CRC32 hash calculation with size limits.
-- [ ] Create ROM file type detection (standard, M3U, disc subdir).
-- [ ] Build M3U playlist parser.
-- [ ] Implement disc subdirectory validator.
+## MVP Phase 2 - ROM Scanner ✓ COMPLETED
+- [x] Implement `scan_system` covering standard ROMs, M3U parsing, disc subdirectories (AT-2.2–2.4).
+- [x] Add conflict detection between M3U and disc subdirs (AT-2.4).
+- [x] Implement CRC32 hash calculation with size limits.
+- [x] Create ROM file type detection (standard, M3U, disc subdir).
+- [x] Build M3U playlist parser.
+- [x] Implement disc subdirectory validator.
+- [x] Create comprehensive integration tests (7/7 passing).
 
-**Phase 1 Complete**: All core infrastructure implemented and tested. Integration test passing 6/6.
+**Phase 2 Complete**: All ROM scanning components implemented and tested with fixture data.
 
 ## MVP Phase 3 - API Client & Verification (NOT STARTED)
 - [ ] Implement `fetch_game_info` with unified error handling (AT-3.1, AT-3.3).
 - [ ] Build `name_verifier.verify_match` and similarity thresholds (AT-3.2).
+- [ ] Create API client with jeuInfos.php endpoint.
+- [ ] Implement retry logic with exponential backoff.
+- [ ] Add rate limiting (API-provided limits).
+- [ ] Parse and validate API XML responses.
+- [ ] Create API integration tests.
+
+**Phase 1 Complete**: Core infrastructure (6/6 tests passing).  
+**Phase 2 Complete**: ROM scanner (7/7 tests passing).  
+**End-to-End Test**: Phases 1+2 integration verified ✓
 
 ## MVP Phase 4 - Media Downloader (NOT STARTED)
 - [ ] Implement `download_media`, region selection, and image verification (AT-4.1–4.3).
