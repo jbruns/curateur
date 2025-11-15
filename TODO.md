@@ -25,17 +25,20 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 
 **Phase 2 Complete**: All ROM scanning components implemented and tested with fixture data.
 
-## MVP Phase 3 - API Client & Verification (NOT STARTED)
-- [ ] Implement `fetch_game_info` with unified error handling (AT-3.1, AT-3.3).
-- [ ] Build `name_verifier.verify_match` and similarity thresholds (AT-3.2).
-- [ ] Create API client with jeuInfos.php endpoint.
-- [ ] Implement retry logic with exponential backoff.
-- [ ] Add rate limiting (API-provided limits).
-- [ ] Parse and validate API XML responses.
-- [ ] Create API integration tests.
+## MVP Phase 3 - API Client & Verification ✓ COMPLETED
+- [x] Implement `fetch_game_info` with unified error handling (AT-3.1, AT-3.3).
+- [x] Build `name_verifier.verify_match` and similarity thresholds (AT-3.2).
+- [x] Create API client with jeuInfos.php endpoint.
+- [x] Implement retry logic with exponential backoff.
+- [x] Add rate limiting (API-provided limits).
+- [x] Parse and validate API XML responses.
+- [x] Create API integration tests (9/9 passing).
+
+**Phase 3 Complete**: ScreenScraper API client with error handling, rate limiting, name verification, and response parsing.
 
 **Phase 1 Complete**: Core infrastructure (6/6 tests passing).  
 **Phase 2 Complete**: ROM scanner (7/7 tests passing).  
+**Phase 3 Complete**: API client (9/9 tests passing).  
 **End-to-End Test**: Phases 1+2 integration verified ✓
 
 ## MVP Phase 4 - Media Downloader (NOT STARTED)
