@@ -17,13 +17,14 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 
 ## Media Downloader
 - [ ] Implement `download_media`, region selection, and image verification (AT-4.1–4.3).
-- [ ] Milestone 2: `decommission.py` handling for cleanup folder (AT-4.4).
+- [ ] Milestone 2: `decommission.py` handling for cleanup folder (AT-M2B.1 / AT-4.4).
 
 ## Gamelist Generator
 - [ ] Implement `write_gamelist` to meet AT-5.1–5.3.
 
 ## Runtime
 - [ ] Implement `ProgressTracker` + `ErrorLogger` integration (AT-6.1–6.2).
-- [ ] Implement CLI flags (`--dry-run`, `--systems`, `--update`, `--skip-scraped`) (AT-6.3–6.4).
+- [ ] Implement MVP CLI flags (`--dry-run`, `--systems`) (AT-6.3).
+- [ ] Milestone 2: CLI flags tied to skip/update (`--update`, `--skip-scraped`) (AT-M2A.2 / AT-6.4).
 
 Track completion with acceptance tests in `tests/ACCEPTANCE_TESTS.md`.

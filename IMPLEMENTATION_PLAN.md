@@ -483,6 +483,7 @@ Simple decision table for determining whether to process, skip, or partially upd
 - Milestone 2 will implement skip/update logic
 - "Enabled Media" refers to media types listed in config `media_types`
 - Update mode (Milestone 2) uses hash verification to detect changed media
+- Configuration flags such as `skip_scraped`, `update_mode`, `clean_mismatched_media`, and `enable_search_fallback` are present in `config.yaml` for future compatibility but have no effect in MVP builds.
 
 **Flowchart (Milestone 2):**
 ```
@@ -689,9 +690,9 @@ For each game with successful API response:
        Note: For M3U playlists, use M3U basename (not disc 1 basename)
        Note: For disc subdirectories, use directory name (not contained file name)
        Examples:
-         - M3U: "Skies of Arcadia.m3u" → "covers/Skies of Arcadia.jpg"
-         - Disc subdir: "Skies of Arcadia (Disc 1).cue" (directory name) → "covers/Skies of Arcadia (Disc 1).cue.jpg"
-         - Standard: "Super Mario.zip" → "covers/Super Mario.jpg"
+         - M3U: "Skies of Aleria.m3u" → "covers/Skies of Aleria.jpg"
+         - Disc subdir: "Skies of Aleria (Disc 1).cue" (directory name) → "covers/Skies of Aleria (Disc 1).cue.jpg"
+         - Standard: "Star Quest.zip" → "covers/Star Quest.jpg"
     
     7. Verify image files (for image media types only):
        - Check if file is a valid image format (JPEG, PNG, GIF, WebP, etc.)
@@ -724,11 +725,11 @@ For each game with successful API response:
            <path>./relative/path/to/rom</path>
            Notes on path handling:
              - For M3U playlists: path references the M3U file
-               Example: "./Skies of Arcadia.m3u"
+               Example: "./Skies of Aleria.m3u"
              - For disc subdirectories: path references the directory name without a trailing slash (treat it like a file)
-               Example: "./Skies of Arcadia (Disc 1).cue"
+               Example: "./Skies of Aleria (Disc 1).cue"
              - For standard ROMs: path references the file
-               Example: "./Super Mario.zip"
+               Example: "./Star Quest.zip"
            <name>Game Name</name>
            <desc>Description...</desc>
            <rating>0.0-1.0</rating>
@@ -1141,9 +1142,9 @@ def detect_regions_from_filename(filename):
     Detect ALL regions from ROM filename (handles multi-region ROMs)
     
     Example filenames:
-    - "Mike Tyson's Punch-Out!! (Japan, USA) (En) (Rev 1)" → ['jp', 'us']
-    - "Cruisin' USA (World)" → ['wor']  (game title doesn't trigger false match)
-    - "Legend of Zelda (USA)" → ['us']
+    - "Galactic Knockout!! (Japan, USA) (En) (Rev 1)" → ['jp', 'us']
+    - "Drift Legends (World)" → ['wor']  (game title doesn't trigger false match)
+    - "Echoes of Verdant (USA)" → ['us']
     
     Args:
         filename: ROM filename to parse
@@ -1163,7 +1164,7 @@ def detect_regions_from_filename(filename):
         for region_code, patterns in REGION_PATTERNS.items():
             for pattern in patterns:
                 # Use word boundary matching to avoid partial matches
-                # e.g., "USA" in title "Cruisin' USA" won't match outside parens
+                # e.g., "USA" in title "Drift Legends" won't match outside parens
                 if re.search(r'\b' + re.escape(pattern) + r'\b', group, re.IGNORECASE):
                     if region_code not in detected_regions:
                         detected_regions.append(region_code)
@@ -1270,7 +1271,7 @@ def select_metadata_language(game_data, preferred_language='en'):
 **Example Selection Logic:**
 
 ```
-ROM: "Mike Tyson's Punch-Out!! (Japan, USA) (En) (Rev 1).nes"
+ROM: "Galactic Knockout!! (Japan, USA) (En) (Rev 1).nes"
 Detected regions: ['jp', 'us']
 Config preferred_regions: ['us', 'wor', 'eu', 'jp']
 
@@ -1285,7 +1286,7 @@ If API only has 'br' region media → skip ROM (no match in priority list)
 ```
 
 ```
-ROM: "Cruisin' USA (World).n64"
+ROM: "Drift Legends (World).n64"
 Detected regions: ['wor']
 Config preferred_regions: ['us', 'wor', 'eu', 'jp']
 
@@ -1299,7 +1300,7 @@ Note: "USA" in game title is not detected (only parenthetical regions matched)
 ## Game Name Verification
 
 ### Overview
-To prevent ScreenScraper from returning incorrect game matches (e.g., "ZZZ Notgame" when expecting "The Legend of Zelda"), the tool performs fuzzy name matching between the ROM filename and the API response game name.
+To prevent ScreenScraper from returning incorrect game matches (e.g., "ZZZ Notgame" when expecting "Echoes of Verdant"), the tool performs fuzzy name matching between the ROM filename and the API response game name.
 
 ### Verification Algorithm
 
@@ -1340,8 +1341,8 @@ def calculate_name_similarity(filename, api_game_name):
     Calculate similarity ratio between ROM filename and API game name
     
     Args:
-        filename: ROM filename (e.g., "Legend of Zelda, The (USA).zip")
-        api_game_name: Game name from API (e.g., "The Legend of Zelda")
+        filename: ROM filename (e.g., "Echoes of Verdant, The (USA).zip")
+        api_game_name: Game name from API (e.g., "Echoes of Verdant")
     
     Returns:
         float: Similarity ratio between 0.0 and 1.0
@@ -1383,8 +1384,8 @@ def handle_special_cases(filename, api_game_name):
     Handle special naming conventions that may cause false negatives
     
     Examples:
-    - "Zelda II" vs "The Adventure of Link"
-    - "SMB" vs "Super Mario Bros"
+    - "Verdant Echo II" vs "Voyage of Liora"
+    - "SMB" vs "Star Quest Heroes"
     - Japanese names vs English names
     """
     # Extract key words from both names
@@ -1550,9 +1551,9 @@ def should_retry(error):
 
 ```
 # Successful validation and parsing
-2025-11-13 14:30:10 [T1] Super Mario Bros (USA).zip (NES)
+2025-11-13 14:30:10 [T1] Star Quest Heroes (USA).zip (NES)
   └─ API request sent (CRC: 50ABC90A, Size: 40KB)
-2025-11-13 14:30:11 [T1] Super Mario Bros (USA).zip (NES)
+2025-11-13 14:30:11 [T1] Star Quest Heroes (USA).zip (NES)
   └─ ✓ Response validated (XML, 12KB)
   └─ Match found (ID: 1234, Rating: 4.8/5)
 
@@ -1572,9 +1573,9 @@ def should_retry(error):
   └─ Skipping after 3 failed attempts
 
 # Wrong Content-Type but valid XML
-2025-11-13 14:40:10 [T1] Zelda.zip (NES)
+2025-11-13 14:40:10 [T1] Verdant Echo.zip (NES)
   └─ API request sent (CRC: 3B123456, Size: 128KB)
-2025-11-13 14:40:11 [T1] Zelda.zip (NES)
+2025-11-13 14:40:11 [T1] Verdant Echo.zip (NES)
   └─ ⚠ Content-Type mismatch: text/html (expected XML)
   └─ ✓ XML parsing successful anyway
   └─ Match found (ID: 5678, Rating: 4.9/5)
@@ -1653,17 +1654,17 @@ def process_api_response(rom_info, api_response, config):
 
 ```
 # Successful verification
-2025-11-13 14:45:10 [T1] Legend of Zelda, The (USA).zip (NES)
+2025-11-13 14:45:10 [T1] Echoes of Verdant, The (USA).zip (NES)
   └─ Match found (ID: 1234, Rating: 4.9/5)
   └─ ✓ Name verification: Good match (85%)
-  └─   ROM: Legend of Zelda, The (USA).zip
-  └─   API: The Legend of Zelda
+  └─   ROM: Echoes of Verdant, The (USA).zip
+  └─   API: Echoes of Verdant
 
 # Failed verification
-2025-11-13 14:45:15 [T1] Zelda.zip (NES)
+2025-11-13 14:45:15 [T1] Verdant Echo.zip (NES)
   └─ Match found (ID: 9999, Rating: 2.1/5)
   └─ ✗ Name verification failed: Poor match (15%, threshold: 60%)
-  └─   ROM: Zelda.zip
+  └─   ROM: Verdant Echo.zip
   └─   API: ZZZ Notgame
   └─ ⚠ Skipping ROM due to name mismatch
 
@@ -1672,7 +1673,7 @@ def process_api_response(rom_info, api_response, config):
   └─ Match found (ID: 5678, Rating: 4.8/5)
   └─ ⚠ Name verification: Special case accepted
   └─   ROM: SMB3.zip
-  └─   API: Super Mario Bros. 3
+  └─   API: Star Quest Heroes III
   └─   Similarity: 45% (below threshold but word overlap detected)
 ```
 
@@ -1706,8 +1707,8 @@ Many game systems support multi-disc games (PlayStation, Sega CD, PC Engine CD, 
 M3U files are simple text playlists listing disc files:
 ```
 # Game Title - Disc 1
-./.multidisc/Skies of Arcadia (Disc 1).cue
-./.multidisc/Skies of Arcadia (Disc 2).cue
+./.multidisc/Skies of Aleria (Disc 1).cue
+./.multidisc/Skies of Aleria (Disc 2).cue
 ```
 
 ### Detection and Processing
@@ -1777,20 +1778,20 @@ def process_m3u_file(m3u_path):
 - Example structure:
   ```
   roms/psx/
-    Skies of Arcadia.m3u
+    Skies of Aleria.m3u
     .multidisc/
-      Skies of Arcadia (Disc 1).cue
-      Skies of Arcadia (Disc 2).cue
+      Skies of Aleria (Disc 1).cue
+      Skies of Aleria (Disc 2).cue
   
   downloaded_media/psx/
-    covers/Skies of Arcadia.jpg       # Named for M3U
-    screenshots/Skies of Arcadia.png  # Named for M3U
-    videos/Skies of Arcadia.mp4       # Named for M3U
+    covers/Skies of Aleria.jpg       # Named for M3U
+    screenshots/Skies of Aleria.png  # Named for M3U
+    videos/Skies of Aleria.mp4       # Named for M3U
   
   gamelists/psx/gamelist.xml:
     <game id="12345">
-      <path>./Skies of Arcadia.m3u</path>  # References M3U
-      <name>Skies of Arcadia</name>
+      <path>./Skies of Aleria.m3u</path>  # References M3U
+      <name>Skies of Aleria</name>
     </game>
   ```
 
@@ -1803,16 +1804,16 @@ def process_m3u_file(m3u_path):
 
 **6. Logging Examples**
 ```
-2025-11-13 14:25:10 [T1] Skies of Arcadia (PSX)
+2025-11-13 14:25:10 [T1] Skies of Aleria (PSX)
   └─ M3U playlist detected, using disc 1 for identification
-2025-11-13 14:25:10 [T1] Skies of Arcadia (PSX)
-  └─ Disc 1: .multidisc/Skies of Arcadia (Disc 1).cue
-2025-11-13 14:25:11 [T1] Skies of Arcadia (PSX)
+2025-11-13 14:25:10 [T1] Skies of Aleria (PSX)
+  └─ Disc 1: .multidisc/Skies of Aleria (Disc 1).cue
+2025-11-13 14:25:11 [T1] Skies of Aleria (PSX)
   └─ API request sent (CRC: 50ABC90A, Size: 750MB, Disc 1)
-2025-11-13 14:25:12 [T1] Skies of Arcadia (PSX)
+2025-11-13 14:25:12 [T1] Skies of Aleria (PSX)
   └─ Match found (ID: 12345, Multi-disc game)
-2025-11-13 14:25:13 [T1] Skies of Arcadia (PSX)
-  └─ Saving media with M3U basename: Skies of Arcadia.jpg
+2025-11-13 14:25:13 [T1] Skies of Aleria (PSX)
+  └─ Saving media with M3U basename: Skies of Aleria.jpg
 ```
 
 ## Disc Subdirectory Handling
@@ -1824,9 +1825,9 @@ ES-DE supports organizing disc-based games in subdirectories where the directory
 Disc subdirectories follow this pattern:
 ```
 roms/dreamcast/
-  Skies of Arcadia (Disc 1).cue/       # Directory name = file to load
-    Skies of Arcadia (Disc 1).cue      # File matching directory name
-    Skies of Arcadia (Disc 1).gdi
+  Skies of Aleria (Disc 1).cue/       # Directory name = file to load
+    Skies of Aleria (Disc 1).cue      # File matching directory name
+    Skies of Aleria (Disc 1).gdi
     track01.bin
     track02.bin
     ...
@@ -1908,21 +1909,21 @@ def process_disc_subdirectory(subdir_path):
 - Example structure:
   ```
   roms/dreamcast/
-    Skies of Arcadia (Disc 1).cue/      # Directory on disk; gamelist stores without trailing /
-      Skies of Arcadia (Disc 1).cue
-      Skies of Arcadia (Disc 1).gdi
+    Skies of Aleria (Disc 1).cue/      # Directory on disk; gamelist stores without trailing /
+      Skies of Aleria (Disc 1).cue
+      Skies of Aleria (Disc 1).gdi
       track01.bin
       track02.bin
   
   downloaded_media/dreamcast/
-    covers/Skies of Arcadia (Disc 1).cue.jpg       # Named for directory
-    screenshots/Skies of Arcadia (Disc 1).cue.png  # Named for directory
-    videos/Skies of Arcadia (Disc 1).cue.mp4       # Named for directory
+    covers/Skies of Aleria (Disc 1).cue.jpg       # Named for directory
+    screenshots/Skies of Aleria (Disc 1).cue.png  # Named for directory
+    videos/Skies of Aleria (Disc 1).cue.mp4       # Named for directory
   
   gamelists/dreamcast/gamelist.xml:
     <game id="12345">
-      <path>./Skies of Arcadia (Disc 1).cue</path>  # Stored without trailing /
-      <name>Skies of Arcadia</name>
+      <path>./Skies of Aleria (Disc 1).cue</path>  # Stored without trailing /
+      <name>Skies of Aleria</name>
     </game>
   ```
 
@@ -1935,16 +1936,16 @@ def process_disc_subdirectory(subdir_path):
 
 **6. Logging Examples**
 ```
-2025-11-13 14:25:10 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+2025-11-13 14:25:10 [T1] Skies of Aleria (Disc 1).cue (Dreamcast)
   └─ Disc subdirectory detected, using contained file for identification
-2025-11-13 14:25:10 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
-  └─ Contained file: Skies of Arcadia (Disc 1).cue (750MB)
-2025-11-13 14:25:11 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+2025-11-13 14:25:10 [T1] Skies of Aleria (Disc 1).cue (Dreamcast)
+  └─ Contained file: Skies of Aleria (Disc 1).cue (750MB)
+2025-11-13 14:25:11 [T1] Skies of Aleria (Disc 1).cue (Dreamcast)
   └─ API request sent (CRC: A1B2C3D4, Size: 750MB)
-2025-11-13 14:25:12 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+2025-11-13 14:25:12 [T1] Skies of Aleria (Disc 1).cue (Dreamcast)
   └─ Match found (ID: 54321, Multi-disc game)
-2025-11-13 14:25:13 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
-  └─ Saving media with directory basename: Skies of Arcadia (Disc 1).cue.jpg
+2025-11-13 14:25:13 [T1] Skies of Aleria (Disc 1).cue (Dreamcast)
+  └─ Saving media with directory basename: Skies of Aleria (Disc 1).cue.jpg
 ```
 
 **7. Interaction with M3U Files**
@@ -2030,32 +2031,32 @@ Explicit file naming rules for media and gamelist paths:
 
 | ROM Type | ROM Path | Basename for Media | Gamelist <path> | Example Media Path |
 |----------|----------|-------------------|----------------|--------------|
-| **Standard ROM** | `./Super Mario Bros (USA).zip` | `Super Mario Bros (USA)` | `./Super Mario Bros (USA).zip` | `downloaded_media/nes/covers/Super Mario Bros (USA).jpg` |
+| **Standard ROM** | `./Star Quest Heroes (USA).zip` | `Star Quest Heroes (USA)` | `./Star Quest Heroes (USA).zip` | `downloaded_media/nes/covers/Star Quest Heroes (USA).jpg` |
 | **M3U Playlist** | `./Final Fantasy VII.m3u` | `Final Fantasy VII` | `./Final Fantasy VII.m3u` | `media/psx/covers/Final Fantasy VII.jpg` |
-| **Disc Subdirectory** | `./Skies of Arcadia (Disc 1).cue` | `Skies of Arcadia (Disc 1).cue` | `./Skies of Arcadia (Disc 1).cue` | `downloaded_media/dreamcast/covers/Skies of Arcadia (Disc 1).cue.jpg` |
+| **Disc Subdirectory** | `./Skies of Aleria (Disc 1).cue` | `Skies of Aleria (Disc 1).cue` | `./Skies of Aleria (Disc 1).cue` | `downloaded_media/dreamcast/covers/Skies of Aleria (Disc 1).cue.jpg` |
 
 #### Detailed Examples
 
 **Example 1: Standard ROM**
 ```
 ROM File:
-  roms/nes/Super Mario Bros (USA).zip
+  roms/nes/Star Quest Heroes (USA).zip
 
 API Query Uses:
-  - Filename: "Super Mario Bros (USA).zip"
+  - Filename: "Star Quest Heroes (USA).zip"
   - File size and CRC hash
 
 Gamelist Entry:
   <game id="1234" source="ScreenScraper.fr">
-    <path>./Super Mario Bros (USA).zip</path>
-    <name>Super Mario Bros.</name>
+    <path>./Star Quest Heroes (USA).zip</path>
+    <name>Star Quest Heroes.</name>
   </game>
 
 Media Files:
-  downloaded_media/nes/covers/Super Mario Bros (USA).jpg
-  downloaded_media/nes/screenshots/Super Mario Bros (USA).png
-  downloaded_media/nes/titlescreens/Super Mario Bros (USA).png
-  downloaded_media/nes/marquees/Super Mario Bros (USA).png
+  downloaded_media/nes/covers/Star Quest Heroes (USA).jpg
+  downloaded_media/nes/screenshots/Star Quest Heroes (USA).png
+  downloaded_media/nes/titlescreens/Star Quest Heroes (USA).png
+  downloaded_media/nes/marquees/Star Quest Heroes (USA).png
 ```
 
 **Example 2: M3U Playlist (Multi-disc)**
@@ -2091,21 +2092,21 @@ Media Files (all use M3U basename):
 **Example 3: Disc Subdirectory**
 ```
 ROM Files:
-  roms/dreamcast/Skies of Arcadia (Disc 1).cue/    <!-- Directory -->
-    Skies of Arcadia (Disc 1).cue                   <!-- Matching file inside -->
+  roms/dreamcast/Skies of Aleria (Disc 1).cue/    <!-- Directory -->
+    Skies of Aleria (Disc 1).cue                   <!-- Matching file inside -->
 
 API Query: Uses contained file's name, size, and CRC hash
-Basename for Media: Directory name (Skies of Arcadia (Disc 1).cue)
+Basename for Media: Directory name (Skies of Aleria (Disc 1).cue)
 
 Gamelist Entry:
   <game id="9012" source="ScreenScraper.fr">
-    <path>./Skies of Arcadia (Disc 1).cue</path>
-    <name>Skies of Arcadia</name>
+    <path>./Skies of Aleria (Disc 1).cue</path>
+    <name>Skies of Aleria</name>
   </game>
 
 Media Files: Use directory name as basename (not contained filename)
-  downloaded_media/dreamcast/covers/Skies of Arcadia (Disc 1).cue.jpg
-  downloaded_media/dreamcast/screenshots/Skies of Arcadia (Disc 1).cue.png
+  downloaded_media/dreamcast/covers/Skies of Aleria (Disc 1).cue.jpg
+  downloaded_media/dreamcast/screenshots/Skies of Aleria (Disc 1).cue.png
 ```
 
 **Note:** See [Disc Subdirectory Handling](#disc-subdirectory-handling) section for complete implementation details including detection, validation, and error handling.
@@ -2173,13 +2174,13 @@ The tool will support intelligent re-run behavior to minimize API usage and avoi
 
 **Logging Examples**:
 ```
-2025-11-13 14:30:15 [T1] Super Mario Bros (NES)
+2025-11-13 14:30:15 [T1] Star Quest Heroes (NES)
   └─ ✓ Skipped (metadata + 5/5 media present)
-2025-11-13 14:30:15 [T1] The Legend of Zelda (NES)
+2025-11-13 14:30:15 [T1] Echoes of Verdant (NES)
   └─ ⟳ Missing 2 media types, downloading...
-2025-11-13 14:30:16 [T1] Metroid (NES)
+2025-11-13 14:30:16 [T1] Nebula Runner (NES)
   └─ ℹ New ROM detected, queuing for scraping
-2025-11-13 14:30:16 [T1] Super Metroid (SNES)
+2025-11-13 14:30:16 [T1] Nebula Runner Prime (SNES)
   └─ ✓ Cleaned 1 media type not in enabled list (manuals)
 ```
 
@@ -2293,17 +2294,17 @@ The tool will support intelligent re-run behavior to minimize API usage and avoi
    
    **Logging Example**:
    ```
-   2025-11-13 14:35:20 [T1] Mega Man X (SNES)
+   2025-11-13 14:35:20 [T1] Alpha Man Y (SNES)
      └─ ⟳ Update mode: checking for changes...
-   2025-11-13 14:35:21 [T1] Mega Man X (SNES)
+   2025-11-13 14:35:21 [T1] Alpha Man Y (SNES)
      └─ ✓ Metadata current (no changes)
-   2025-11-13 14:35:21 [T1] Mega Man X (SNES)
-     └─ ✓ Media verified: covers/Mega Man X.jpg (size + CRC match)
-   2025-11-13 14:35:21 [T1] Mega Man X (SNES)
-     └─ ⟳ Media changed: screenshots/Mega Man X.png (CRC mismatch)
-   2025-11-13 14:35:22 [T1] Mega Man X (SNES)
-     └─ ⚠ Media decommissioned: marquees/Mega Man X.png (no longer available)
-   2025-11-13 14:35:23 [T1] Mega Man X (SNES)
+   2025-11-13 14:35:21 [T1] Alpha Man Y (SNES)
+     └─ ✓ Media verified: covers/Alpha Man Y.jpg (size + CRC match)
+   2025-11-13 14:35:21 [T1] Alpha Man Y (SNES)
+     └─ ⟳ Media changed: screenshots/Alpha Man Y.png (CRC mismatch)
+   2025-11-13 14:35:22 [T1] Alpha Man Y (SNES)
+     └─ ⚠ Media decommissioned: marquees/Alpha Man Y.png (no longer available)
+   2025-11-13 14:35:23 [T1] Alpha Man Y (SNES)
      └─ ✓ Update complete (1 media downloaded, 1 decommissioned)
    
    2025-11-13 14:36:10 [T2] Rare Game (Genesis)
@@ -2326,6 +2327,8 @@ The tool will support intelligent re-run behavior to minimize API usage and avoi
 
 ### Configuration Settings
 
+> **Note:** The sample configuration below includes future-looking toggles for Milestone 2 (skip/update, checkpointing, search fallback, extended media verification). These keys are placeholders during MVP runs—they are read but ignored by the code path. Keeping them visible now avoids reworking user configs when Milestone 2 ships.
+
 New configuration options:
 
 ```yaml
@@ -2338,13 +2341,13 @@ paths:
 
 scraping:
   crc_size_limit: 1073741824   # 1GB limit for CRC hashing (files larger than this skip CRC)
-  # Skip mode behavior
+  # Skip mode behavior (Milestone 2 placeholder — no effect during MVP)
   skip_scraped: true              # Skip games with metadata + all media
   skip_existing_media: true       # Skip individual media files if present
   clean_mismatched_media: false   # Delete media types not in enabled list
   gamelist_integrity_threshold: 0.95  # Warn if < 95% ROMs present
   
-  # Update mode behavior
+  # Update mode behavior (Milestone 2 placeholder — no effect during MVP)
   update_mode: false              # Enable hash-based verification and updates
   hash_verification_method: "auto"  # "auto", "size", "crc", "sha1"
   
@@ -2359,16 +2362,16 @@ scraping:
   prompt_on_mismatch: false    # Prompt user when names don't match
   skip_on_mismatch: true       # Skip ROM if name verification fails
   
-  # Search fallback (jeuRecherche.php)
+  # Search fallback (Milestone 2 placeholder — MVP ignores this toggle)
   enable_search_fallback: false     # Enable text search when hash matching fails
   search_confidence_threshold: 0.98 # Minimum confidence score (0.0-1.0, default: 98%)
   
   # Media verification
   image_verification: true     # Enable image validation
   image_min_dimension: 50      # Minimum width/height in pixels
-  pdf_verification: true       # Enable PDF validation
-  video_verification: true     # Enable video validation
-  retry_invalid_media: true    # Retry download if validation fails
+  pdf_verification: true       # Enable PDF validation (Milestone 2)
+  video_verification: true     # Enable video validation (Milestone 2)
+  retry_invalid_media: true    # Retry download if validation fails (Milestone 2)
   
   # Checkpoint system (Milestone 2)
   checkpoint_interval: 100     # Save progress every N ROMs (0 = disable)
@@ -2392,6 +2395,8 @@ logging:
 # - Checkpoint files: <gamelists>/<system>/.curateur_checkpoint.json
 # - Error summary logs: <gamelists>/<system>/curateur_summary.log
 # - Decommissioned media: <media>/CLEANUP/<system>/<media_type>/
+
+This configuration snapshot is the authoritative reference for MVP delivery. When Milestone 2 launches, a dedicated `config.milestone2.example` (and updated validator schema) will replace the MVP-era settings so that expanded media types, skip/update behavior, and checkpointing are enforced end-to-end.
 ```
 
 ### Configuration Validation
@@ -2490,6 +2495,7 @@ def validate_config(config):
         log_error("Please fix the configuration errors and try again.")
         raise ConfigValidationError(f"Found {len(errors)} configuration error(s)")
     
+    log_info("Configuration validated against MVP schema. Note: Milestone 2 will ship with an updated schema/validator to cover skip/update, extra media types, and checkpointing features.")
     log_info("Configuration validation passed")
 
 # Usage at startup
@@ -2512,7 +2518,7 @@ def main():
 2025-11-13 14:00:00 [ERROR] ======================================================================
 2025-11-13 14:00:00 [ERROR]   1. Missing required credential: screenscraper.user_password
 2025-11-13 14:00:00 [ERROR]   2. Path does not exist: paths.roms = /nonexistent/path
-2025-11-13 14:00:00 [ERROR]   3. Invalid media type: video-hd. Valid types: 3dboxes, backcovers, covers, fanart, manuals, marquees, miximages, physicalmedia, screenshots, titlescreens, videos
+2025-11-13 14:00:00 [ERROR]   3. Invalid media type: video-hd. MVP supports: covers, marquees, screenshots, titlescreens. Milestone 2 adds: 3dboxes, backcovers, fanart, manuals, miximages, physicalmedia, videos
 2025-11-13 14:00:00 [ERROR] ======================================================================
 2025-11-13 14:00:00 [ERROR] Please fix the configuration errors and try again.
 2025-11-13 14:00:00 [INFO] Note: Developer credentials are hardcoded and do not need configuration
@@ -2557,7 +2563,6 @@ Detailed tasks for each phase follow below.
 
 2. Configuration management
    - YAML config parser
-   - Environment variable support
    - Validation of required settings
 
 3. es_systems.xml parser
@@ -2868,7 +2873,7 @@ curateur/
 
 | Package / Module | Responsibility | Public API |
 |------------------|----------------|-----------|
-| `curateur.config.loader` | Load user config (from `config.yaml` derived via `config.yaml.example`), apply environment overrides, and produce runtime config dict | `load_config(path: str | Path) -> dict` |
+| `curateur.config.loader` | Load user config (from `config.yaml` derived via `config.yaml.example`), and produce runtime config dict | `load_config(path: str | Path) -> dict` |
 | `curateur.config.validator` | Validate configuration schema paths, credentials, and feature flags | `validate_config(config: dict) -> None` (raises `ConfigValidationError`) |
 | `curateur.parsers.es_systems` | Parse `es_systems.xml` into structured system definitions | `parse_es_systems(path: str | Path) -> list[SystemDefinition]` |
 | `curateur.scanner.rom_scanner` | Traverse ROM directories, detect standard/M3U/disc-subdir items, and emit `RomEntry` records | `scan_system(system: SystemDefinition, config: Config) -> list[RomEntry]` |
@@ -2890,7 +2895,7 @@ import yaml
 
 def load_config(path: str | Path) -> Dict[str, Any]:
     """
-    Load YAML config, merge environment overrides, and return a dict ready for validation.
+    Load YAML config and return a dict ready for validation.
     Raises ConfigValidationError if the file cannot be read or parsed.
     """
 ```
@@ -3127,7 +3132,7 @@ The MVP uses simple sequential logging with timestamps and clear status indicato
 2025-11-13 14:23:45 [INFO] Found 150 ROMs to process
 2025-11-13 14:23:45 [INFO] API Rate Limits: 20 req/min, 10000 req/day, 1 thread
 
-2025-11-13 14:23:46 [INFO] [1/150] Super Mario Bros (USA).zip
+2025-11-13 14:23:46 [INFO] [1/150] Star Quest Heroes (USA).zip
 2025-11-13 14:23:46 [DEBUG]   API request sent (CRC: 50ABC90A, Size: 40KB)
 2025-11-13 14:23:47 [INFO]   ✓ Match found (ID: 1234, Rating: 4.8/5)
 2025-11-13 14:23:47 [INFO]   Downloading cover (US region, PNG, 234KB)
@@ -3136,7 +3141,7 @@ The MVP uses simple sequential logging with timestamps and clear status indicato
 2025-11-13 14:23:49 [INFO]   ✓ Image verified: Valid PNG image (256x224)
 2025-11-13 14:23:49 [INFO]   ✓ Complete (2/2 media files downloaded)
 
-2025-11-13 14:23:50 [INFO] [2/150] The Legend of Zelda (USA).zip
+2025-11-13 14:23:50 [INFO] [2/150] Echoes of Verdant (USA).zip
 2025-11-13 14:23:50 [DEBUG]   API request sent (CRC: 3B123456, Size: 128KB)
 2025-11-13 14:23:51 [INFO]   ✓ Match found (ID: 5678, Rating: 4.9/5)
 2025-11-13 14:23:51 [INFO]   Downloading cover (US region, PNG, 245KB)
@@ -3302,8 +3307,8 @@ scraping:
   "system_id": 3,
   "timestamp": "2025-11-13T15:30:45Z",
   "processed_roms": [
-    "Super Mario Bros (USA).zip",
-    "The Legend of Zelda (USA).zip",
+    "Star Quest Heroes (USA).zip",
+    "Echoes of Verdant (USA).zip",
     "..."
   ],
   "failed_roms": [
@@ -3457,7 +3462,7 @@ def log_api_request(url, params):
 #     'ssid': 'myuser',                  # populated from screenscraper.user_id
 #     'sspassword': '***REDACTED***',    # populated from screenscraper.user_password
 #     'systemeid': 3,
-#     'romnom': 'Super Mario Bros.zip'
+#     'romnom': 'Star Quest Heroes.zip'
 #   }
 
 def log_config(config):
