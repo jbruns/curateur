@@ -41,7 +41,7 @@ def parse_es_systems(xml_path: Path) -> Dict[str, str]:
     mapping = {}
     
     for system_elem in root.findall('system'):
-        platform_elem = system_elem.find('platformid')
+        platform_elem = system_elem.find('platform')
         fullname_elem = system_elem.find('fullname')
         
         if platform_elem is None or fullname_elem is None:

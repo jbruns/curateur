@@ -9,7 +9,7 @@ from curateur import __version__
 from curateur.config.loader import load_config, ConfigError
 from curateur.config.validator import validate_config, ValidationError
 from curateur.config.es_systems import parse_es_systems
-from curateur.api.client import APIClient
+from curateur.api.client import ScreenScraperClient
 from curateur.workflow.orchestrator import WorkflowOrchestrator
 from curateur.workflow.progress import ProgressTracker, ErrorLogger
 
@@ -160,13 +160,7 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
         systems = all_systems
     
     # Initialize components
-    api_client = APIClient(
-        devid=config['screenscraper']['devid'],
-        devpassword=config['screenscraper']['devpassword'],
-        user_id=config['screenscraper']['user_id'],
-        user_password=config['screenscraper']['user_password'],
-        softname=f"curateur_{__version__}"
-    )
+    api_client = ScreenScraperClient(config)
     
     orchestrator = WorkflowOrchestrator(
         api_client=api_client,

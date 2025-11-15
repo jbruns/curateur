@@ -14,8 +14,8 @@ from dataclasses import dataclass
 
 from ..config.es_systems import SystemDefinition
 from ..scanner.rom_scanner import scan_system
-from ..api.client import APIClient
-from ..media.downloader import MediaDownloader
+from ..api.client import ScreenScraperClient
+from ..media.media_downloader import MediaDownloader
 from ..gamelist.generator import GamelistGenerator
 from ..gamelist.game_entry import GameEntry
 
@@ -56,7 +56,7 @@ class WorkflowOrchestrator:
     
     def __init__(
         self,
-        api_client: APIClient,
+        api_client: ScreenScraperClient,
         rom_directory: Path,
         media_directory: Path,
         gamelist_directory: Path,

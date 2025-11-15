@@ -187,7 +187,7 @@ def run_scraper(config, args):
 - **File Types:** Handles standard ROMs, M3U, disc subdirectories
 
 ### Phase 3 → Phase 6
-- **API Queries:** Uses `APIClient.get_game_info()`
+- **API Queries:** Uses `ScreenScraperClient.get_game_info()`
 - **Rate Limiting:** Respects API rate limits automatically
 - **Error Handling:** Retry logic for transient failures
 
