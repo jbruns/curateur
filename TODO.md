@@ -40,7 +40,8 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 **Phase 2 Complete**: ROM scanner (7/7 tests passing).  
 **Phase 3 Complete**: API client (9/9 tests passing).  
 **Phase 4 Complete**: Media downloader (8/8 tests passing).  
-**Phase 5 Complete**: Gamelist generator (7/7 tests passing).  
+**Phase 5 Complete**: Gamelist generator (7/7 tests passing + extra fields preservation).  
+**Phase 6 Complete**: Runtime integration (MVP workflow complete).  
 **End-to-End Test**: Phases 1+2 integration verified ✓
 
 ## MVP Phase 4 - Media Downloader ✓ COMPLETED
@@ -64,12 +65,30 @@ Note: Milestone 2 `decommission.py` handling for cleanup folder (AT-M2B.1 / AT-4
 - [x] Implement path handler for ROM and media relative paths.
 - [x] Create integrated GamelistGenerator class.
 - [x] Build comprehensive integration tests (7/7 passing).
+- [x] Add extra_fields preservation for unknown XML elements.
 
-**Phase 5 Complete**: Gamelist generator with XML I/O, intelligent merging, HTML entity handling, and ES-DE compliance. See `PHASE5_COMPLETE.md` for full documentation.
+**Phase 5 Complete**: Gamelist generator with XML I/O, intelligent merging, HTML entity handling, ES-DE compliance, and unknown field preservation. See `PHASE5_COMPLETE.md` for full documentation.
 
-## MVP Phase 6 - Runtime Integration (NOT STARTED)
-- [ ] Implement `ProgressTracker` + `ErrorLogger` integration (AT-6.1–6.2).
-- [ ] Implement MVP CLI flags (`--dry-run`, `--systems`) (AT-6.3).
-- [ ] Milestone 2: CLI flags tied to skip/update (`--update`, `--skip-scraped`) (AT-M2A.2 / AT-6.4).
+## MVP Phase 6 - Runtime Integration ✓ COMPLETED
+- [x] Implement workflow orchestrator connecting scanner → API → media → gamelist.
+- [x] Create progress tracker with system/ROM counts and statistics.
+- [x] Implement error logger with summary reporting.
+- [x] Add `--dry-run` flag for preview mode.
+- [x] Add `--systems` flag for selective scraping.
+- [x] Update CLI with full workflow integration.
+- [x] Complete phase documentation.
+
+**Phase 6 Complete**: End-to-end scraping workflow with progress tracking, error handling, dry-run mode, and system filtering. See `PHASE6_COMPLETE.md` for full documentation.
+
+**MVP Status:** ✓ ALL PHASES COMPLETE
+
+### Milestone 2 Features (NOT YET IMPLEMENTED)
+- [ ] Skip mode: `--skip-scraped` flag (AT-M2A.2 / AT-6.4)
+- [ ] Update mode: `--update` flag
+- [ ] Checkpoint/resume functionality
+- [ ] Rich console UI with split panels
+- [ ] Multi-threaded downloads
+- [ ] Media hash verification
+- [ ] Decommissioned media management
 
 Track completion with acceptance tests in `tests/ACCEPTANCE_TESTS.md`.

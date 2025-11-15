@@ -8,6 +8,10 @@ from typing import Optional
 from curateur import __version__
 from curateur.config.loader import load_config, ConfigError
 from curateur.config.validator import validate_config, ValidationError
+from curateur.config.es_systems import parse_es_systems
+from curateur.api.client import APIClient
+from curateur.workflow.orchestrator import WorkflowOrchestrator
+from curateur.workflow.progress import ProgressTracker, ErrorLogger
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -115,14 +119,120 @@ def main(argv: Optional[list] = None) -> int:
             file=sys.stderr
         )
     
-    # TODO: Main scraping logic will go here
-    print("curateur v{} - MVP Phase 1 (Configuration loaded successfully)".format(__version__))
-    print(f"Config loaded from: {args.config or 'config.yaml'}")
-    print(f"User: {config['screenscraper'].get('user_id', 'NOT SET')}")
-    print(f"Developer credentials: {'✓ Configured' if config['screenscraper'].get('devid') else '✗ Missing'}")
-    print(f"Systems to scrape: {config['scraping'].get('systems') or 'all'}")
-    print(f"Dry-run mode: {config['runtime'].get('dry_run', False)}")
-    print("\nNote: Full scraping implementation in progress...")
+    # Run main scraping workflow
+    try:
+        return run_scraper(config, args)
+    except KeyboardInterrupt:
+        print("\n\nScraping interrupted by user.", file=sys.stderr)
+        return 130
+    except Exception as e:
+        print(f"\nFatal error: {e}", file=sys.stderr)
+        return 1
+
+
+def run_scraper(config: dict, args: argparse.Namespace) -> int:
+    """
+    Run the main scraping workflow.
+    
+    Args:
+        config: Loaded configuration
+        args: Parsed command-line arguments
+        
+    Returns:
+        Exit code
+    """
+    # Parse es_systems.xml
+    try:
+        es_systems_path = Path(config['paths']['es_systems'])
+        all_systems = parse_es_systems(es_systems_path)
+    except Exception as e:
+        print(f"Error parsing es_systems.xml: {e}", file=sys.stderr)
+        return 1
+    
+    # Filter systems if specified
+    systems_to_scrape = config['scraping'].get('systems', [])
+    if systems_to_scrape:
+        systems = [s for s in all_systems if s.name in systems_to_scrape]
+        if not systems:
+            print(f"Error: No matching systems found for: {systems_to_scrape}", file=sys.stderr)
+            return 1
+    else:
+        systems = all_systems
+    
+    # Initialize components
+    api_client = APIClient(
+        devid=config['screenscraper']['devid'],
+        devpassword=config['screenscraper']['devpassword'],
+        user_id=config['screenscraper']['user_id'],
+        user_password=config['screenscraper']['user_password'],
+        softname=f"curateur_{__version__}"
+    )
+    
+    orchestrator = WorkflowOrchestrator(
+        api_client=api_client,
+        rom_directory=Path(config['paths']['roms']),
+        media_directory=Path(config['paths']['media']),
+        gamelist_directory=Path(config['paths']['gamelists']),
+        dry_run=config['runtime'].get('dry_run', False)
+    )
+    
+    progress = ProgressTracker()
+    error_logger = ErrorLogger()
+    
+    # Print header
+    print(f"\ncurateur v{__version__}")
+    print(f"{'='*60}")
+    print(f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}")
+    print(f"Systems: {len(systems)}")
+    print(f"{'='*60}\n")
+    
+    # Process each system
+    for system in systems:
+        progress.start_system(system.fullname, 0)  # Will update with ROM count
+        
+        try:
+            result = orchestrator.scrape_system(
+                system=system,
+                media_types=config['scraping'].get('media_types', ['box-2D', 'ss']),
+                preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu'])
+            )
+            
+            # Log each ROM result
+            for rom_result in result.results:
+                if rom_result.success:
+                    media_info = f"{rom_result.media_downloaded} media files" if rom_result.media_downloaded > 0 else "no media"
+                    progress.log_rom(
+                        rom_result.rom_path.name,
+                        'success',
+                        media_info
+                    )
+                elif rom_result.error:
+                    progress.log_rom(
+                        rom_result.rom_path.name,
+                        'failed',
+                        rom_result.error
+                    )
+                    error_logger.log_error(rom_result.rom_path.name, rom_result.error)
+                else:
+                    progress.log_rom(
+                        rom_result.rom_path.name,
+                        'skipped',
+                        ''
+                    )
+            
+            progress.finish_system()
+            
+        except Exception as e:
+            print(f"\nError processing system {system.fullname}: {e}")
+            progress.finish_system()
+            continue
+    
+    # Print final summary
+    progress.print_final_summary()
+    
+    # Write error log if needed
+    if error_logger.has_errors():
+        error_logger.write_summary('scraping_errors.log')
     
     return 0
 
