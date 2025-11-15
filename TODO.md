@@ -39,11 +39,22 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 **Phase 1 Complete**: Core infrastructure (6/6 tests passing).  
 **Phase 2 Complete**: ROM scanner (7/7 tests passing).  
 **Phase 3 Complete**: API client (9/9 tests passing).  
+**Phase 4 Complete**: Media downloader (8/8 tests passing).  
 **End-to-End Test**: Phases 1+2 integration verified ✓
 
-## MVP Phase 4 - Media Downloader (NOT STARTED)
-- [ ] Implement `download_media`, region selection, and image verification (AT-4.1–4.3).
-- [ ] Milestone 2: `decommission.py` handling for cleanup folder (AT-M2B.1 / AT-4.4).
+## MVP Phase 4 - Media Downloader ✓ COMPLETED
+- [x] Implement `download_media`, region selection, and image verification (AT-4.1–4.3).
+- [x] Create media type mappings (ScreenScraper → ES-DE directories).
+- [x] Implement region detection and prioritization.
+- [x] Build URL selector with region filtering.
+- [x] Create image downloader with validation (Pillow).
+- [x] Implement media file organizer (ES-DE structure).
+- [x] Build integrated MediaDownloader class.
+- [x] Create comprehensive integration tests (8/8 passing).
+
+**Phase 4 Complete**: Media downloader with region prioritization, image validation, and ES-DE organization.
+
+Note: Milestone 2 `decommission.py` handling for cleanup folder (AT-M2B.1 / AT-4.4) is deferred to post-MVP.
 
 ## MVP Phase 5 - Gamelist Generator (NOT STARTED)
 - [ ] Implement `write_gamelist` to meet AT-5.1–5.3.
