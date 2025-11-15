@@ -1,0 +1,72 @@
+# curateur configuration template
+# Copy this file to config.yaml and customize each section as needed.
+
+screenscraper:
+  # Developer credentials obtained from ScreenScraper (required)
+  dev_id: ""
+  dev_password: ""
+  # Software name registered with ScreenScraper (keep default unless instructed)
+  soft_name: "curateur"
+  # ScreenScraper user credentials (required)
+  user_id: ""
+  user_password: ""
+
+paths:
+  # Root ROM directory (can be absolute or relative)
+  roms: ./roms
+  # Destination for downloaded media (must be writable)
+  media: ./downloaded_media
+  # Destination for gamelists and logs
+  gamelists: ./gamelists
+  # Path to ES-DE es_systems.xml used to determine systems
+  es_systems: ./es_systems.xml
+
+scraping:
+  # Optional list of system short names (e.g., ["nes","snes"]); empty = all systems from es_systems.xml
+  systems: []
+  # Media types to download; order does not matter
+  media_types:
+    - covers
+    - screenshots
+    - titlescreens
+    - marquees
+  # Region priority for media selection (lowercase ScreenScraper codes)
+  preferred_regions: [us, wor, eu, jp, ss]
+  # Preferred metadata language (two-letter code)
+  preferred_language: en
+  # Maximum file size (in bytes) for CRC hashing (default 1 GiB). Set 0 to disable hashing.
+  crc_size_limit: 1073741824
+  # Minimum width/height for image verification
+  image_min_dimension: 50
+  # Phase 2 feature flags (leave false for MVP)
+  skip_mode: false
+  update_mode: false
+  clean_mismatched_media: false
+  # Checkpoint interval (0 disables checkpointing)
+  checkpoint_interval: 0
+  # Name verification strictness: strict | normal | lenient | disabled
+  name_verification: normal
+
+api:
+  # HTTP request timeout (seconds)
+  request_timeout: 30
+  # Maximum number of retry attempts for transient failures
+  max_retries: 3
+  # Base delay (seconds) for exponential backoff
+  retry_backoff_seconds: 5
+
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR
+  level: INFO
+  # Whether to log to console
+  console: true
+  # Optional file path for log output (null disables file logging)
+  file: null
+
+runtime:
+  # Enable dry-run mode (scan + API verification without downloads)
+  dry_run: false
+  # Enable jeuRecherche search fallback when direct lookup fails (Phase 2)
+  enable_search_fallback: false
+  # Number of worker threads (MVP uses 1; increase cautiously when Milestone 2 adds parallelism)
+  threads: 1

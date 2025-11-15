@@ -1,0 +1,3191 @@
+# ScreenScraper ROM Metadata & Media Scraper ("curateur") - Implementation Plan
+
+## Project Overview
+
+A Python-based tool to scan ROM directories, query ScreenScraper API for game metadata and media, and generate ES-DE compatible gamelist.xml files with downloaded media organized by type.
+
+## Architecture
+
+### Core Components
+
+1. **Configuration Manager**
+   - Parse `es_systems.xml` to extract system definitions
+   - Load user credentials (dev ID/password, user ID/password)
+   - Manage configurable settings (CRC hash size limit, media preferences, etc.)
+
+2. **ROM Scanner**
+   - Traverse top-level ROM directory
+   - Identify system subdirectories based on es_systems.xml
+   - Enumerate ROM files matching valid extensions per system
+   - Handle M3U playlist files for multi-disc games
+   - Handle disc subdirectories (directory named for file it contains)
+   - Detect and log conflicts when both M3U and disc subdirectory exist for same game
+   - Calculate CRC32 hashes for files below size threshold (or referenced disc files for M3U)
+
+3. **ScreenScraper API Client**
+   - Authenticate with dev and user credentials
+   - Construct API requests with proper parameters
+   - Use API-provided rate limits (single-threaded for MVP)
+   - Parse API responses (XML format)
+   - Implement retry logic with exponential backoff
+
+4. **Media Downloader**
+   - Download images from ScreenScraper (covers, screenshots, titlescreens, marquees)
+   - Organize downloads by media type into separate directories
+   - Handle region-based prioritization (US/English or ROM filename region)
+   - Verify successful downloads
+   - Validate image files (format verification and minimum 50x50 pixels)
+
+5. **Gamelist Generator**
+   - Build gamelist.xml structure from API responses
+   - Map ScreenScraper data to ES-DE format
+   - Decode HTML entities to UTF-8 using html.unescape() for all text fields
+   - Write XML with proper formatting and encoding
+   - Set media paths relative to media directories
+
+6. **Progress Tracker**
+   - Simple sequential logging with timestamps
+   - Overall progress display with system, ROM count, and ETA
+   - Track success/failure rates per system
+   - Monitor API quota usage
+   - Display current processing status
+   - Write error summary log to gamelist directory after system completion
+
+## Directory Structure
+
+All directory paths are configurable; default layout is:
+
+```
+./                          # Current working directory
+├── roms/                   # Input: ROM files (configurable: paths.roms)
+│   ├── nes/
+│   │   ├── game1.zip
+│   │   ├── game2.zip
+│   │   └── ...
+│   ├── snes/
+│   └── ...
+│
+├── downloaded_media/       # Output: Media files (configurable: paths.media)
+│   ├── nes/
+│   │   ├── 3dboxes/
+│   │   ├── backcovers/
+│   │   ├── covers/
+│   │   ├── fanart/
+│   │   ├── manuals/
+│   │   ├── marquees/
+│   │   ├── miximages/
+│   │   ├── physicalmedia/
+│   │   ├── screenshots/
+│   │   ├── titlescreens/
+│   │   └── videos/
+│   ├── snes/
+│   │   └── ...
+│   └── CLEANUP/            # Decommissioned media (Phase 2): <media>/CLEANUP
+│       ├── nes/
+│       │   ├── covers/
+│       │   └── ...
+│       └── snes/
+│           └── ...
+│
+├── gamelists/              # Output: Gamelists (configurable: paths.gamelists)
+│   ├── nes/
+│   │   ├── gamelist.xml
+│   │   ├── curateur_summary.log          # Error summary (always written)
+│   │   └── .curateur_checkpoint.json     # Checkpoint (Phase 2, if enabled)
+│   ├── snes/
+│   │   ├── gamelist.xml
+│   │   ├── curateur_summary.log
+│   │   └── .curateur_checkpoint.json
+│   └── ...
+│
+└── es_systems.xml          # Input: ES-DE system definitions (configurable: paths.es_systems)
+```
+
+**Note:** Checkpoint files and error summary logs are automatically placed in `<gamelists>/<system>/` and are not separately configurable.
+**Terminology:** References to the "decommissioned media folder" always point to ``<paths.media>/CLEANUP/<system>/<media_type>/``.
+
+## Data Flow
+
+### 1. Initialization Phase
+```
+1. Load es_systems.xml
+2. Parse system definitions:
+   - Extract system name
+   - Extract ROM path
+   - Parse valid file extensions
+   - Extract platform identifier
+3. Load user configuration:
+   - Developer credentials (devid, devpassword, softname)
+   - User credentials (ssid, sspassword)
+   - Max file size for CRC hashing
+   - Preferred regions/languages
+   - Output paths
+```
+
+### 2. Scanning Phase
+```
+For each system in es_systems.xml:
+    1. Navigate to system's ROM directory
+    2. Load existing gamelist.xml (if present)
+       - Parse all <game> entries
+       - Extract ROM paths and media references
+       - Build index of scraped games
+    
+    3. Validate gamelist integrity (skip mode only):
+       - Guard skip mode by ensuring existing entries align with the ROM set (see [Gamelist Integrity Validation (Skip Mode Only)](#gamelist-integrity-validation-skip-mode-only) for ratio thresholds and cleanup flow)
+    
+    4. Find all files matching valid extensions AND directories
+    5. For each ROM file or directory:
+        - Determine type (detailed behavior lives in the dedicated sections):
+          a) Disc subdirectory (directory name matches valid extension) — see [Disc Subdirectory Handling](#disc-subdirectory-handling)
+          b) M3U file (multi-disc playlist) — see [Multi-Disc Game Handling (M3U Files)](#multi-disc-game-handling-m3u-files)
+          c) Standard ROM file
+        - Get filename/dirname, size, path
+        - If size <= threshold: calculate CRC32 hash
+        
+        - Queue ROM for scraping (MVP: always process all ROMs)
+        
+        **Phase 2 Enhancement: Skip Mode**
+        - Evaluate each ROM using the [Skip Mode Decision Table](#skip-mode-decision-table-phase-2-feature) to decide whether to scrape fully, download media only, or skip
+
+        - Store ROM metadata in processing queue (if not skipped)
+```
+
+### Skip Mode Decision Table (Phase 2 Feature)
+
+Simple decision table for determining whether to process, skip, or partially update a ROM:
+
+| ROM in gamelist.xml? | Metadata Present? | All Enabled Media Present? | Action | API Call? | Download Media? |
+|---------------------|-------------------|---------------------------|--------|-----------|----------------|
+| ❌ No | N/A | N/A | **Full Scrape** | ✅ Yes | ✅ All types |
+| ✅ Yes | ✅ Yes | ✅ Yes | **Skip** | ❌ No | ❌ No |
+| ✅ Yes | ✅ Yes | ❌ No (some missing) | **Media Only** | ❌ No | ✅ Missing only |
+| ✅ Yes | ❌ No | N/A | **Full Scrape** | ✅ Yes | ✅ All types |
+| ✅ Yes | ✅ Yes | ❌ No (update mode) | **Update & Verify** | ✅ Yes | ✅ Changed only |
+
+**Notes:**
+- MVP always does "Full Scrape" for all ROMs (skip mode disabled)
+- Phase 2 will implement skip/update logic
+- "Enabled Media" refers to media types listed in config `media_types`
+- Update mode (Phase 2) uses hash verification to detect changed media
+
+**Flowchart (Phase 2):**
+```
+┌─────────────────────┐
+│   Start: ROM Found  │
+└──────────┬──────────┘
+           │
+           ▼
+    ┌──────────────┐
+    │ In gamelist? │
+    └──┬───────┬───┘
+       │ No    │ Yes
+       ▼       ▼
+   ┌────┐  ┌──────────────┐
+   │Full│  │Has metadata? │
+   │Scrape  └──┬───────┬───┘
+   │    │     │ No    │ Yes
+   └────┘     ▼       ▼
+          ┌────┐  ┌──────────────┐
+          │Full│  │All media OK? │
+          │Scrape  └──┬───────┬───┘
+          │    │     │ No    │ Yes
+          └────┘     ▼       ▼
+                 ┌────────┐ ┌────┐
+                 │Media   │ │Skip│
+                 │Only    │ │    │
+                 │Download│ └────┘
+                 └────────┘
+```
+
+**Decision Logic (Python):**
+```python
+def determine_action(rom_info, gamelist_entry, enabled_media_types):
+    """
+    Determine what action to take for a ROM (Phase 2)
+    
+    Args:
+        rom_info: ROM metadata (filename, size, crc, etc.)
+        gamelist_entry: Existing entry from gamelist.xml (or None)
+        enabled_media_types: List of media types from config
+    
+    Returns:
+        ('skip'|'full_scrape'|'media_only', media_types_to_download)
+    """
+    # MVP: Always full scrape
+    if not SKIP_MODE_ENABLED:
+        return ('full_scrape', enabled_media_types)
+    
+    # Not in gamelist -> full scrape
+    if gamelist_entry is None:
+        return ('full_scrape', enabled_media_types)
+    
+    # In gamelist but no metadata -> full scrape
+    if not has_metadata(gamelist_entry):
+        return ('full_scrape', enabled_media_types)
+    
+    # Check which media files are present
+    present_media = check_media_files(rom_info['basename'], enabled_media_types)
+    missing_media = [m for m in enabled_media_types if m not in present_media]
+    
+    # All media present -> skip
+    if not missing_media:
+        return ('skip', [])
+    
+    # Some media missing -> download missing only
+    return ('media_only', missing_media)
+```
+
+### 3. API Query Phase
+```
+For each ROM in queue:
+    0. MVP: Full scrape mode for all ROMs
+    
+    **Phase 2 Enhancement: Processing Modes**
+       - Full scrape: ROM not in gamelist (always query API)
+       - Media-only: ROM in gamelist, missing some media
+       - Update mode: ROM in gamelist, checking for updates
+    
+    1. Construct jeuInfos.php API request:
+       Required parameters:
+       - devid, devpassword, softname
+       - ssid, sspassword
+       - systemeid (map from platform)
+       - romnom (filename):
+           * For disc subdirectory: use contained file's filename
+           * For M3U: use disc 1 filename (not M3U filename)
+           * For standard ROM: use actual filename
+       - romtaille (file size):
+           * For disc subdirectory: use contained file's size
+           * For M3U: use disc 1 file size
+           * For standard ROM: use actual file size
+       - crc (if calculated):
+           * For disc subdirectory: use contained file's CRC hash
+           * For M3U: use disc 1 CRC hash
+           * For standard ROM: use actual CRC hash
+       - output=xml
+       
+    2. Send request with rate limiting
+    3. Validate response (see [Error Handling Strategy](#error-handling-strategy-unified) for details):
+       - Check HTTP status code
+       - Verify Content-Type header matches expected format (application/xml)
+       - Check response body is not empty
+       - Validate XML response structure before parsing
+       - Handle malformed responses with retry logic
+    4. Parse response:
+       - Extract game metadata
+       - Extract available media URLs
+       - Handle parsing errors gracefully
+    
+    5. Verify game name match:
+       - Extract game name from API response
+       - Normalize ROM filename and API game name
+       - Calculate similarity ratio (0.0-1.0)
+       - Compare against configured threshold (default: 0.6/60%)
+       - If similarity too low:
+         * Check for special cases (word overlap)
+         * Log warning with both names and similarity score
+         * Skip ROM if skip_on_mismatch=true
+         * Prompt user if prompt_on_mismatch=true
+       - If verification passes:
+         * Log success with similarity score
+         * Proceed to processing
+    
+    6. **Phase 2 Enhancement: Search Fallback**
+       - Optional search fallback (if enabled and previous match failed)
+       - Only attempt if enable_search_fallback=true in config
+       - Normalize ROM filename:
+         * Remove region codes: (USA), (Europe), (Japan), (World), etc.
+         * Remove language indicators: (En), (Fr), (De), etc.
+         * Remove disc numbers: (Disc 1), (Disc 2), CD1, CD2, etc.
+         * Remove version indicators: (Rev A), (v1.1), etc.
+         * Remove file extensions and archive indicators
+         * Trim whitespace and normalize spacing
+       - Query jeuRecherche.php endpoint:
+         * Use normalized game name as recherche parameter
+         * Include systemeid parameter
+         * Parse search results (list of potential matches)
+       - Match using confidence score:
+         * Calculate similarity between normalized ROM name and each result
+         * Filter by minimum confidence (default: 0.98 / 98%)
+         * If multiple matches above threshold: use highest confidence
+         * If match found: query jeuInfos.php with game ID from search
+       - Log search attempt and result
+       - If no match found: skip ROM as not found
+    
+    7. Store response data for processing:
+       - Link response to original directory name (if disc subdirectory)
+       - Link response to original M3U filename (if M3U)
+       - Preserve directory/M3U name as primary identifier for media/gamelist
+```
+
+### 4. Media Download Phase
+```
+For each game with successful API response:
+    1. Extract media URLs from response
+       - Parse <medias> section for available media
+       - Extract URL, type, region, format
+    
+    **Phase 2 Enhancement: Hash Extraction**
+       - Extract size, CRC, and/or SHA1 hash (if available)
+    
+    2. **Phase 2 Enhancement: Decommissioned Media Handling**
+       Check for decommissioned media (update mode):
+       - For each local media file:
+         * Check if media type still available in API response
+         * If not available AND media type is enabled:
+           - Log warning: "Media type X no longer available from ScreenScraper"
+           - Move file to the decommissioned media folder: ``<paths.media>/CLEANUP/<system>/<media_type>/<filename>``
+       - After processing all media types:
+         * Count remaining media files for game
+         * If count = 0 (all would be decommissioned):
+           - Log error: "All media would be removed for <game>"
+           - Revert decommission operations for this game
+           - Keep existing media files in place
+    
+    3. Apply region prioritization (see [Region Prioritization](#region-prioritization) for algorithm details):
+       - Detect region from ROM filename
+       - Apply preferred_regions config priority order
+       - Note: fanart and video types do not use region filtering
+    
+    4. **Phase 2 Enhancement: Hash Verification (Update Mode)**
+       For each media type:
+         a) Check if local file exists
+         b) If exists, verify against API response:
+            - Try size comparison first (fastest)
+            - If size matches: try CRC32 hash (if available in response)
+            - If CRC matches or unavailable: try SHA1 hash (if available)
+            - If all available hashes match: skip download
+            - Log: "✓ Media verified: covers/game.jpg (size + CRC match)"
+         c) If mismatch or no local file:
+            - Add to download queue
+            - Log: "⟳ Media changed: covers/game.jpg (hash mismatch)"
+    
+    5. Download each media type per this mapping:
+       ScreenScraper Type → ES-DE Directory
+       - box-3D           → 3dboxes/
+       - box-2D-back      → backcovers/
+       - box-2D           → covers/
+       - fanart           → fanart/
+       - manual           → manuals/
+       - Marquee          → marquees/
+       - mixrbv2          → miximages/
+       - support-2D       → physicalmedia/
+       - SS               → screenshots/
+       - sstitle          → titlescreens/
+       - video            → videos/
+    
+    6. Save files with consistent naming:
+       <system>/<media_type>/<rom_basename>.<extension>
+       Note: For M3U playlists, use M3U basename (not disc 1 basename)
+       Note: For disc subdirectories, use directory name (not contained file name)
+       Examples:
+         - M3U: "Skies of Arcadia.m3u" → "covers/Skies of Arcadia.jpg"
+         - Disc subdir: "Skies of Arcadia (Disc 1).cue" (directory name) → "covers/Skies of Arcadia (Disc 1).cue.jpg"
+         - Standard: "Super Mario.zip" → "covers/Super Mario.jpg"
+    
+    7. Verify image files (for image media types only):
+       - Check if file is a valid image format (JPEG, PNG, GIF, WebP, etc.)
+       - Verify minimum dimensions (50x50 pixels)
+       - If validation fails:
+         * Log error with filename and reason
+         * Delete invalid file
+         * Mark download as failed
+         * Optionally retry download once
+       - If validation succeeds:
+         * Log success with dimensions
+    
+    8. Track download success/failure
+```
+
+### 5. Gamelist Generation Phase
+```
+1. Create XML structure:
+   <?xml version="1.0"?>
+   <gameList>
+       <provider>
+           <System>...</System>
+           <software>...</software>
+           <database>ScreenScraper.fr</database>
+           <web>http://www.screenscraper.fr</web>
+       </provider>
+       
+       For each successfully scraped game:
+       <game id="<screenscraper_id>" source="ScreenScraper.fr">
+           <path>./relative/path/to/rom</path>
+           Notes on path handling:
+             - For M3U playlists: path references the M3U file
+               Example: "./Skies of Arcadia.m3u"
+             - For disc subdirectories: path references the directory name without a trailing slash (treat it like a file)
+               Example: "./Skies of Arcadia (Disc 1).cue"
+             - For standard ROMs: path references the file
+               Example: "./Super Mario.zip"
+           <name>Game Name</name>
+           <desc>Description...</desc>
+           <rating>0.0-1.0</rating>
+           <releasedate>YYYYMMDDTHHMMSS</releasedate>
+           <developer>Developer Name</developer>
+           <publisher>Publisher Name</publisher>
+           <genre>Genre1, Genre2</genre>
+           <players>X-Y</players>
+           <hash />
+           <favorite>true/false</favorite>
+       </game>
+   </gameList>
+
+2. HTML Entity Decoding
+   - ScreenScraper API responses contain HTML entities that must be decoded to UTF-8
+   - Use Python's html.unescape() to convert all text fields before writing to XML
+   
+   Fields requiring conversion:
+   - <name>, <desc>, <developer>, <publisher>, <genre>
+   
+   Note: lxml automatically handles XML escaping when writing elements,
+   so decoded UTF-8 strings will be properly escaped in the output XML
+   (e.g., & becomes &amp;, < becomes &lt;, etc.)
+
+3. Write to output directory
+4. Validate XML structure
+```
+
+#### HTML Entity Decoding Implementation
+
+```python
+import html
+from lxml import etree
+
+def decode_api_text(text):
+    """
+    Decode HTML entities from ScreenScraper API responses to UTF-8
+    
+    Args:
+        text: String from API that may contain HTML entities
+    
+    Returns:
+        Decoded UTF-8 string
+    """
+    return html.unescape(text) if text else text
+
+def create_game_element(api_data):
+    """
+    Create a <game> XML element from API data with HTML entity decoding
+    """
+    game_elem = etree.Element("game")
+    game_elem.set("id", str(api_data['id']))
+    game_elem.set("source", "ScreenScraper.fr")
+    
+    # Create child elements with decoded text
+    path_elem = etree.SubElement(game_elem, "path")
+    path_elem.text = api_data['rom_path']
+    
+    name_elem = etree.SubElement(game_elem, "name")
+    name_elem.text = decode_api_text(api_data['name'])
+    
+    desc_elem = etree.SubElement(game_elem, "desc")
+    desc_elem.text = decode_api_text(api_data['description'])
+    
+    developer_elem = etree.SubElement(game_elem, "developer")
+    developer_elem.text = decode_api_text(api_data['developer'])
+    
+    publisher_elem = etree.SubElement(game_elem, "publisher")
+    publisher_elem.text = decode_api_text(api_data['publisher'])
+    
+    genre_elem = etree.SubElement(game_elem, "genre")
+    genre_elem.text = decode_api_text(api_data['genre'])
+    
+    # ... other elements ...
+    
+    return game_elem
+```
+
+Note: lxml automatically escapes special characters when writing XML.
+
+## ScreenScraper API Integration
+
+### API Endpoints
+
+#### Primary Endpoint: jeuInfos.php (Direct Match)
+```
+https://api.screenscraper.fr/api2/jeuInfos.php
+```
+Used for direct game identification via ROM hash, filename, and file size.
+
+#### Fallback Endpoint: jeuRecherche.php (Search) - Phase 2
+```
+https://api.screenscraper.fr/api2/jeuRecherche.php
+```
+Used for text-based game search when direct matching fails (Phase 2 feature).
+
+### Required Parameters (jeuInfos.php)
+- **devid**: Developer ID (obtained from ScreenScraper)
+- **devpassword**: Developer password
+- **softname**: Name of this software (e.g., "curateur")
+- **ssid**: User's ScreenScraper ID
+- **sspassword**: User's password
+- **output**: Response format (xml)
+
+### ROM Identification Parameters (jeuInfos.php)
+- **systemeid**: ScreenScraper system ID (map from es_systems.xml platform)
+- **romnom**: ROM filename (URL encoded)
+- **romtaille**: File size in bytes
+- **crc**: CRC32 hash (uppercase hex, 8 characters)
+- **romtype**: "rom" (standard)
+
+### Search Parameters (jeuRecherche.php) - Phase 2 Feature
+- **devid**, **devpassword**, **softname**: Same as jeuInfos.php
+- **ssid**, **sspassword**: Same as jeuInfos.php
+- **systemeid**: ScreenScraper system ID (required)
+- **recherche**: Search query (normalized game name, URL encoded)
+- **output**: Response format (xml only in MVP)
+
+**Search Response Structure:**
+```xml
+<response>
+    <jeux>
+        <jeu id="12345">
+            <noms>
+                <nom region="..." langue="en">Game Name</nom>
+            </noms>
+        </jeu>
+        <jeu id="67890">
+            <!-- Additional matches -->
+        </jeu>
+    </jeux>
+</response>
+```
+
+### System ID Mapping
+Create mapping from es_systems.xml `<platform>` to ScreenScraper systemeid using the one-time helper utility `curateur/tools/generate_system_map.py` (Phase 1, step 4).
+
+The helper parses:
+- `es_systems.xml`: extracts `<system><fullname>` and `<platform>` pairs
+- `systemesListe.xml`: extracts `<systeme><id>` and `<noms><noms_commun>` entries (can be fetched fresh via `https://api.screenscraper.fr/api2/systemesListe.php?devid=xxx&devpassword=yyy&softname=zzz&output=XML`)
+
+Matching logic:
+- Compare `fullname` against comma-separated values in `noms_commun` (case-insensitive, whitespace-trimmed)
+- On match: pair `platform` with `systemeid`
+- Log unmatched platforms from `es_systems.xml`
+- Warn on multiple matches per `fullname`
+
+Example generated constant:
+```python
+PLATFORM_SYSTEMEID_MAP = {
+    "3do": 29,
+    "amiga": 64,
+    "amstradcpc": 65,
+    "arcade": 75,
+    "atari2600": 26,
+    "nes": 3,
+    "snes": 4,
+    "genesis": 1,
+    "megadrive": 1,
+    "n64": 14,
+    # ... (complete mapping generated by helper)
+}
+```
+
+This is a **manual integration step** since system IDs rarely change. Re-run the helper only when ScreenScraper adds new systems or `es_systems.xml` is updated.
+
+### Response Handling
+
+#### Success Response Structure
+```xml
+<response>
+    <header>
+        <APIversion>...</APIversion>
+        <server_time>...</server_time>
+    </header>
+    
+    <jeu id="12345">
+        <noms>
+            <nom region="..." langue="en">Game Name</nom>
+        </noms>
+        
+        <synopsis>
+            <synopsis langue="en">Description...</synopsis>
+        </synopsis>
+        
+        <dates>
+            <date region="...">YYYY-MM-DD</date>
+        </dates>
+        
+        <developpeur>Developer</developpeur>
+        <editeur>Publisher</editeur>
+        
+        <genres>
+            <genre id="..." nom="Genre" />
+        </genres>
+        
+        <joueurs>1-4</joueurs>
+        <note>4.5</note>  <!-- 0-5 scale, convert to 0-1 -->
+        
+        <medias>
+            <media type="box-2D" region="us" format="png">
+                <url>https://...</url>
+            </media>
+            <!-- More media entries -->
+        </medias>
+        
+        <roms>
+            <rom id="..." romregion="us">
+                <romnom>filename.zip</romnom>
+                <romtaille>12345</romtaille>
+                <romcrc>ABCD1234</romcrc>
+            </rom>
+        </roms>
+    </jeu>
+    
+    <ssuser>
+        <requeststoday>150</requeststoday>
+        <maxrequestsperday>10000</maxrequestsperday>
+        <maxthreads>4</maxthreads>
+        <!-- User quota info -->
+    </ssuser>
+</response>
+```
+
+#### Error Handling
+
+All HTTP status handling, response validation, and retry behavior is defined once in [Error Handling Strategy (Unified)](#error-handling-strategy-unified); the API integration layer simply calls into that module.
+
+## Error Handling Strategy (Unified)
+
+### HTTP Status Codes Reference
+
+ScreenScraper API HTTP status codes and their meanings:
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| **200** | Success | Validate response structure |
+| **400** | Malformed request | Check parameters, skip ROM |
+| **401** | API closed for non-members | Server overload, retry later |
+| **403** | Invalid credentials | Stop execution (fatal) |
+| **404** | Game not found | Skip ROM, log as not found |
+| **423** | API fully closed | Stop execution (fatal) |
+| **426** | Software blacklisted | Stop execution (fatal) |
+| **429** | Thread limit reached | Wait and retry (5s backoff) |
+| **430** | Daily quota exceeded | Stop execution (fatal) |
+| **431** | Too many not-found requests | Clean ROM set, skip ROM |
+
+**Note:** Even with HTTP 200, response structure must be validated (XML parsing, empty body, Content-Type).
+
+### Error Categories and Responses
+
+**1. API Errors**
+- **404 Not Found**: Skip ROM, log as not found, continue
+- **429 Rate Limit**: Wait 5 seconds, retry with exponential backoff (max 3 attempts)
+- **403/423/426/430 API Closed/Blocked**: Stop execution, display error message
+- **Network Errors**: Retry up to 3 times with exponential backoff, then skip
+
+**2. Filesystem Errors**
+- **Permission Denied**: Stop execution immediately with clear error message
+- **Disk Full**: Stop execution immediately
+- **I/O Errors**: Stop execution immediately
+- **Path errors**: Log error, skip file, continue
+- **Missing system ROM directory**: Log warning, skip system, continue
+- **Empty system ROM directory**: Log info message, skip system, continue
+
+**3. Validation Errors**
+- **Malformed API Response**: Log error, skip ROM, continue  
+- **Invalid Image**: Delete file, log warning, continue without that media type
+- **Name Verification Failed**: Skip ROM, log warning, continue
+
+**4. Configuration Errors**
+- **Missing Credentials**: Stop execution at startup
+- **Invalid paths**: Stop execution at startup
+- **Invalid YAML**: Stop execution at startup
+
+### Implementation Pattern
+
+```python
+class ScraperError(Exception):
+    """Base exception for scraper errors"""
+    pass
+
+class FatalError(ScraperError):
+    """Fatal error requiring immediate stop"""
+    pass
+
+class SkippableError(ScraperError):
+    """Non-fatal error, skip item and continue"""
+    pass
+
+def handle_error(error, context):
+    """
+    Unified error handler
+    
+    Args:
+        error: Exception that occurred
+        context: Dict with error context (rom name, operation, etc.)
+    """
+    if isinstance(error, FatalError):
+        log_error(f"FATAL: {error}")
+        log_error(f"Context: {context}")
+        sys.exit(1)
+    
+    elif isinstance(error, SkippableError):
+        log_warning(f"Skipping {context.get('rom')}: {error}")
+        return 'skip'
+    
+    else:
+        # Unknown error - log and decide based on type
+        if isinstance(error, (PermissionError, OSError)):
+            raise FatalError(f"Filesystem error: {error}") from error
+        else:
+            log_warning(f"Unexpected error: {error}")
+            return 'skip'
+```
+
+### Retry Logic
+
+```python
+def retry_with_backoff(func, max_attempts=3, initial_delay=5):
+    """
+    Retry function with exponential backoff
+    
+    Args:
+        func: Function to retry
+        max_attempts: Maximum retry attempts
+        initial_delay: Initial delay in seconds
+    
+    Returns:
+        Function result or raises last exception
+    """
+    for attempt in range(max_attempts):
+        try:
+            return func()
+        except (requests.RequestException, ConnectionError) as e:
+            if attempt == max_attempts - 1:
+                raise
+            
+            delay = initial_delay * (2 ** attempt)
+            log_warning(f"Attempt {attempt + 1} failed, retrying in {delay}s: {e}")
+            time.sleep(delay)
+```
+
+### Rate Limiting Strategy
+
+**MVP Approach: Use API-provided limits only**
+
+The ScreenScraper API provides rate limit information in responses:
+- `maxrequestspermin`: Maximum requests per minute
+- `maxthreads`: Maximum concurrent threads
+
+For MVP implementation:
+- Always use API-provided limits
+- Single-threaded operation (no parallel requests)
+- Simple request spacing based on maxrequestspermin
+
+**Phase 2 Enhancement:** Add configuration overrides for debugging and custom limits.
+
+```python
+def get_rate_limits_from_api(first_response):
+    """Extract rate limits from initial API response"""
+    api_rpm = first_response.get('maxrequestspermin', 20)
+    api_threads = first_response.get('maxthreads', 1)
+    
+    # MVP: Use single thread only
+    return {
+        'requests_per_minute': api_rpm,
+        'concurrent_threads': 1  # MVP: single thread
+    }
+```
+
+## Region Prioritization
+
+### Media Types and Region Properties
+
+ScreenScraper API provides region information for most media types, but **not all**:
+
+**Media types WITH region properties** (use region prioritization):
+- box-2D, box-2D-back, box-3D
+- SS, sstitle
+- Marquee
+- support-2D
+- manual
+- mixrbv2
+
+**Media types WITHOUT region properties** (no region prioritization):
+- **fanart** - Always use first available item
+- **video** / **video-normalized** - Always use first available item
+
+**Note:** See [Media Download Phase](#4-media-download-phase) for complete ScreenScraper → ES-DE directory mapping.
+
+### Region Detection from Filename
+```python
+# Common region codes in ROM filenames
+REGION_PATTERNS = {
+    'us': ['USA', 'US', 'U'],
+    'eu': ['Europe', 'EUR', 'E'],
+    'jp': ['Japan', 'JPN', 'J'],
+    'uk': ['UK', 'GB'],
+    'fr': ['France', 'Fr'],
+    'de': ['Germany', 'De'],
+    'es': ['Spain', 'Es'],
+    'it': ['Italy', 'It'],
+    'wor': ['World', 'W'],
+}
+
+def detect_regions_from_filename(filename):
+    """
+    Detect ALL regions from ROM filename (handles multi-region ROMs)
+    
+    Example filenames:
+    - "Mike Tyson's Punch-Out!! (Japan, USA) (En) (Rev 1)" → ['jp', 'us']
+    - "Cruisin' USA (World)" → ['wor']  (game title doesn't trigger false match)
+    - "Legend of Zelda (USA)" → ['us']
+    
+    Args:
+        filename: ROM filename to parse
+    
+    Returns:
+        List of detected region codes (may be empty)
+    """
+    detected_regions = []
+    
+    # Extract parenthetical groups to avoid false matches in game titles
+    # Matches: (Japan, USA), (World), (USA), etc.
+    import re
+    paren_groups = re.findall(r'\(([^)]+)\)', filename)
+    
+    # Search for region codes only within parenthetical groups
+    for group in paren_groups:
+        for region_code, patterns in REGION_PATTERNS.items():
+            for pattern in patterns:
+                # Use word boundary matching to avoid partial matches
+                # e.g., "USA" in title "Cruisin' USA" won't match outside parens
+                if re.search(r'\b' + re.escape(pattern) + r'\b', group, re.IGNORECASE):
+                    if region_code not in detected_regions:
+                        detected_regions.append(region_code)
+    
+    return detected_regions
+```
+
+### Media Selection Algorithm
+```python
+def select_media(media_list, rom_regions, media_type, preferred_regions=None, preferred_language='en'):
+    """
+    Select best media based on region priority from config.
+    
+    Logic:
+    1. If ROM has detected region(s), prioritize those by config order
+    2. If no match, continue through config preferred_regions list
+    3. If still no match, log error and return None (skip ROM)
+    
+    Args:
+        media_list: List of media entries from API
+        rom_regions: List of region codes detected from ROM filename (may be empty)
+        media_type: Type of media (box-2D, screenshot, etc.)
+        preferred_regions: List of region codes in priority order (from config)
+                          If None, uses default: ['us', 'wor', 'eu', 'jp', 'ss']
+        preferred_language: Language code for metadata (default: 'en')
+    
+    Returns:
+        Selected media URL or None (if no suitable region found)
+    """
+    # Use default region priority if not specified
+    if preferred_regions is None:
+        preferred_regions = ['us', 'wor', 'eu', 'jp', 'ss']
+    
+    # Filter by media type
+    candidates = [m for m in media_list if m['type'] == media_type]
+    
+    if not candidates:
+        return None
+    
+    # Media types without region properties (fanart, video)
+    # These should always use the first available item
+    NON_REGIONAL_TYPES = ['fanart', 'video', 'video-normalized']
+    if media_type in NON_REGIONAL_TYPES:
+        return candidates[0]['url']
+    
+    # Get available regions from candidates
+    available_regions = [m.get('region') for m in candidates if m.get('region')]
+    
+    # Build priority search order:
+    # 1. ROM's detected regions (in config priority order)
+    # 2. Remaining config preferred_regions
+    
+    # Filter ROM regions by config priority order (if ROM has multiple regions)
+    rom_regions_prioritized = [r for r in preferred_regions if r in rom_regions]
+    
+    # Add remaining preferred regions not in ROM
+    remaining_preferred = [r for r in preferred_regions if r not in rom_regions]
+    
+    # Final priority list: ROM regions first (by config order), then remaining config regions
+    priority_list = rom_regions_prioritized + remaining_preferred
+    
+    # Try each priority region in order
+    for region in priority_list:
+        for media in candidates:
+            if media.get('region') == region:
+                return media['url']
+    
+    # No match found - log error and return None (skip ROM)
+    log_error(
+        f"No suitable media region found for {media_type}. "
+        f"Available regions: {', '.join(available_regions) if available_regions else 'none'}. "
+        f"Priority order: {', '.join(priority_list)}"
+    )
+    return None
+
+def select_metadata_language(game_data, preferred_language='en'):
+    """
+    Select metadata language from API response
+    
+    Args:
+        game_data: Game data from API response
+        preferred_language: Language code (default: 'en')
+    
+    Returns:
+        Metadata in preferred language, or None if not available
+    """
+    # Extract available languages from game data
+    available_languages = []
+    if 'noms' in game_data:  # Language-specific names
+        available_languages = list(game_data['noms'].keys())
+    
+    # Check if preferred language is available
+    if preferred_language in available_languages:
+        return game_data['noms'][preferred_language]
+    
+    # Preferred language not available - log error and return None (skip ROM)
+    log_error(
+        f"Preferred metadata language '{preferred_language}' not available. "
+        f"Available languages: {', '.join(available_languages) if available_languages else 'none'}"
+    )
+    return None
+```
+
+**Example Selection Logic:**
+
+```
+ROM: "Mike Tyson's Punch-Out!! (Japan, USA) (En) (Rev 1).nes"
+Detected regions: ['jp', 'us']
+Config preferred_regions: ['us', 'wor', 'eu', 'jp']
+
+Priority order: ['us', 'jp', 'wor', 'eu']
+  - 'us' and 'jp' are from ROM (ordered by config priority)
+  - 'wor' and 'eu' are remaining config regions
+
+If API has 'us' region media → select 'us'
+If API only has 'jp' region media → select 'jp'
+If API only has 'eu' region media → select 'eu'
+If API only has 'br' region media → skip ROM (no match in priority list)
+```
+
+```
+ROM: "Cruisin' USA (World).n64"
+Detected regions: ['wor']
+Config preferred_regions: ['us', 'wor', 'eu', 'jp']
+
+Priority order: ['wor', 'us', 'eu', 'jp']
+  - 'wor' is from ROM
+  - 'us', 'eu', 'jp' are remaining config regions
+
+Note: "USA" in game title is not detected (only parenthetical regions matched)
+```
+
+## Game Name Verification
+
+### Overview
+To prevent ScreenScraper from returning incorrect game matches (e.g., "ZZZ Notgame" when expecting "The Legend of Zelda"), the tool performs fuzzy name matching between the ROM filename and the API response game name.
+
+### Verification Algorithm
+
+```python
+import re
+from difflib import SequenceMatcher
+
+def normalize_name(name):
+    """
+    Normalize a game name for comparison
+    
+    Removes:
+    - Region codes: (USA), (Europe), (Japan), etc.
+    - Disc/version numbers: (Disc 1), (Rev A), (v1.1), etc.
+    - Special characters and punctuation
+    - Extra whitespace
+    
+    Converts to lowercase
+    """
+    # Remove common region/version patterns
+    patterns = [
+        r'\(.*?\)',  # Anything in parentheses
+        r'\[.*?\]',  # Anything in brackets
+        r'[^a-zA-Z0-9\s]',  # Non-alphanumeric except spaces
+    ]
+    
+    result = name
+    for pattern in patterns:
+        result = re.sub(pattern, '', result)
+    
+    # Normalize whitespace and lowercase
+    result = ' '.join(result.split()).lower()
+    
+    return result
+
+def calculate_name_similarity(filename, api_game_name):
+    """
+    Calculate similarity ratio between ROM filename and API game name
+    
+    Args:
+        filename: ROM filename (e.g., "Legend of Zelda, The (USA).zip")
+        api_game_name: Game name from API (e.g., "The Legend of Zelda")
+    
+    Returns:
+        float: Similarity ratio between 0.0 and 1.0
+    """
+    # Extract base name without extension
+    base_name = os.path.splitext(filename)[0]
+    
+    # Normalize both names
+    norm_filename = normalize_name(base_name)
+    norm_api_name = normalize_name(api_game_name)
+    
+    # Calculate similarity using SequenceMatcher
+    similarity = SequenceMatcher(None, norm_filename, norm_api_name).ratio()
+    
+    return similarity
+
+def verify_game_name_match(filename, api_game_name, threshold=0.6):
+    """
+    Verify that API response game name reasonably matches ROM filename
+    
+    Args:
+        filename: ROM filename
+        api_game_name: Game name from ScreenScraper API
+        threshold: Minimum similarity ratio (default: 0.6 = 60%)
+    
+    Returns:
+        (is_valid: bool, similarity: float, reason: str)
+    """
+    similarity = calculate_name_similarity(filename, api_game_name)
+    
+    if similarity >= threshold:
+        return (True, similarity, f"Good match ({similarity:.1%})")
+    else:
+        return (False, similarity, f"Poor match ({similarity:.1%}, threshold: {threshold:.1%})")
+
+# Special cases handling
+def handle_special_cases(filename, api_game_name):
+    """
+    Handle special naming conventions that may cause false negatives
+    
+    Examples:
+    - "Zelda II" vs "The Adventure of Link"
+    - "SMB" vs "Super Mario Bros"
+    - Japanese names vs English names
+    """
+    # Extract key words from both names
+    filename_words = set(normalize_name(filename).split())
+    api_words = set(normalize_name(api_game_name).split())
+    
+    # Check for significant word overlap
+    common_words = filename_words.intersection(api_words)
+    
+    # If at least 2 significant words match, consider it valid
+    if len(common_words) >= 2:
+        return True
+    
+    return False
+```
+
+### Verification Thresholds
+
+```python
+# Configurable similarity thresholds
+VERIFICATION_THRESHOLDS = {
+    'strict': 0.8,      # 80% similarity required
+    'normal': 0.6,      # 60% similarity required (default)
+    'lenient': 0.4,     # 40% similarity required
+    'disabled': 0.0,    # Accept any match
+}
+```
+
+### API Response Validation
+
+Before parsing API responses, validate the format and structure to handle unexpected data gracefully:
+
+```python
+from lxml import etree
+import requests
+
+class APIResponseError(Exception):
+    """Custom exception for API response validation failures"""
+    pass
+
+def validate_and_parse_response(response, expected_format='xml'):
+    """
+    Validate HTTP response and parse XML API data (MVP: XML-only)
+    
+    Args:
+        response: requests.Response object
+        expected_format: 'xml' (only format supported in MVP)
+    
+    Returns:
+        Parsed XML tree (etree.Element)
+    
+    Raises:
+        APIResponseError: If validation or parsing fails
+    """
+    # 1. Validate HTTP status code
+    if response.status_code != 200:
+        raise APIResponseError(
+            f"HTTP {response.status_code}: {get_error_message(response.status_code)}"
+        )
+    
+    # 2. Check response body is not empty
+    if not response.content or len(response.content.strip()) == 0:
+        raise APIResponseError("Empty response body received")
+    
+    # 3. Verify Content-Type header (MVP: XML only)
+    content_type = response.headers.get('Content-Type', '').lower()
+    if 'xml' not in content_type:
+        log_warning(
+            f"Unexpected Content-Type: {content_type} (expected XML)"
+        )
+    
+    # 4. Parse and validate XML structure
+    try:
+        return validate_xml_response(response.content)
+    
+    except etree.XMLSyntaxError as e:
+        # Log raw response for debugging
+        log_error(
+            f"Failed to parse XML response:\n"
+            f"  Error: {str(e)}\n"
+            f"  Raw response (first 500 chars):\n"
+            f"  {response.text[:500]}"
+        )
+        raise APIResponseError(f"Malformed XML: {str(e)}")
+
+def validate_xml_response(content):
+    """
+    Validate and parse XML response structure
+    """
+    # Parse XML
+    root = etree.fromstring(content)
+    
+    # Check for expected root element
+    if root.tag != 'response':
+        raise APIResponseError(
+            f"Unexpected XML root element: <{root.tag}> (expected <response>)"
+        )
+    
+    # Check for error element
+    error_elem = root.find('.//error')
+    if error_elem is not None:
+        error_msg = error_elem.text or "Unknown error"
+        raise APIResponseError(f"API error: {error_msg}")
+    
+    # Verify game data exists
+    game_elem = root.find('.//jeu')
+    if game_elem is None:
+        raise APIResponseError(
+            "Missing <jeu> element in response (game not found or invalid structure)"
+        )
+    
+    return root
+
+# Note: JSON support is a Phase 2 feature - MVP uses XML only
+
+def get_error_message(status_code):
+    """Map HTTP status codes to user-friendly messages"""
+    error_messages = {
+        400: "Malformed request (check parameters)",
+        401: "API closed for non-members (server overload)",
+        403: "Invalid developer credentials",
+        404: "Game not found in ScreenScraper database",
+        423: "API fully closed (critical server issue)",
+        426: "Software blacklisted (update required)",
+        429: "Thread limit reached (reduce request rate)",
+        430: "Daily quota exceeded",
+        431: "Too many not-found requests (clean ROM set)",
+    }
+    return error_messages.get(status_code, f"Unknown error ({status_code})")
+
+# Usage in API client
+def query_screenscraper(rom_info, config):
+    """
+    Query ScreenScraper API with response validation
+    """
+    try:
+        # Build and send request
+        response = requests.get(api_url, params=params, timeout=30)
+        
+        # Validate and parse response
+        parsed_data = validate_and_parse_response(response, expected_format='xml')
+        
+        # Extract game information
+        game_data = extract_game_data(parsed_data)
+        
+        return {'success': True, 'data': game_data}
+    
+    except APIResponseError as e:
+        log_error(f"API validation failed for {rom_info['filename']}: {str(e)}")
+        return {'success': False, 'error': str(e), 'retry': should_retry(e)}
+    
+    except requests.RequestException as e:
+        log_error(f"Network error for {rom_info['filename']}: {str(e)}")
+        return {'success': False, 'error': 'Network error', 'retry': True}
+
+def should_retry(error):
+    """Determine if error is retryable"""
+    retryable = ['Empty response', 'Network error', 'timeout']
+    return any(keyword in str(error).lower() for keyword in retryable)
+```
+
+#### Response Validation Logging Examples
+
+```
+# Successful validation and parsing
+2025-11-13 14:30:10 [T1] Super Mario Bros (USA).zip (NES)
+  └─ API request sent (CRC: 50ABC90A, Size: 40KB)
+2025-11-13 14:30:11 [T1] Super Mario Bros (USA).zip (NES)
+  └─ ✓ Response validated (XML, 12KB)
+  └─ Match found (ID: 1234, Rating: 4.8/5)
+
+# Empty response body
+2025-11-13 14:32:45 [T2] Unknown Game.zip (NES)
+  └─ API request sent (CRC: DEADBEEF, Size: 128KB)
+2025-11-13 14:32:46 [T2] Unknown Game.zip (NES)
+  └─ ✗ Validation failed: Empty response body received
+  └─ Retrying in 5 seconds...
+
+# Malformed XML
+2025-11-13 14:35:20 [T1] Bad ROM.zip (NES)
+  └─ API request sent (CRC: BADC0DE1, Size: 64KB)
+2025-11-13 14:35:21 [T1] Bad ROM.zip (NES)
+  └─ ✗ Validation failed: Malformed XML (unexpected end tag)
+  └─ Raw response: <?xml version="1.0"?><response><jeu></response>
+  └─ Skipping after 3 failed attempts
+
+# Wrong Content-Type but valid XML
+2025-11-13 14:40:10 [T1] Zelda.zip (NES)
+  └─ API request sent (CRC: 3B123456, Size: 128KB)
+2025-11-13 14:40:11 [T1] Zelda.zip (NES)
+  └─ ⚠ Content-Type mismatch: text/html (expected XML)
+  └─ ✓ XML parsing successful anyway
+  └─ Match found (ID: 5678, Rating: 4.9/5)
+
+# Missing expected structure
+2025-11-13 14:42:30 [T2] Test.zip (NES)
+  └─ API request sent (CRC: 12345678, Size: 256KB)
+2025-11-13 14:42:31 [T2] Test.zip (NES)
+  └─ ✗ Validation failed: Missing <jeu> element (game not found)
+  └─ Marking as not found in database
+```
+
+### Integration into API Response Handling
+
+```python
+def process_api_response(rom_info, api_response, config):
+    """
+    Process API response and verify game name match
+    """
+    # Extract game name from API response
+    api_game_name = extract_game_name(api_response)
+    rom_filename = rom_info['filename']
+    
+    # Get verification threshold from config
+    threshold_level = config.get('name_verification', 'normal')
+    threshold = VERIFICATION_THRESHOLDS[threshold_level]
+    
+    # Verify name match
+    is_valid, similarity, reason = verify_game_name_match(
+        rom_filename, 
+        api_game_name, 
+        threshold
+    )
+    
+    if not is_valid:
+        # Try special cases before rejecting
+        if handle_special_cases(rom_filename, api_game_name):
+            log_warning(
+                f"Name verification: Special case accepted\n"
+                f"  ROM: {rom_filename}\n"
+                f"  API: {api_game_name}\n"
+                f"  Similarity: {similarity:.1%} (below threshold but word overlap detected)"
+            )
+            return True
+        
+        # Log rejection
+        log_error(
+            f"Name verification failed: {reason}\n"
+            f"  ROM: {rom_filename}\n"
+            f"  API: {api_game_name}\n"
+            f"  This may be an incorrect match from ScreenScraper"
+        )
+        
+        # Optionally prompt user for manual verification
+        if config.get('prompt_on_mismatch', False):
+            user_response = prompt_user(
+                f"Accept this match?\n"
+                f"  ROM: {rom_filename}\n"
+                f"  Game: {api_game_name}\n"
+                f"  Similarity: {similarity:.1%}\n"
+                f"[y]es / [n]o / [s]kip system: "
+            )
+            return user_response == 'y'
+        
+        return False
+    
+    log_info(
+        f"Name verification passed: {reason}\n"
+        f"  ROM: {rom_filename}\n"
+        f"  API: {api_game_name}"
+    )
+    return True
+```
+
+### Logging Examples
+
+```
+# Successful verification
+2025-11-13 14:45:10 [T1] Legend of Zelda, The (USA).zip (NES)
+  └─ Match found (ID: 1234, Rating: 4.9/5)
+  └─ ✓ Name verification: Good match (85%)
+  └─   ROM: Legend of Zelda, The (USA).zip
+  └─   API: The Legend of Zelda
+
+# Failed verification
+2025-11-13 14:45:15 [T1] Zelda.zip (NES)
+  └─ Match found (ID: 9999, Rating: 2.1/5)
+  └─ ✗ Name verification failed: Poor match (15%, threshold: 60%)
+  └─   ROM: Zelda.zip
+  └─   API: ZZZ Notgame
+  └─ ⚠ Skipping ROM due to name mismatch
+
+# Special case accepted
+2025-11-13 14:45:20 [T1] SMB3.zip (NES)
+  └─ Match found (ID: 5678, Rating: 4.8/5)
+  └─ ⚠ Name verification: Special case accepted
+  └─   ROM: SMB3.zip
+  └─   API: Super Mario Bros. 3
+  └─   Similarity: 45% (below threshold but word overlap detected)
+```
+
+### Configuration Settings
+
+```yaml
+scraping:
+  # Name verification
+  name_verification: "normal"  # strict, normal, lenient, disabled
+  prompt_on_mismatch: false    # Prompt user when names don't match
+  skip_on_mismatch: true       # Skip ROM if name verification fails
+  
+  # Search fallback (jeuRecherche.php)
+  enable_search_fallback: false     # Enable when hash matching fails
+  search_confidence_threshold: 0.98 # Minimum match confidence (98%)
+  
+  # Media verification
+  image_verification: true     # Enable image validation
+  image_min_dimension: 50      # Minimum width/height in pixels
+  pdf_verification: true       # Enable PDF validation
+  video_verification: true     # Enable video validation
+  retry_invalid_media: true    # Retry download if validation fails
+```
+
+## Multi-Disc Game Handling (M3U Files)
+
+### Overview
+Many game systems support multi-disc games (PlayStation, Sega CD, PC Engine CD, etc.). These are typically organized using M3U playlist files that reference individual disc image files.
+
+### M3U File Format
+M3U files are simple text playlists listing disc files:
+```
+# Game Title - Disc 1
+./.multidisc/Skies of Arcadia (Disc 1).cue
+./.multidisc/Skies of Arcadia (Disc 2).cue
+```
+
+### Detection and Processing
+
+**1. System Support Detection**
+```python
+# Check if system supports M3U from es_systems.xml
+def system_supports_m3u(system_extensions):
+    """
+    Check if system's extension list includes .m3u or .M3U
+    
+    Args:
+        system_extensions: String of extensions from <extension> tag
+        Example: ".bin .cue .chd .m3u .pbp"
+    
+    Returns:
+        True if M3U is supported
+    """
+    extensions = [ext.lower() for ext in system_extensions.split()]
+    return '.m3u' in extensions
+```
+
+**2. M3U File Processing**
+```python
+def process_m3u_file(m3u_path):
+    """
+    Extract disc 1 information from M3U playlist
+    
+    Args:
+        m3u_path: Path to the M3U file
+    
+    Returns:
+        dict with M3U info and disc 1 file reference
+    """
+    with open(m3u_path, 'r', encoding='utf-8') as f:
+        # Read lines, skip comments and empty lines
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                # First non-comment line is disc 1
+                disc1_path = line
+                break
+    
+    # Resolve relative path from M3U location
+    m3u_dir = os.path.dirname(m3u_path)
+    disc1_full_path = os.path.normpath(
+        os.path.join(m3u_dir, disc1_path)
+    )
+    
+    return {
+        'm3u_file': os.path.basename(m3u_path),
+        'm3u_path': m3u_path,
+        'disc1_file': os.path.basename(disc1_full_path),
+        'disc1_path': disc1_full_path,
+        'is_multidisc': True
+    }
+```
+
+**3. API Query Strategy**
+- Use disc 1 file properties (size, CRC) for API identification
+- ScreenScraper matches games based on disc 1 data
+- Store M3U filename as primary identifier for output
+
+**4. Media and Metadata Naming**
+- All downloaded media uses M3U basename
+- Gamelist entries reference M3U file (not disc files)
+- Example structure:
+  ```
+  roms/psx/
+    Skies of Arcadia.m3u
+    .multidisc/
+      Skies of Arcadia (Disc 1).cue
+      Skies of Arcadia (Disc 2).cue
+  
+  downloaded_media/psx/
+    covers/Skies of Arcadia.jpg       # Named for M3U
+    screenshots/Skies of Arcadia.png  # Named for M3U
+    videos/Skies of Arcadia.mp4       # Named for M3U
+  
+  gamelists/psx/gamelist.xml:
+    <game id="12345">
+      <path>./Skies of Arcadia.m3u</path>  # References M3U
+      <name>Skies of Arcadia</name>
+    </game>
+  ```
+
+**5. Error Handling**
+- Validate M3U file exists and is readable
+- Validate disc 1 path is valid (relative or absolute)
+- Validate disc 1 file exists and is accessible
+- Log warning if M3U references missing disc files
+- Skip M3U if disc 1 file cannot be found
+
+**6. Logging Examples**
+```
+2025-11-13 14:25:10 [T1] Skies of Arcadia (PSX)
+  └─ M3U playlist detected, using disc 1 for identification
+2025-11-13 14:25:10 [T1] Skies of Arcadia (PSX)
+  └─ Disc 1: .multidisc/Skies of Arcadia (Disc 1).cue
+2025-11-13 14:25:11 [T1] Skies of Arcadia (PSX)
+  └─ API request sent (CRC: 50ABC90A, Size: 750MB, Disc 1)
+2025-11-13 14:25:12 [T1] Skies of Arcadia (PSX)
+  └─ Match found (ID: 12345, Multi-disc game)
+2025-11-13 14:25:13 [T1] Skies of Arcadia (PSX)
+  └─ Saving media with M3U basename: Skies of Arcadia.jpg
+```
+
+## Disc Subdirectory Handling
+
+### Overview
+ES-DE supports organizing disc-based games in subdirectories where the directory name matches the file to be loaded. This is an alternative to M3U playlists and allows ES-DE to directly launch disc images while keeping related files organized.
+
+### Directory Structure
+Disc subdirectories follow this pattern:
+```
+roms/dreamcast/
+  Skies of Arcadia (Disc 1).cue/       # Directory name = file to load
+    Skies of Arcadia (Disc 1).cue      # File matching directory name
+    Skies of Arcadia (Disc 1).gdi
+    track01.bin
+    track02.bin
+    ...
+```
+
+### Detection and Processing
+
+**1. Disc Subdirectory Detection**
+```python
+def is_disc_subdirectory(path, system_extensions):
+    """
+    Check if path is a disc subdirectory
+    
+    A disc subdirectory is:
+    1. A directory (not a file)
+    2. Directory name has a valid ROM extension
+    3. Contains a file matching the directory name
+    
+    Args:
+        path: Path to check
+        system_extensions: List of valid extensions for system
+    
+    Returns:
+        True if path is a disc subdirectory
+    """
+    if not os.path.isdir(path):
+        return False
+    
+    dir_name = os.path.basename(path)
+    
+    # Check if directory name has valid extension
+    dir_ext = os.path.splitext(dir_name)[1].lower()
+    if dir_ext not in system_extensions:
+        return False
+    
+    # Check if matching file exists inside
+    expected_file = os.path.join(path, dir_name)
+    return os.path.isfile(expected_file)
+```
+
+**2. Disc Subdirectory Processing**
+```python
+def process_disc_subdirectory(subdir_path):
+    """
+    Extract disc file information from subdirectory
+    
+    Args:
+        subdir_path: Path to the disc subdirectory
+    
+    Returns:
+        dict with subdirectory info and contained file reference
+    """
+    dir_name = os.path.basename(subdir_path)
+    contained_file_path = os.path.join(subdir_path, dir_name)
+    
+    # Validate file exists
+    if not os.path.isfile(contained_file_path):
+        raise FileNotFoundError(
+            f"Expected file '{dir_name}' not found in subdirectory"
+        )
+    
+    return {
+        'subdir_name': dir_name,
+        'subdir_path': subdir_path,
+        'disc_file': dir_name,
+        'disc_file_path': contained_file_path,
+        'is_disc_subdir': True
+    }
+```
+
+**3. API Query Strategy**
+- Use contained file properties (size, CRC) for API identification
+- ScreenScraper matches games based on disc file data
+- Store directory name as primary identifier for output
+
+**4. Media and Metadata Naming**
+- All downloaded media uses directory basename
+- Gamelist entries reference the directory path without a trailing slash (ES-DE treats disc subdirs as file-like targets)
+- Example structure:
+  ```
+  roms/dreamcast/
+    Skies of Arcadia (Disc 1).cue/      # Directory on disk; gamelist stores without trailing /
+      Skies of Arcadia (Disc 1).cue
+      Skies of Arcadia (Disc 1).gdi
+      track01.bin
+      track02.bin
+  
+  downloaded_media/dreamcast/
+    covers/Skies of Arcadia (Disc 1).cue.jpg       # Named for directory
+    screenshots/Skies of Arcadia (Disc 1).cue.png  # Named for directory
+    videos/Skies of Arcadia (Disc 1).cue.mp4       # Named for directory
+  
+  gamelists/dreamcast/gamelist.xml:
+    <game id="12345">
+      <path>./Skies of Arcadia (Disc 1).cue</path>  # Stored without trailing /
+      <name>Skies of Arcadia</name>
+    </game>
+  ```
+
+**5. Error Handling**
+- Validate subdirectory exists and is a directory
+- Validate subdirectory name has valid extension
+- Validate contained file exists with matching name
+- Log warning if subdirectory structure is invalid
+- Skip subdirectory if expected file cannot be found
+
+**6. Logging Examples**
+```
+2025-11-13 14:25:10 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+  └─ Disc subdirectory detected, using contained file for identification
+2025-11-13 14:25:10 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+  └─ Contained file: Skies of Arcadia (Disc 1).cue (750MB)
+2025-11-13 14:25:11 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+  └─ API request sent (CRC: A1B2C3D4, Size: 750MB)
+2025-11-13 14:25:12 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+  └─ Match found (ID: 54321, Multi-disc game)
+2025-11-13 14:25:13 [T1] Skies of Arcadia (Disc 1).cue (Dreamcast)
+  └─ Saving media with directory basename: Skies of Arcadia (Disc 1).cue.jpg
+```
+
+**7. Interaction with M3U Files**
+
+Both disc subdirectories and M3U files can coexist:
+- M3U playlists provide multi-disc switching in ES-DE
+- Disc subdirectories provide organizational structure
+- Scanner should handle both independently
+- User may have:
+  - Only M3U files (with discs in .multidisc/)
+  - Only disc subdirectories
+  - Both M3U and disc subdirectories
+
+**8. Conflict Detection: M3U + Disc Subdirectory**
+
+If both an M3U file and a disc subdirectory exist for the same game, this is an unexpected configuration that should be flagged:
+
+```python
+def detect_rom_conflicts(system_roms):
+    """
+    Detect conflicting ROM configurations (M3U + disc subdir for same game)
+    
+    Args:
+        system_roms: List of ROM entries with types
+    
+    Returns:
+        List of conflict descriptions
+    """
+    conflicts = []
+    
+    # Group by base name (without extensions)
+    by_basename = {}
+    for rom in system_roms:
+        basename = get_game_basename(rom['filename'])
+        if basename not in by_basename:
+            by_basename[basename] = []
+        by_basename[basename].append(rom)
+    
+    # Check for M3U + disc subdir conflicts
+    for basename, roms in by_basename.items():
+        has_m3u = any(r.get('is_multidisc') for r in roms)
+        has_subdir = any(r.get('is_disc_subdir') for r in roms)
+        
+        if has_m3u and has_subdir:
+            m3u_path = next(r['m3u_path'] for r in roms if r.get('is_multidisc'))
+            subdir_path = next(r['subdir_path'] for r in roms if r.get('is_disc_subdir'))
+            
+            conflicts.append({
+                'game': basename,
+                'm3u': m3u_path,
+                'subdir': subdir_path,
+                'message': f"Game '{basename}' has both M3U file and disc subdirectory"
+            })
+    
+    return conflicts
+
+# Log conflicts and skip both entries
+for conflict in conflicts:
+    log_error(
+        f"ROM CONFLICT: {conflict['message']}\n"
+        f"  M3U file: {conflict['m3u']}\n"
+        f"  Disc subdirectory: {conflict['subdir']}\n"
+        f"  Skipping both entries - please use one format per game"
+    )
+```
+
+Example mixed structure:
+```
+roms/psx/
+  Final Fantasy VII.m3u              # M3U for multi-disc switching
+  .multidisc/
+    Final Fantasy VII (Disc 1).cue
+    Final Fantasy VII (Disc 2).cue
+  
+  Crash Bandicoot.cue/               # Disc subdirectory for single disc
+    Crash Bandicoot.cue
+    track01.bin
+```
+
+### File Naming Reference Table
+
+Explicit file naming rules for media and gamelist paths:
+
+| ROM Type | ROM Path | Basename for Media | Gamelist <path> | Example Media Path |
+|----------|----------|-------------------|----------------|--------------|
+| **Standard ROM** | `./Super Mario Bros (USA).zip` | `Super Mario Bros (USA)` | `./Super Mario Bros (USA).zip` | `downloaded_media/nes/covers/Super Mario Bros (USA).jpg` |
+| **M3U Playlist** | `./Final Fantasy VII.m3u` | `Final Fantasy VII` | `./Final Fantasy VII.m3u` | `media/psx/covers/Final Fantasy VII.jpg` |
+| **Disc Subdirectory** | `./Skies of Arcadia (Disc 1).cue` | `Skies of Arcadia (Disc 1).cue` | `./Skies of Arcadia (Disc 1).cue` | `downloaded_media/dreamcast/covers/Skies of Arcadia (Disc 1).cue.jpg` |
+
+#### Detailed Examples
+
+**Example 1: Standard ROM**
+```
+ROM File:
+  roms/nes/Super Mario Bros (USA).zip
+
+API Query Uses:
+  - Filename: "Super Mario Bros (USA).zip"
+  - File size and CRC hash
+
+Gamelist Entry:
+  <game id="1234" source="ScreenScraper.fr">
+    <path>./Super Mario Bros (USA).zip</path>
+    <name>Super Mario Bros.</name>
+  </game>
+
+Media Files:
+  downloaded_media/nes/covers/Super Mario Bros (USA).jpg
+  downloaded_media/nes/screenshots/Super Mario Bros (USA).png
+  downloaded_media/nes/titlescreens/Super Mario Bros (USA).png
+  downloaded_media/nes/marquees/Super Mario Bros (USA).png
+```
+
+**Example 2: M3U Playlist (Multi-disc)**
+```
+ROM Files:
+  roms/psx/Final Fantasy VII.m3u
+  roms/psx/.multidisc/Final Fantasy VII (Disc 1).cue
+  roms/psx/.multidisc/Final Fantasy VII (Disc 1).bin
+  roms/psx/.multidisc/Final Fantasy VII (Disc 2).cue
+  roms/psx/.multidisc/Final Fantasy VII (Disc 2).bin
+
+M3U Content:
+  ./.multidisc/Final Fantasy VII (Disc 1).cue
+  ./.multidisc/Final Fantasy VII (Disc 2).cue
+
+API Query Uses:
+  - Disc 1 filename: "Final Fantasy VII (Disc 1).cue"
+  - Disc 1 size and CRC hash
+
+Gamelist Entry:
+  <game id="5678" source="ScreenScraper.fr">
+    <path>./Final Fantasy VII.m3u</path>           <!-- M3U file -->
+    <name>Final Fantasy VII</name>
+  </game>
+
+Media Files (all use M3U basename):
+  downloaded_media/psx/covers/Final Fantasy VII.jpg          <!-- Not "Disc 1" -->
+  downloaded_media/psx/screenshots/Final Fantasy VII.png
+  downloaded_media/psx/titlescreens/Final Fantasy VII.png
+  downloaded_media/psx/marquees/Final Fantasy VII.png
+```
+
+**Example 3: Disc Subdirectory**
+```
+ROM Files:
+  roms/dreamcast/Skies of Arcadia (Disc 1).cue/    <!-- Directory -->
+    Skies of Arcadia (Disc 1).cue                   <!-- Matching file inside -->
+
+API Query: Uses contained file's name, size, and CRC hash
+Basename for Media: Directory name (Skies of Arcadia (Disc 1).cue)
+
+Gamelist Entry:
+  <game id="9012" source="ScreenScraper.fr">
+    <path>./Skies of Arcadia (Disc 1).cue</path>
+    <name>Skies of Arcadia</name>
+  </game>
+
+Media Files: Use directory name as basename (not contained filename)
+  downloaded_media/dreamcast/covers/Skies of Arcadia (Disc 1).cue.jpg
+  downloaded_media/dreamcast/screenshots/Skies of Arcadia (Disc 1).cue.png
+```
+
+**Note:** See [Disc Subdirectory Handling](#disc-subdirectory-handling) section for complete implementation details including detection, validation, and error handling.
+
+**Key Naming Rules:**
+1. **Standard ROMs**: Use actual filename (without directory path)
+2. **M3U Playlists**: Use M3U filename, NOT disc 1 filename
+3. **Disc Subdirectories**: Use directory name (which includes extension), NOT contained filename
+4. **Gamelist paths**: Always relative to ROM directory (starting with `./`)
+5. **Media paths**: Always relative to media directory, mirror ROM structure
+6. **Disc subdirectory gamelist paths**: Store without trailing `/`; ES-DE already treats the entry as a directory
+
+## Re-run Behavior & Incremental Updates (Phase 2 Feature)
+
+### Overview
+The tool will support intelligent re-run behavior to minimize API usage and avoid re-downloading unchanged media. This will be implemented in Phase 2. Two primary modes will be available:
+
+1. **Skip Mode** (default): Skip games already scraped with complete media
+2. **Update Mode** (opt-in): Verify and update existing metadata/media using hash comparison
+
+### Skip Mode
+
+**Purpose**: Quickly process only new ROMs, skip games already fully scraped.
+**Decision Logic**: Every ROM is evaluated against the [Skip Mode Decision Table](#skip-mode-decision-table-phase-2-feature), which dictates whether we perform a full scrape, media-only download, skip, or update.
+
+#### Gamelist Integrity Validation (Skip Mode Only)
+- Parse existing gamelist.xml entries and compare them to ROMs present on disk
+- Calculate the presence ratio: `present_roms / gamelist_entries`
+- If ratio < 95%, prompt the user before continuing with skip mode:
+  ```
+  ⚠ WARNING: Gamelist integrity issue detected
+  System: PlayStation (psx)
+  Gamelist entries: 523
+  ROMs present: 487 (93.1%)
+  Missing ROMs: 36
+  
+  This may indicate moved/deleted ROM files.
+  
+  Actions if you proceed:
+  - Remove 36 entries from gamelist.xml
+  - Move associated media to <paths.media>/CLEANUP/psx/<media_type>/
+  - Continue scanning for new ROMs
+  
+  Proceed? [y/N]:
+  ```
+- On confirmation:
+  * Remove missing ROM entries from gamelist.xml
+  * Move media files to the decommissioned media folder (`<paths.media>/CLEANUP/<system>/<media_type>/`)
+  * Continue with normal processing
+
+#### ROM Processing (Decision Table Driven)
+- Iterate ROMs discovered during scanning and map each to one of the table states (`full_scrape`, `media_only`, `skip`, `update_and_verify`)
+- Queue actions based on that state:
+  * `full_scrape` → API request + metadata + media downloads
+  * `media_only` → reuse metadata, download only missing media types
+  * `skip` → no API calls or downloads
+- `clean_mismatched_media: true` augments the `skip` path by deleting media files whose types are no longer enabled:
+  ```
+  Enabled: covers, screenshots, videos
+  Present: covers, screenshots, videos, marquees, manuals
+  Action: Delete marquees/ and manuals/ files for this game
+  Log: "✓ Cleaned 2 media types not in enabled list"
+  ```
+- When the table outputs `media_only`, queue just the missing media types (no API call) and log counts, e.g. `"⟳ Downloading missing media (3/5 types present)"`
+
+**Logging Examples**:
+```
+2025-11-13 14:30:15 [T1] Super Mario Bros (NES)
+  └─ ✓ Skipped (metadata + 5/5 media present)
+2025-11-13 14:30:15 [T1] The Legend of Zelda (NES)
+  └─ ⟳ Missing 2 media types, downloading...
+2025-11-13 14:30:16 [T1] Metroid (NES)
+  └─ ℹ New ROM detected, queuing for scraping
+2025-11-13 14:30:16 [T1] Super Metroid (SNES)
+  └─ ✓ Cleaned 1 media type not in enabled list (manuals)
+```
+
+### Update Mode
+
+**Purpose**: Refresh metadata and verify media files are current, downloading only what changed.
+
+**Activation**: Set `update_mode: true` via configuration or use `--update` flag.
+
+**Behavior**:
+1. **Always Query API**
+   - Even for games in gamelist.xml
+   - Fetch fresh metadata and media information
+   - Compare against local data
+
+2. **Metadata Updates**
+   - Compare API response metadata vs gamelist.xml entry
+   - Update changed fields (name, description, rating, etc.)
+   - Log: `"⟳ Metadata updated (3 fields changed)"`
+
+3. **Hash-Based Media Verification**
+   
+   **Hash Priority** (use first available):
+   ```python
+   1. File size (bytes) - fastest, least reliable
+   2. CRC32 hash - fast, good reliability
+   3. SHA1 hash - slower, high reliability
+   ```
+   
+   **Verification Process**:
+   ```python
+   def verify_media_file(local_path, api_media_entry):
+       """
+       Verify local media file against API response data
+       
+       Args:
+           local_path: Path to local media file
+           api_media_entry: Media entry from API response with:
+               - url: Download URL
+               - size: File size in bytes
+               - crc: CRC32 hash (optional)
+               - sha1: SHA1 hash (optional)
+       
+       Returns:
+           (needs_download: bool, reason: str)
+       """
+       if not os.path.exists(local_path):
+           return (True, "file missing")
+       
+       local_size = os.path.getsize(local_path)
+       
+       # Size check
+       if 'size' in api_media_entry:
+           if local_size != api_media_entry['size']:
+               return (True, f"size mismatch ({local_size} != {api_media_entry['size']})")
+       
+       # CRC32 check (if available)
+       if 'crc' in api_media_entry:
+           local_crc = calculate_crc32(local_path)
+           if local_crc.upper() != api_media_entry['crc'].upper():
+               return (True, f"CRC mismatch ({local_crc} != {api_media_entry['crc']})")
+           return (False, "size + CRC match")
+       
+       # SHA1 check (if available)
+       if 'sha1' in api_media_entry:
+           local_sha1 = calculate_sha1(local_path)
+           if local_sha1.upper() != api_media_entry['sha1'].upper():
+               return (True, f"SHA1 mismatch")
+           return (False, "size + SHA1 match")
+       
+       # Only size available and it matched
+       return (False, "size match only")
+   ```
+
+4. **Decommissioned Media Handling**
+   
+   **Scenario**: Media type no longer available from ScreenScraper
+   
+   **Process**:
+   ```
+   For each local media file:
+       1. Check if media type exists in API response
+       2. If media type not in response AND is enabled:
+          a) Mark for decommission
+          b) Move to: ``<paths.media>/CLEANUP/<system>/<media_type>/<filename>`` (decommissioned media folder)
+          c) Log: "⚠ Media decommissioned: marquees/game.png (no longer available)"
+   
+   After marking all decommissions for game:
+       3. Count remaining media files
+       4. If remaining_count == 0:
+          a) Log error: "✗ Error: All media would be removed for <game>"
+          b) Revert all decommission operations for this game
+          c) Keep all existing media files in place
+          d) Skip media download phase for this game
+   ```
+   
+   **Directory Structure**:
+   ```
+   downloaded_media/
+   ├── CLEANUP/              # Decommissioned media (Phase 2)
+   │   ├── nes/
+   │   │   ├── covers/
+   │   │   ├── videos/
+   │   │   └── ...
+   │   ├── snes/
+   │   │   ├── marquees/
+   │   │   └── ...
+   │   └── ...
+   └── ...
+   ```
+   
+   **Logging Example**:
+   ```
+   2025-11-13 14:35:20 [T1] Mega Man X (SNES)
+     └─ ⟳ Update mode: checking for changes...
+   2025-11-13 14:35:21 [T1] Mega Man X (SNES)
+     └─ ✓ Metadata current (no changes)
+   2025-11-13 14:35:21 [T1] Mega Man X (SNES)
+     └─ ✓ Media verified: covers/Mega Man X.jpg (size + CRC match)
+   2025-11-13 14:35:21 [T1] Mega Man X (SNES)
+     └─ ⟳ Media changed: screenshots/Mega Man X.png (CRC mismatch)
+   2025-11-13 14:35:22 [T1] Mega Man X (SNES)
+     └─ ⚠ Media decommissioned: marquees/Mega Man X.png (no longer available)
+   2025-11-13 14:35:23 [T1] Mega Man X (SNES)
+     └─ ✓ Update complete (1 media downloaded, 1 decommissioned)
+   
+   2025-11-13 14:36:10 [T2] Rare Game (Genesis)
+     └─ ⟳ Update mode: checking for changes...
+   2025-11-13 14:36:11 [T2] Rare Game (Genesis)
+     └─ ⚠ All 3 media types no longer available
+   2025-11-13 14:36:11 [T2] Rare Game (Genesis)
+     └─ ✗ Error: All media would be removed, keeping existing files
+   2025-11-13 14:36:11 [T2] Rare Game (Genesis)
+     └─ ℹ Metadata updated, media unchanged
+   ```
+
+5. **Selective Downloads**
+   - Download only files that:
+     * Don't exist locally
+     * Failed hash verification
+     * Are new media types (not previously available)
+   - Skip files with matching hashes
+   - Update progress display with verification status
+
+### Configuration Settings
+
+New configuration options:
+
+```yaml
+# Directory paths (all configurable)
+paths:
+  roms: "./roms"                      # ROM files root directory
+  media: "./downloaded_media"          # Downloaded media root directory
+  gamelists: "./gamelists"             # Gamelist XML files root directory
+  es_systems: "./es_systems.xml"       # ES-DE system definitions file
+
+scraping:
+  # Skip mode behavior
+  skip_scraped: true              # Skip games with metadata + all media
+  skip_existing_media: true       # Skip individual media files if present
+  clean_mismatched_media: false   # Delete media types not in enabled list
+  gamelist_integrity_threshold: 0.95  # Warn if < 95% ROMs present
+  
+  # Update mode behavior
+  update_mode: false              # Enable hash-based verification and updates
+  hash_verification_method: "auto"  # "auto", "size", "crc", "sha1"
+  
+  # M3U multi-disc handling
+  m3u_support: true  # Enable M3U playlist processing
+  
+  # Disc subdirectory handling
+  disc_subdirectory_support: true  # Enable disc subdirectory processing
+  
+  # Game name verification
+  name_verification: "normal"  # strict, normal, lenient, disabled
+  prompt_on_mismatch: false    # Prompt user when names don't match
+  skip_on_mismatch: true       # Skip ROM if name verification fails
+  
+  # Search fallback (jeuRecherche.php)
+  enable_search_fallback: false     # Enable text search when hash matching fails
+  search_confidence_threshold: 0.98 # Minimum confidence score (0.0-1.0, default: 98%)
+  
+  # Media verification
+  image_verification: true     # Enable image validation
+  image_min_dimension: 50      # Minimum width/height in pixels
+  pdf_verification: true       # Enable PDF validation
+  video_verification: true     # Enable video validation
+  retry_invalid_media: true    # Retry download if validation fails
+  
+  # Checkpoint system (Phase 2)
+  checkpoint_interval: 100     # Save progress every N ROMs (0 = disable)
+  
+  # Region and language preferences
+  preferred_regions: [us, wor, eu, jp, ss]  # Default region priority for media selection
+  preferred_language: en                 # Default language code
+
+output:
+  # Add favorite tag for highly rated games
+  auto_favorite_threshold: 0.9  # 4.5+ stars
+
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  file: null   # Optional: log file path (relative to CWD, or absolute path)
+               # If null/not set, console logging only
+  console: true
+  # Note: Credentials (passwords, API keys) are NEVER logged
+
+# Derived paths (not configurable):
+# - Checkpoint files: <gamelists>/<system>/.curateur_checkpoint.json
+# - Error summary logs: <gamelists>/<system>/curateur_summary.log
+# - Decommissioned media: <media>/CLEANUP/<system>/<media_type>/
+```
+
+### Configuration Validation
+
+The configuration file must be validated at startup before any processing begins. Any validation errors should be logged with detailed information and cause the program to exit immediately.
+
+```python
+import sys
+from pathlib import Path
+
+class ConfigValidationError(Exception):
+    """Configuration validation failed"""
+    pass
+
+def validate_config(config):
+    """
+    Validate configuration file at startup
+    
+    Args:
+        config: Parsed YAML configuration dictionary
+    
+    Raises:
+        ConfigValidationError: If validation fails
+    """
+    errors = []
+    
+    # Required credentials
+    required_creds = ['dev_id', 'dev_password', 'soft_name', 'user_id', 'user_password']
+    for cred in required_creds:
+        if not config.get('screenscraper', {}).get(cred):
+            errors.append(f"Missing required credential: screenscraper.{cred}")
+    
+    # Validate configured paths exist (or can be created for output dirs)
+    paths = config.get('paths', {})
+    
+    # Input paths must exist
+    roms_dir = paths.get('roms')
+    if not roms_dir:
+        errors.append("Missing required path: paths.roms")
+    elif not Path(roms_dir).exists():
+        errors.append(f"ROMs directory does not exist: {roms_dir}")
+    
+    es_systems = paths.get('es_systems')
+    if not es_systems:
+        errors.append("Missing required path: paths.es_systems")
+    elif not Path(es_systems).is_file():
+        errors.append(f"es_systems.xml not found: {es_systems}")
+    
+    # Output paths must be writable (will be created if needed)
+    media_dir = paths.get('media')
+    if not media_dir:
+        errors.append("Missing required path: paths.media")
+    
+    gamelists_dir = paths.get('gamelists')
+    if not gamelists_dir:
+        errors.append("Missing required path: paths.gamelists")
+    
+    # Validate media types
+    valid_media_types = {
+        'covers', 'screenshots', 'titlescreens', 'marquees',
+        'videos', 'manuals', 'fanart', 'backcovers', 
+        '3dboxes', 'physicalmedia', 'miximages'
+    }
+    configured_types = config.get('scraping', {}).get('media_types', [])
+    for media_type in configured_types:
+        if media_type not in valid_media_types:
+            errors.append(f"Invalid media type: {media_type}. Valid types: {', '.join(sorted(valid_media_types))}")
+    
+    # Validate name verification setting
+    valid_verification = {'strict', 'normal', 'lenient', 'disabled'}
+    name_verif = config.get('scraping', {}).get('name_verification', 'normal')
+    if name_verif not in valid_verification:
+        errors.append(f"Invalid name_verification: {name_verif}. Valid values: {', '.join(sorted(valid_verification))}")
+    
+    # Validate numeric settings
+    crc_limit = config.get('scraping', {}).get('crc_size_limit')
+    if crc_limit is not None and (not isinstance(crc_limit, int) or crc_limit < 0):
+        errors.append(f"Invalid crc_size_limit: must be a positive integer")
+    
+    min_dimension = config.get('scraping', {}).get('image_min_dimension', 50)
+    if not isinstance(min_dimension, int) or min_dimension < 1:
+        errors.append(f"Invalid image_min_dimension: must be a positive integer")
+    
+    # Log all errors and exit if any found
+    if errors:
+        log_error("CONFIGURATION VALIDATION FAILED")
+        log_error("="*70)
+        for i, error in enumerate(errors, 1):
+            log_error(f"  {i}. {error}")
+        log_error("="*70)
+        log_error("Please fix the configuration errors and try again.")
+        raise ConfigValidationError(f"Found {len(errors)} configuration error(s)")
+    
+    log_info("Configuration validation passed")
+
+# Usage at startup
+def main():
+    try:
+        config_path = parse_args().config
+        config = load_config(config_path)
+        validate_config(config)
+        # Proceed with scraping...
+    except ConfigValidationError as e:
+        sys.exit(1)
+    except Exception as e:
+        log_error(f"Unexpected error during startup: {e}")
+        sys.exit(1)
+```
+
+**Validation Error Example:**
+```
+2025-11-13 14:00:00 [ERROR] CONFIGURATION VALIDATION FAILED
+2025-11-13 14:00:00 [ERROR] ======================================================================
+2025-11-13 14:00:00 [ERROR]   1. Missing required credential: screenscraper.user_password
+2025-11-13 14:00:00 [ERROR]   2. Path does not exist: paths.roms_dir = /nonexistent/path
+2025-11-13 14:00:00 [ERROR]   3. Invalid media type: video-hd. Valid types: 3dboxes, backcovers, covers, fanart, manuals, marquees, miximages, physicalmedia, screenshots, titlescreens, videos
+2025-11-13 14:00:00 [ERROR] ======================================================================
+2025-11-13 14:00:00 [ERROR] Please fix the configuration errors and try again.
+```
+
+## Implementation Phases
+
+### MVP Roadmap & Success Criteria
+
+**MVP Goals**
+- Ship a dependable single-threaded scraper that ingests ROMs (standard, M3U, disc subdirectories), fetches metadata via `jeuInfos.php`, downloads the core artwork set, and emits ES-DE ready gamelists.
+- Provide deterministic logging, error handling, and directory layouts so users can run the tool unattended on moderate-sized libraries.
+
+**MVP Success Criteria**
+- ✅ Scan coverage: every ROM discovered in a configured system produces either a gamelist entry or a logged, actionable error (missing media, API miss, validation failure).
+- ✅ Metadata fidelity: generated gamelist fields round-trip ScreenScraper values (names, descriptions, ratings, regions) and decode HTML entities.
+- ✅ Media completeness: for each enabled media type in MVP (covers, screenshots, titlescreens, marquees) the scraper downloads/validates assets or records a clear failure.
+- ✅ Operational safety: filesystem writes are atomic, fatal errors halt cleanly, and the error summary log is emitted per system.
+- ✅ Configuration clarity: the user config (derived from `config.yaml.example`) drives paths, credentials, and media preferences used throughout the run.
+
+**Phase Overview**
+
+| MVP Phase | Objective | Key Deliverables |
+|-----------|-----------|------------------|
+| Phase 1: Core Infrastructure | Establish configuration, dependency, and system parsing foundation | Project scaffolding, config loader/validator, `es_systems.xml` parser |
+| Phase 2: ROM Scanner | Enumerate ROM artifacts and detect complex layouts | Directory traversal, disc-subdir + M3U handling, ROM metadata extraction |
+| Phase 3: ScreenScraper API Client | Communicate with ScreenScraper reliably | Request builder, response validation, name verification, rate limiting, unified error handler hooks |
+| Phase 4: Media Downloader | Acquire and validate core media assets | Media selection logic, download pipeline, image verification, directory organization |
+| Phase 5: Gamelist Generator | Emit ES-DE compliant gamelist files | XML builder with mapping + encoding, relative path handling, atomic writes |
+| Phase 6: Integration & Testing | Connect modules and prove end-to-end stability | Orchestrated workflow, logging/metrics, unit + integration tests, sample ROM validation |
+| Phase 7: Polish & Optimization | Final quality pass for MVP | Performance/UX touch-ups, dry-run option, documentation + release checklist |
+
+Detailed tasks for each phase follow below.
+
+### Phase 1: Core Infrastructure
+**Estimated Time: 3-5 days**
+
+1. Project setup
+   - Initialize Python project structure
+   - Set up virtual environment
+   - Install dependencies (requests, lxml, pyyaml, etc.)
+
+2. Configuration management
+   - YAML config parser
+   - Environment variable support
+   - Validation of required settings
+
+3. es_systems.xml parser
+   - Extract system definitions (name, fullname, platform, path, extensions)
+   - Resolve ROM paths by replacing `%ROMPATH%/` or `%ROMPATH%\` placeholder with configured top-level ROM directory
+   - Build system → platform mapping
+   - Validate resolved paths and extensions
+
+4. System ID mapping generator (one-time helper utility)
+   - Create `curateur/tools/generate_system_map.py` helper script
+   - Parse `es_systems.xml` to extract `<system><fullname>` and `<platform>` pairs
+   - Parse `systemesListe.xml` (or fetch from `https://api.screenscraper.fr/api2/systemesListe.php?devid=xxx&devpassword=yyy&softname=zzz&output=XML`) to extract `<systeme><id>` and `<noms><noms_commun>` entries
+   - Match `fullname` against comma-separated values in `noms_commun` (case-insensitive, whitespace-trimmed)
+   - Generate Python dictionary constant mapping `platform` to `systemeid` (e.g., `{"nes": 3, "genesis": 1}`)
+   - Log unmatched platforms from `es_systems.xml` for manual review
+   - Warn if multiple `systeme` entries match a single `fullname`
+   - Output formatted constant for manual insertion into `curateur/api/system_map.py`
+   - Document as manual step since system IDs rarely change
+
+### Phase 2: ROM Scanner
+**Estimated Time: 2-3 days**
+
+1. Directory traversal
+   - Iterate through systems from parsed `es_systems.xml`
+   - For each system, check if resolved ROM directory exists:
+     * If directory does not exist: Log warning, skip system, continue to next
+     * If directory exists but is empty: Log info message, skip system, continue to next
+   - Walk ROM directory structure for existing, non-empty directories
+   - Match files to system extensions
+   - Detect disc subdirectories (directories named for contained file)
+   - Detect M3U files for multi-disc games
+   - **Detect and log M3U + disc subdir conflicts**
+
+2. File metadata collection
+   - For disc subdirectories:
+     * Validate directory name has valid extension
+     * Locate matching file inside directory
+     * Calculate contained file size and CRC hash
+     * Store both directory name and file metadata
+   - For M3U playlists:
+     * Parse M3U to extract disc 1 reference
+     * Resolve and validate disc 1 file path
+     * Calculate disc 1 file size and CRC hash
+     * Store both M3U and disc 1 metadata
+   - For standard ROMs:
+     * Calculate file sizes
+     * Compute CRC32 hashes (with size limit)
+   - Store in data structure for processing
+
+3. Progress reporting
+   - Count total ROMs found
+   - Display per-system statistics
+   - Simple sequential logging
+
+### Phase 3: ScreenScraper API Client
+**Estimated Time: 3-4 days**
+
+1. HTTP client setup
+   - Configure requests library
+   - Add user agent and headers
+   - SSL/TLS configuration
+
+2. API request builder
+   - Parameter encoding
+   - URL construction for jeuInfos.php
+
+3. Response validation & parsing
+   - Validate HTTP status code (200 for success)
+   - Check Content-Type header (application/xml)
+   - Verify response body is not empty
+   - XML parsing with lxml
+   - Verify expected structure (<response>, <jeu> elements)
+   - Extract game metadata
+   - Extract media URLs
+   - Handle malformed responses with unified error handling
+
+4. Name verification system
+   - Implement name normalization (remove regions, special chars)
+   - Implement fuzzy matching with SequenceMatcher
+   - Configure similarity thresholds
+   - Handle special cases (abbreviations, word overlap)
+   - Skip ROM on verification failure
+
+5. Rate limiting
+   - Parse API limits from first response (maxrequestspermin, maxthreads)
+   - Use API-provided limits (single-threaded for MVP)
+   - Simple request spacing based on limits
+   - Monitor daily quota
+
+6. Unified error handling
+   - Use ScraperError, FatalError, SkippableError classes
+   - HTTP error code mapping (404→skip, 429→retry, 403/423→stop)
+   - Exponential backoff for retries
+   - Stop on filesystem errors
+
+### Phase 4: Media Downloader
+**Estimated Time: 2-3 days**
+
+1. Download manager
+   - Sequential downloads (single-threaded)
+   - Progress tracking
+   - File writing with error handling
+
+2. Image verification system
+   - Use PIL/Pillow to validate format, integrity, and dimensions (50x50 min)
+   - Handle corrupted downloads and HTML error pages
+   - Automatic retry on validation failure
+   - Delete invalid files
+
+3. Region prioritization
+   - Filename region detection
+   - Media selection algorithm
+   - Fallback logic
+
+4. File organization
+   - Create directory structure (covers/, screenshots/, titlescreens/, marquees/)
+   - Consistent naming scheme for M3U, disc subdirs, and standard ROMs
+   - Handle filesystem errors with fatal error handling
+
+### Phase 5: Gamelist Generator
+**Estimated Time: 2-3 days**
+
+1. XML builder
+   - ES-DE schema compliance
+   - Proper escaping and encoding
+   - Pretty printing
+
+2. Data mapping
+   - ScreenScraper → ES-DE fields
+   - Date format conversion
+   - Rating normalization (0-5 → 0-1)
+   - Media path references
+   - HTML entity decoding (html.unescape() for all text fields)
+
+3. File writing
+   - Atomic writes (temp + rename)
+   - Backup existing gamelists
+   - Validation
+
+### Phase 6: Integration & Testing
+**Estimated Time: 2-3 days**
+
+1. End-to-end workflow
+   - Connect all components
+   - Error propagation with unified handling
+   - Fatal error stops, skippable errors continue
+
+2. Progress logging
+   - Simple sequential logging with timestamps
+   - System and ROM progress display
+   - Success/failure tracking
+   - API quota monitoring
+   - ETA calculation
+   - Summary statistics
+
+3. Testing
+   - Unit tests for parsers (es_systems, M3U, disc subdir detection)
+   - Filename parsing suites using No-Intro and Redump conventions (region codes, disc numbers, revisions, languages)
+   - Integration tests across sample ROM sets covering standard files, M3U playlists, and disc subdirectories
+   - Validate generated gamelists (schema, relative paths, HTML decoding)
+   - Verify conflict detection (M3U + disc subdir), CRC hashing thresholds, and error logging flows
+
+4. Documentation
+   - User guide
+   - Configuration examples
+   - Troubleshooting
+
+### Phase 7: Polish & Optimization
+**Estimated Time: 1-2 days**
+
+1. Performance optimization
+   - Memory management
+   - Efficient file I/O
+
+2. User experience
+   - Clear error messages
+   - Dry-run option
+   - Better logging output
+
+3. Final testing
+   - Large ROM set testing
+   - Edge case validation
+   - Documentation review
+
+### Milestone 2 Roadmap & Success Criteria
+
+**Milestone 2 Goals**
+- Introduce intelligent re-run behavior (skip/update modes), advanced media handling, and richer UX so large libraries can be maintained incrementally with minimal redundancy.
+- Extend media coverage beyond MVP, add resilience features (checkpointing, cleanup), and provide a modern console experience.
+
+**Milestone 2 Success Criteria**
+- ✅ Skip Mode: re-run on an existing gamelist completes by skipping already-satisfied ROMs, downloading only missing media, and cleaning mismatched media types.
+- ✅ Update Mode: size/hash verification detects stale metadata/media, downloads replacements, and decommissions removed assets safely into the cleanup structure.
+- ✅ Recovery & UX: checkpoint/resume works for interrupted runs; enhanced console UI surfaces progress, prompts, and warnings without overwhelming logs.
+- ✅ Coverage Expansion: optional media (videos, manuals, fanart, etc.) can be enabled, verified, and downloaded with the same integrity guarantees as MVP media types.
+
+**Milestone 2 Phase Overview**
+
+| Milestone 2 Phase | Objective | Key Deliverables |
+|-------------------|-----------|------------------|
+| Phase A: Intelligent Skip & Validation | Implement skip mode, gamelist integrity validation, and media-only queueing | Decision-table-driven scheduler, gamelist cleanup flow, media mismatch cleaning |
+| Phase B: Update & Media Governance | Add update mode with hash verification, decommissioned media management, and expanded media verification (PDF/video) | Hash pipelines, cleanup folder orchestration, verification utilities |
+| Phase C: Resilience & UX | Improve operability for long runs | Checkpoint/resume, richer console UI (rich split panels, interactive prompts), configurable rate-limit overrides |
+| Phase D: Performance & Parallelism | Reduce runtime for large libraries | Multi-threaded downloads/API calls within ScreenScraper limits, tunable throttles |
+
+Milestone 2 implementation details will be elaborated after MVP delivery, but this roadmap and its success criteria define the target scope.
+
+## Dependencies
+
+### Core Libraries
+```
+requests>=2.31.0          # HTTP client
+lxml>=4.9.0              # XML parsing
+pyyaml>=6.0              # Config parsing
+rich>=13.0.0             # Terminal UI with split panels
+pillow>=10.0.0           # Image validation and verification
+zlib                      # CRC32 calculation (built-in)
+hashlib                   # SHA1 calculation (built-in)
+pathlib                   # Path handling (built-in)
+html                      # HTML entity decoding (built-in)
+```
+
+### Optional
+```
+py7zr>=0.20.0            # 7z archive support
+```
+
+## File Structure
+
+```
+curateur/
+├── README.md
+├── IMPLEMENTATION_PLAN.md (this file)
+├── requirements.txt
+├── config.yaml.example
+├── setup.py
+│
+├── curateur/
+│   ├── __init__.py
+│   ├── __main__.py          # CLI entry point
+│   │
+│   ├── tools/               # One-time helper utilities
+│   │   ├── __init__.py
+│   │   └── generate_system_map.py  # Platform → systemeid mapper generator
+│   │
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── loader.py         # Config file loading
+│   │   └── validator.py      # Config validation
+│   │
+│   ├── parsers/
+│   │   ├── __init__.py
+│   │   ├── es_systems.py     # Parse es_systems.xml
+│   │   └── gamelist.py       # Parse/generate gamelist.xml
+│   │
+│   ├── scanner/
+│   │   ├── __init__.py
+│   │   ├── rom_scanner.py    # Find and catalog ROMs
+│   │   ├── hasher.py         # CRC32 and SHA1 calculation
+│   │   ├── m3u_parser.py     # M3U playlist parsing for multi-disc games
+│   │   ├── disc_subdir.py    # Disc subdirectory detection and processing
+│   │   ├── gamelist_checker.py  # Parse gamelist.xml and verify integrity
+│   │   └── skip_logic.py     # Skip mode decision logic
+│   │
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── client.py         # ScreenScraper API client
+│   │   ├── rate_limiter.py   # Rate limiting logic
+│   │   ├── response.py       # Response parsing
+│   │   ├── name_verifier.py  # Game name verification and fuzzy matching
+│   │   ├── search.py         # jeuRecherche.php search fallback
+│   │   └── system_map.py     # Platform → systemeid mapping
+│   │
+│   ├── downloader/
+│   │   ├── __init__.py
+│   │   ├── media_dl.py       # Download media files
+│   │   ├── region.py         # Region detection & priority
+│   │   ├── media_verifier.py # Hash-based media verification
+│   │   ├── image_verifier.py # Image validation (format, dimensions)
+│   │   └── decommission.py   # Decommissioned media management
+│   │
+│   ├── generator/
+│   │   ├── __init__.py
+│   │   └── gamelist.py       # Generate gamelist.xml
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── logger.py         # Logging setup
+│       ├── progress.py       # Progress tracking with split UI
+│       ├── console_ui.py     # Rich-based console interface
+│       └── xml_utils.py      # XML helpers
+│
+└── tests/
+    ├── __init__.py
+    ├── test_config.py
+    ├── test_parsers.py
+    ├── test_scanner.py
+    ├── test_api.py
+    ├── test_downloader.py
+    └── test_generator.py
+```
+
+### Package Responsibilities & Public APIs
+
+| Package / Module | Responsibility | Public API |
+|------------------|----------------|-----------|
+| `curateur.config.loader` | Load user config (from `config.yaml` derived via `config.yaml.example`), apply environment overrides, and produce runtime config dict | `load_config(path: str | Path) -> dict` |
+| `curateur.config.validator` | Validate configuration schema paths, credentials, and feature flags | `validate_config(config: dict) -> None` (raises `ConfigValidationError`) |
+| `curateur.parsers.es_systems` | Parse `es_systems.xml` into structured system definitions | `parse_es_systems(path: str | Path) -> list[SystemDefinition]` |
+| `curateur.scanner.rom_scanner` | Traverse ROM directories, detect standard/M3U/disc-subdir items, and emit `RomEntry` records | `scan_system(system: SystemDefinition, config: Config) -> list[RomEntry]` |
+| `curateur.api.client` | Communicate with ScreenScraper (`jeuInfos.php`), handle retries, return parsed responses | `fetch_game_info(query: ApiQuery) -> ApiResponse` |
+| `curateur.api.name_verifier` | Normalize names and enforce similarity thresholds | `verify_match(rom_name: str, api_name: str, threshold: float) -> MatchResult` |
+| `curateur.downloader.media_dl` | Build download queue, fetch media, invoke validators, return per-type status | `download_media(requests: list[MediaRequest], config: Config) -> MediaResult` |
+| `curateur.generator.gamelist` | Build ES-DE gamelist XML, manage atomic writes | `write_gamelist(system: SystemDefinition, games: list[GameRecord], output_dir: Path) -> Path` |
+| `curateur.utils.progress` | Track per-system progress, logging, and error summaries | `ProgressTracker`, `ErrorLogger` classes with `start_system`, `log_rom`, `write_summary` |
+| `curateur.utils.logger` | Configure logging sinks (console/file) using config | `setup_logging(settings: dict) -> logging.Logger` |
+| `curateur.errors` | Shared exception types | `ScraperError`, `FatalError`, `SkippableError`, `ConfigValidationError` |
+
+### Stub Module Contracts
+
+```python
+# curateur/config/loader.py
+from pathlib import Path
+from typing import Any, Dict
+import yaml
+
+def load_config(path: str | Path) -> Dict[str, Any]:
+    """
+    Load YAML config, merge environment overrides, and return a dict ready for validation.
+    Raises ConfigValidationError if the file cannot be read or parsed.
+    """
+```
+
+```python
+# curateur/config/validator.py
+from typing import Any, Dict
+from curateur.errors import ConfigValidationError
+
+def validate_config(config: Dict[str, Any]) -> None:
+    """
+    Ensure mandatory credentials, paths, and feature flags are present and valid.
+    Raises ConfigValidationError when constraints fail.
+    """
+```
+
+```python
+# curateur/parsers/es_systems.py
+from pathlib import Path
+from typing import List
+from curateur.models import SystemDefinition
+
+def parse_es_systems(path: str | Path) -> List[SystemDefinition]:
+    """
+    Parse es_systems.xml to produce SystemDefinition objects (name, rom path, extensions, platform id).
+    """
+```
+
+```python
+# curateur/scanner/rom_scanner.py
+from typing import List
+from curateur.models import Config, RomEntry, SystemDefinition
+
+def scan_system(system: SystemDefinition, config: Config) -> List[RomEntry]:
+    """
+    Walk the system ROM directory, classify ROMs (standard, M3U, disc subdir),
+    compute metadata (size, CRC when applicable), and return RomEntry objects.
+    """
+```
+
+```python
+# curateur/api/client.py
+from curateur.models import ApiQuery, ApiResponse
+
+def fetch_game_info(query: ApiQuery) -> ApiResponse:
+    """
+    Build and execute a jeuInfos.php request, enforce rate limits, validate the response,
+    and return ApiResponse data for downstream processing.
+    """
+```
+
+```python
+# curateur/downloader/media_dl.py
+from typing import List
+from curateur.models import MediaRequest, MediaResult, Config
+
+def download_media(requests: List[MediaRequest], config: Config) -> MediaResult:
+    """
+    Select preferred media variants, download sequentially, invoke verification hooks,
+    and return success/failure info per media type.
+    """
+```
+
+```python
+# curateur/generator/gamelist.py
+from pathlib import Path
+from typing import List
+from curateur.models import GameRecord, SystemDefinition
+
+def write_gamelist(system: SystemDefinition,
+                   games: List[GameRecord],
+                   output_dir: Path) -> Path:
+    """
+    Build ES-DE gamelist.xml with proper encoding and write atomically to disk,
+    returning the final file path.
+    """
+```
+
+```python
+# curateur/utils/progress.py
+from dataclasses import dataclass
+
+@dataclass
+class ProgressTracker:
+    def start_system(self, system_name: str, total_roms: int) -> None: ...
+    def log_rom(self, rom_name: str, status: str, detail: str = "") -> None: ...
+    def finish_system(self, succeeded: int, failed: int) -> None: ...
+
+class ErrorLogger:
+    def log_error(self, filename: str, message: str) -> None: ...
+    def write_summary(self, total_roms: int, succeeded: int) -> None: ...
+```
+
+### Core Data Models
+
+Canonical dataclasses shared across packages; all modules import from `curateur.models`.
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional
+
+@dataclass
+class PathsConfig:
+    roms: Path
+    media: Path
+    gamelists: Path
+    es_systems: Path
+
+@dataclass
+class MediaPreferences:
+    media_types: List[str]
+    preferred_regions: List[str]
+    preferred_language: str
+    image_min_dimension: int = 50
+
+@dataclass
+class Config:
+    credentials: Dict[str, str]
+    paths: PathsConfig
+    scraping: MediaPreferences
+    crc_size_limit: Optional[int] = None
+    skip_mode_enabled: bool = False
+    update_mode_enabled: bool = False
+
+@dataclass
+class SystemDefinition:
+    name: str
+    short_name: str
+    rom_path: Path
+    valid_extensions: List[str]
+    platform: str
+    screenscraper_id: int
+
+@dataclass
+class DiscSubdirInfo:
+    path: Path
+    directory_name: str
+    contained_file: Path
+
+@dataclass
+class RomEntry:
+    display_name: str
+    path: Path            # actual filesystem path (file or directory)
+    rom_type: str         # "standard" | "m3u" | "disc_subdir"
+    size: int
+    crc32: Optional[str]
+    primary_identifier: str
+    auxiliary: Dict[str, str] = field(default_factory=dict)  # e.g., disc1_path
+
+@dataclass
+class ApiQuery:
+    system_id: int
+    filename: str
+    file_size: int
+    crc32: Optional[str]
+
+@dataclass
+class ApiResponse:
+    game_id: int
+    rom_name: str
+    metadata: Dict[str, str]          # desc, developer, publisher…
+    media_entries: List["MediaVariant"]
+
+@dataclass
+class MediaVariant:
+    type: str
+    url: str
+    region: Optional[str]
+    language: Optional[str]
+    format: str
+    size: Optional[int] = None
+    crc: Optional[str] = None
+    sha1: Optional[str] = None
+
+@dataclass
+class MediaRequest:
+    system: SystemDefinition
+    rom: RomEntry
+    media_type: str
+    variant: MediaVariant
+    target_path: Path
+
+@dataclass
+class MediaResult:
+    requested: List[MediaRequest]
+    succeeded: List[Path]
+    failed: Dict[Path, str]           # path → error message
+
+@dataclass
+class GameRecord:
+    rom: RomEntry
+    api_response: ApiResponse
+    media_paths: Dict[str, Path]      # media_type → relative path
+```
+
+## Usage Example
+
+### Basic Invocation
+```bash
+python -m curateur \
+  --config /path/to/config.yaml \
+  --systems nes,snes \
+  --roms /path/to/roms \
+  --media /path/to/downloaded_media \
+  --gamelists /path/to/gamelists
+```
+
+- `config.yaml` should be created from `config.yaml.example` and updated with credentials/paths.
+- CLI flags override matching values from the config file (paths, systems list, dry-run, etc.).
+
+### Common Flags
+- `--systems <csv>`: Restrict processing to specific systems from es_systems.xml
+- `--dry-run`: Validate inputs and API connectivity without downloading media
+- `--region <code>`: Override preferred region priority for the current run
+- `--update`: Enable update mode (Milestone 2 feature)
+- `--skip-scraped`: Enable skip mode (Milestone 2 feature)
+
+## Logging & Monitoring
+
+### Log Levels
+- **DEBUG**: API requests/responses, file operations
+- **INFO**: Progress updates, successful operations
+- **WARNING**: Quota warnings, missing media, skipped ROMs
+- **ERROR**: API errors, download failures, filesystem errors
+
+### Console Output (MVP: Simple Sequential Logging)
+
+The MVP uses simple sequential logging with timestamps and clear status indicators:
+
+```
+2025-11-13 14:23:45 [INFO] Starting scrape for system: NES
+2025-11-13 14:23:45 [INFO] Found 150 ROMs to process
+2025-11-13 14:23:45 [INFO] API Rate Limits: 20 req/min, 10000 req/day, 1 thread
+
+2025-11-13 14:23:46 [INFO] [1/150] Super Mario Bros (USA).zip
+2025-11-13 14:23:46 [DEBUG]   API request sent (CRC: 50ABC90A, Size: 40KB)
+2025-11-13 14:23:47 [INFO]   ✓ Match found (ID: 1234, Rating: 4.8/5)
+2025-11-13 14:23:47 [INFO]   Downloading cover (US region, PNG, 234KB)
+2025-11-13 14:23:48 [INFO]   ✓ Image verified: Valid PNG image (640x480)
+2025-11-13 14:23:48 [INFO]   Downloading screenshot (US region, PNG, 156KB)
+2025-11-13 14:23:49 [INFO]   ✓ Image verified: Valid PNG image (256x224)
+2025-11-13 14:23:49 [INFO]   ✓ Complete (2/2 media files downloaded)
+
+2025-11-13 14:23:50 [INFO] [2/150] The Legend of Zelda (USA).zip
+2025-11-13 14:23:50 [DEBUG]   API request sent (CRC: 3B123456, Size: 128KB)
+2025-11-13 14:23:51 [INFO]   ✓ Match found (ID: 5678, Rating: 4.9/5)
+2025-11-13 14:23:51 [INFO]   Downloading cover (US region, PNG, 245KB)
+2025-11-13 14:23:52 [INFO]   ✓ Image verified: Valid PNG image (640x480)
+2025-11-13 14:23:52 [INFO]   Downloading titlescreen (US region, PNG, 89KB)
+2025-11-13 14:23:53 [INFO]   ✓ Image verified: Valid PNG image (256x224)
+2025-11-13 14:23:53 [INFO]   ✓ Complete (2/2 media files downloaded)
+
+2025-11-13 14:23:54 [INFO] [3/150] Unknown Game.zip
+2025-11-13 14:23:54 [DEBUG]   API request sent (CRC: DEADBEEF, Size: 64KB)
+2025-11-13 14:23:55 [WARNING] ✗ Game not found (HTTP 404)
+
+2025-11-13 14:25:30 [INFO] System NES complete: 148 succeeded, 2 failed
+2025-11-13 14:25:30 [INFO] Total media downloaded: 296 files
+2025-11-13 14:25:30 [INFO] API quota used: 150/10000 requests today
+2025-11-13 14:25:30 [INFO] Gamelist written: gamelists/nes/gamelist.xml
+2025-11-13 14:25:30 [INFO] Error summary written: gamelists/nes/curateur_summary.log
+```
+
+### Error Summary Log
+
+After completing scraping for each system, an error summary log is automatically written to the system's gamelist directory. This provides a quick reference for troubleshooting incomplete scrapes.
+
+**File Location:** `<gamelists>/<system>/curateur_error_summary.log`
+
+**Format:**
+- One line per ROM that failed or was skipped
+- Sorted alphabetically by filename
+- One-line synopsis of the error condition
+
+**Example:** `gamelists/nes/curateur_error_summary.log`
+```
+# Curateur Error Summary for NES
+# Generated: 2025-11-13 14:25:30
+# Total ROMs processed: 150 | Succeeded: 148 | Failed: 2
+# ========================================
+
+Bad Dudes (USA).zip | Game not found in ScreenScraper database (HTTP 404)
+ZZZ Notgame (USA).zip | Name verification failed (similarity: 15% < threshold: 60%)
+```
+
+**Implementation:**
+```python
+from datetime import datetime
+from pathlib import Path
+
+class ErrorLogger:
+    def __init__(self, gamelist_dir, system_name):
+        self.gamelist_dir = Path(gamelist_dir)
+        self.system_name = system_name
+        self.errors = []  # List of (filename, error_message) tuples
+    
+    def log_error(self, filename, error_message):
+        """Record an error for a specific ROM"""
+        self.errors.append((filename, error_message))
+    
+    def write_summary(self, total_roms, succeeded_count):
+        """Write error summary log to gamelist directory"""
+        if not self.errors:
+            return  # No errors to write
+        
+        error_log_path = self.gamelist_dir / "curateur_summary.log"
+        failed_count = len(self.errors)
+        
+        # Sort errors alphabetically by filename
+        sorted_errors = sorted(self.errors, key=lambda x: x[0].lower())
+        
+        with open(error_log_path, 'w', encoding='utf-8') as f:
+            # Write header
+            f.write(f"# Scraper Error Summary for {self.system_name}\n")
+            f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"# Total ROMs processed: {total_roms} | Succeeded: {succeeded_count} | Failed: {failed_count}\n")
+            f.write("# " + "=" * 40 + "\n\n")
+            
+            # Write each error
+            for filename, error_message in sorted_errors:
+                f.write(f"{filename} | {error_message}\n")
+
+# Usage example
+error_logger = ErrorLogger(gamelist_dir, "NES")
+
+# During processing, log errors
+for rom in roms:
+    try:
+        result = scrape_rom(rom)
+        if not result['success']:
+            error_logger.log_error(rom['filename'], result['error'])
+    except Exception as e:
+        error_logger.log_error(rom['filename'], str(e))
+
+# After processing all ROMs, write summary
+error_logger.write_summary(total_roms=150, succeeded_count=148)
+log_info(f"Error summary written: {gamelist_dir}/curateur_summary.log")
+```
+
+**Common Error Messages in Summary:**
+- `Game not found in ScreenScraper database (HTTP 404)`
+- `Name verification failed (similarity: 45% < threshold: 60%)`
+- `No suitable media region found (available: jp, eu | priority: us, wor)`
+- `Preferred language 'en' not available (available: fr, de, jp)`
+- `API rate limit exceeded (HTTP 429) - max retries reached`
+- `Invalid image: dimensions 32x32 below minimum 50x50`
+- `Media download failed: HTTP 500 - max retries reached`
+- `M3U disc conflict: both M3U and disc subdirectory found`
+
+**Phase 2 Enhancement:** Rich console UI with split panels, progress bars, and interactive controls.
+
+### Full Console Logging to File
+
+Full console logging to a file is **optional** and only enabled when `logging.file` is configured in the user config (see `config.yaml.example`):
+
+```yaml
+logging:
+  level: INFO
+  file: "scraper.log"  # Relative to CWD, or use absolute path
+  console: true
+```
+
+**Behavior:**
+- If `logging.file` is `null` or not set: Console output only (no file logging)
+- If `logging.file` is a filename only (e.g., `"scraper.log"`): File written to current working directory
+- If `logging.file` is an absolute path (e.g., `"/var/log/scraper.log"`): File written to specified path
+- If `logging.file` is a relative path (e.g., `"./logs/scraper.log"`): File written relative to CWD
+
+**Note:** This is separate from the error summary log (`curateur_summary.log`), which is always written to `<gamelists>/<system>/` regardless of this setting.
+
+### Log Detail Levels (MVP)
+
+Each log entry includes:
+- **Timestamp**: Precise time of the operation
+- **Log Level**: INFO, DEBUG, WARNING, ERROR
+- **ROM Counter**: Current ROM being processed (e.g., [1/150])
+- **Game Title**: The ROM filename
+- **Operation Details**: Specific operation being performed with relevant data
+
+**Log Entry Examples:**
+- `API request sent (CRC: ABCD1234, Size: 128KB)`
+- `Match found (ID: 5678, Rating: 4.5/5)`
+- `No match found (404 - Game not in database)`
+- `Downloading cover (US region, PNG, 234KB)`
+- `✓ Image verified: Valid PNG image (640x480)`
+- `⚠ Image verification failed: Image too small (32x32, minimum: 50x50)`
+- `✗ Download failed: cover (HTTP 500) - retrying...`
+- `✓ Complete (4 media files downloaded)`
+- `✗ Error: Permission denied writing to /path/to/file - stopping`
+
+## Error Handling & Recovery
+
+The tool will automatically save progress at configurable intervals, allowing recovery from interruptions. This feature will be implemented in Phase 2.
+
+#### Checkpoint Configuration
+```yaml
+scraping:
+  checkpoint_interval: 100  # Save every 100 ROMs (0 = disable)
+```
+
+**Checkpoint file location:** `<gamelists>/<system>/.curateur_checkpoint.json` (automatically derived)
+
+#### Checkpoint File Structure
+```json
+{
+  "system": "nes",
+  "system_id": 3,
+  "timestamp": "2025-11-13T15:30:45Z",
+  "processed_roms": [
+    "Super Mario Bros (USA).zip",
+    "The Legend of Zelda (USA).zip",
+    "..."
+  ],
+  "failed_roms": [
+    {"filename": "Unknown Game.zip", "reason": "not_found"},
+    {"filename": "Bad ROM.zip", "reason": "name_verification_failed"}
+  ],
+  "api_quota": {
+    "requests_used": 8750,
+    "timestamp": "2025-11-13T15:30:45Z"
+  },
+  "stats": {
+    "total_roms": 500,
+    "processed": 200,
+    "successful": 185,
+    "failed": 15
+  }
+}
+```
+
+#### Checkpoint Implementation
+```python
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+
+class CheckpointManager:
+    def __init__(self, gamelist_dir, system_name, checkpoint_interval=100):
+        self.gamelist_dir = Path(gamelist_dir)
+        self.system_name = system_name
+        self.checkpoint_interval = checkpoint_interval
+        self.checkpoint_file = self.gamelist_dir / ".curateur_checkpoint.json"
+        self.processed_count = 0
+        self.checkpoint_data = {
+            'system': system_name,
+            'processed_roms': [],
+            'failed_roms': [],
+            'api_quota': {},
+            'stats': {}
+        }
+    
+    def load_checkpoint(self):
+        """Load existing checkpoint file"""
+        if not self.checkpoint_file.exists():
+            return None
+        
+        try:
+            with open(self.checkpoint_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            log_error(f"Failed to load checkpoint: {e}")
+            return None
+    
+    def save_checkpoint(self, force=False):
+        """Save checkpoint at interval or when forced"""
+        if self.checkpoint_interval == 0 and not force:
+            return  # Checkpoints disabled
+        
+        self.processed_count += 1
+        
+        if not force and self.processed_count % self.checkpoint_interval != 0:
+            return  # Not at checkpoint interval
+        
+        self.checkpoint_data['timestamp'] = datetime.utcnow().isoformat() + 'Z'
+        
+        try:
+            # Atomic write: write to temp file, then rename
+            temp_file = self.checkpoint_file.with_suffix('.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(self.checkpoint_data, f, indent=2)
+            temp_file.replace(self.checkpoint_file)
+            
+            log_debug(f"Checkpoint saved: {len(self.checkpoint_data['processed_roms'])} ROMs processed")
+        
+        except (IOError, OSError) as e:
+            log_error(f"Failed to save checkpoint: {e}")
+            # Don't raise - checkpoint failure shouldn't stop scraping
+    
+    def add_processed_rom(self, filename, success, reason=None):
+        """Record a processed ROM"""
+        if success:
+            self.checkpoint_data['processed_roms'].append(filename)
+        else:
+            self.checkpoint_data['failed_roms'].append({
+                'filename': filename,
+                'reason': reason or 'unknown'
+            })
+    
+    def is_processed(self, filename):
+        """Check if ROM was already processed"""
+        return filename in self.checkpoint_data['processed_roms']
+    
+    def remove_checkpoint(self):
+        """Remove checkpoint file after successful completion"""
+        try:
+            if self.checkpoint_file.exists():
+                self.checkpoint_file.unlink()
+                log_info(f"Checkpoint file removed: {self.checkpoint_file}")
+        except OSError as e:
+            log_warning(f"Failed to remove checkpoint file: {e}")
+
+def prompt_resume_from_checkpoint(checkpoint_data):
+    """
+    Prompt user to resume from checkpoint
+    
+    Returns:
+        bool: True to resume, False to start fresh
+    """
+    print("\n" + "="*70)
+    print("CHECKPOINT FOUND")
+    print("="*70)
+    print(f"System: {checkpoint_data['system']}")
+    print(f"Last saved: {checkpoint_data.get('timestamp', 'unknown')}")
+    print(f"Progress: {len(checkpoint_data['processed_roms'])} ROMs processed")
+    
+    if checkpoint_data.get('failed_roms'):
+        print(f"Failed: {len(checkpoint_data['failed_roms'])} ROMs")
+    
+    print("\nOptions:")
+    print("  [y] Resume from checkpoint")
+    print("  [n] Start fresh (delete checkpoint and restart)")
+    print("="*70)
+    
+    while True:
+        response = input("Resume from checkpoint? [y/n]: ").lower().strip()
+        if response in ('y', 'yes'):
+            return True
+        elif response in ('n', 'no'):
+            return False
+        else:
+            print("Please enter 'y' or 'n'")
+
+# Usage in logging
+def log_api_request(url, params):
+    """Log API request without exposing credentials"""
+    safe_url = SecureLogger.sanitize_url(url)
+    safe_params = SecureLogger.sanitize_params(params)
+    
+    log_debug(
+        f"API Request:\n"
+        f"  URL: {safe_url}\n"
+        f"  Params: {safe_params}"
+    )
+
+# Example output:
+# API Request:
+#   URL: https://api.screenscraper.fr/api2/jeuInfos.php
+#   Params: {
+#     'devid': 'mydevid',
+#     'devpassword': '***REDACTED***',
+#     'ssid': 'myuser',
+#     'sspassword': '***REDACTED***',
+#     'systemeid': 3,
+#     'romnom': 'Super Mario Bros.zip'
+#   }
+
+def log_config(config):
+    """Log configuration without sensitive data"""
+    safe_config = SecureLogger.sanitize_dict(config)
+    log_info(f"Configuration loaded: {safe_config}")
+```
+
+#### Protected Fields
+The following fields are automatically redacted from all logs:
+- `password`, `devpassword`, `sspassword`, `dev_password`, `user_password`
+- `api_key`, `apikey`, `secret`, `token`
+- Any field containing `auth` or `credential`
+- Passwords in URLs (e.g., `user:pass@host`)
+
+## Success Criteria (MVP)
+
+1. ✅ Successfully parse es_systems.xml
+2. ✅ Scan and catalog all ROMs in directory
+3. ✅ Correctly handle M3U playlists for multi-disc games
+4. ✅ Correctly handle disc subdirectories for organized disc images
+5. ✅ Query ScreenScraper API with proper authentication
+6. ✅ Handle rate limiting and quotas correctly
+7. ✅ Download all available media types
+8. ✅ Apply region prioritization correctly
+9. ✅ Generate valid gamelist.xml files
+10. ✅ Handle errors gracefully without data loss
+11. ✅ Provide clear progress feedback
+12. ✅ Complete scraping of 1000+ ROM set successfully
+12. ✅ Provide clear sequential logging
+13. ✅ Complete scraping of 100+ ROM test set successfully
+14. ✅ Game name verification prevents incorrect ScreenScraper matches
+15. ✅ Image verification rejects corrupted, undersized, or invalid images
+
+**Phase 2 Success Criteria:**
+- Skip mode correctly identifies and skips complete games
+- Update mode verifies media with hashes and downloads only changes
+- Decommissioned media properly handled with rollback protection
+- Checkpoint system allows resuming interrupted scrapes
+- All media types supported (videos, manuals, PDFs, etc.)
+- Multi-threaded downloads with proper rate limiting
+- Rich console UI with split panels
+
+## Timeline
+
+**MVP Development: 2-3 weeks**
+
+- Week 1: Phases 1-2 (Infrastructure + ROM Scanner with conflict detection)
+- Week 2: Phase 3 (API Client with unified error handling)
+- Week 3: Phases 4-7 (Downloader, Gamelist Generator, Integration & Testing)
+
+**Phase 2 Development: 2-3 weeks** (after MVP is working)
