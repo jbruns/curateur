@@ -40,6 +40,7 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 **Phase 2 Complete**: ROM scanner (7/7 tests passing).  
 **Phase 3 Complete**: API client (9/9 tests passing).  
 **Phase 4 Complete**: Media downloader (8/8 tests passing).  
+**Phase 5 Complete**: Gamelist generator (7/7 tests passing).  
 **End-to-End Test**: Phases 1+2 integration verified ✓
 
 ## MVP Phase 4 - Media Downloader ✓ COMPLETED
@@ -56,8 +57,15 @@ Linking each work item to the module/data-contract defined in `IMPLEMENTATION_PL
 
 Note: Milestone 2 `decommission.py` handling for cleanup folder (AT-M2B.1 / AT-4.4) is deferred to post-MVP.
 
-## MVP Phase 5 - Gamelist Generator (NOT STARTED)
-- [ ] Implement `write_gamelist` to meet AT-5.1–5.3.
+## MVP Phase 5 - Gamelist Generator ✓ COMPLETED
+- [x] Implement GameEntry and GamelistMetadata data structures.
+- [x] Create XML writer with ES-DE format compliance.
+- [x] Build gamelist parser and merger (preserves user edits).
+- [x] Implement path handler for ROM and media relative paths.
+- [x] Create integrated GamelistGenerator class.
+- [x] Build comprehensive integration tests (7/7 passing).
+
+**Phase 5 Complete**: Gamelist generator with XML I/O, intelligent merging, HTML entity handling, and ES-DE compliance. See `PHASE5_COMPLETE.md` for full documentation.
 
 ## MVP Phase 6 - Runtime Integration (NOT STARTED)
 - [ ] Implement `ProgressTracker` + `ErrorLogger` integration (AT-6.1–6.2).
