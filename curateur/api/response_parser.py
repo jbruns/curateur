@@ -39,8 +39,8 @@ def validate_response(
         raise ResponseError(f"Failed to parse response: {e}")
     
     # Validate root element
-    if root.tag != 'response':
-        raise ResponseError(f"Invalid root element: expected 'response', got '{root.tag}'")
+    if root.tag != 'Data':
+        raise ResponseError(f"Invalid root element: expected 'Data', got '{root.tag}'")
     
     return root
 

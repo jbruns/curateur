@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Malformed XML: Missing jeu element -->
+<Data>
+  <ssuser>
+    <id>12345</id>
+    <niveau>1</niveau>
+  </ssuser>
+  <!-- No jeu element, no error element -->
+</Data>

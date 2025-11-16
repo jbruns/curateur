@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Malformed XML: Invalid root element -->
+<InvalidRoot>
+  <jeu id="12345">
+    <noms>
+      <nom region="us" langue="en">Invalid Root Game</nom>
+    </noms>
+  </jeu>
+</InvalidRoot>

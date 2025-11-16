@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ScreenScraper Partial Response: Game with No Media -->
+<Data>
+  <ssuser>
+    <id>12345</id>
+    <niveau>1</niveau>
+    <maxthreads>1</maxthreads>
+    <requeststoday>42</requeststoday>
+    <maxrequestsperday>10000</maxrequestsperday>
+    <maxrequestspermin>20</maxrequestspermin>
+    <favregion>us</favregion>
+  </ssuser>
+  <jeu id="67890">
+    <noms>
+      <nom region="us" langue="en">Game Without Media</nom>
+      <nom region="wor" langue="en">Game Without Media</nom>
+    </noms>
+    <genres>
+      <genre id="1" principale="1">
+        <noms>
+          <nom langue="en">Action</nom>
+        </noms>
+      </genre>
+    </genres>
+    <developpeur>Test Developer</developpeur>
+    <editeur>Test Publisher</editeur>
+    <joueurs>1-2</joueurs>
+    <note>7.5</note>
+    <!-- No medias section -->
+  </jeu>
+</Data>

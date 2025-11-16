@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ScreenScraper API Error Response: Thread Limit Reached (429) -->
+<Data>
+  <ssuser>
+    <id>12345</id>
+    <niveau>1</niveau>
+    <contribution>0</contribution>
+    <uploadsysteme>0</uploadsysteme>
+    <uploadinfos>0</uploadinfos>
+    <romasso>0</romasso>
+    <uploadmedia>0</uploadmedia>
+    <maxthreads>1</maxthreads>
+    <maxdownloadspeed>0</maxdownloadspeed>
+    <requeststoday>42</requeststoday>
+    <maxrequestsperday>10000</maxrequestsperday>
+    <requestskotoday>0</requestskotoday>
+    <maxrequestskoperday>10000</maxrequestskoperday>
+    <maxrequestspermin>20</maxrequestspermin>
+    <favregion>us</favregion>
+  </ssuser>
+  <erreur>
+    Erreur : Nombre de threads maximum atteint (1)
+  </erreur>
+</Data>

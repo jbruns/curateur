@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ScreenScraper API Error Response: API Closed for Non-Members (401) -->
+<Data>
+  <ssuser>
+    <id>12345</id>
+    <niveau>0</niveau>
+    <contribution>0</contribution>
+  </ssuser>
+  <erreur>
+    API fermée aux non membres. Inscription : https://www.screenscraper.fr
+  </erreur>
+</Data>
