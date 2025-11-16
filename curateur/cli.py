@@ -31,6 +31,15 @@ Examples:
   # Dry-run mode (no downloads)
   curateur --dry-run
 
+  # Enable search fallback for unmatched ROMs
+  curateur --enable-search
+
+  # Interactive search with user prompts
+  curateur --enable-search --interactive-search
+
+  # Search with custom confidence threshold
+  curateur --enable-search --search-threshold 0.8
+
   # Use custom config file
   curateur --config /path/to/config.yaml
 
@@ -62,6 +71,25 @@ For more information, see IMPLEMENTATION_PLAN.md
         '--dry-run',
         action='store_true',
         help='Scan and query API without downloading media. Overrides config.'
+    )
+    
+    parser.add_argument(
+        '--enable-search',
+        action='store_true',
+        help='Enable search fallback when hash lookup fails. Overrides config.'
+    )
+    
+    parser.add_argument(
+        '--search-threshold',
+        type=float,
+        metavar='SCORE',
+        help='Minimum confidence score (0.0-1.0) to accept search match. Overrides config.'
+    )
+    
+    parser.add_argument(
+        '--interactive-search',
+        action='store_true',
+        help='Enable interactive prompts for selecting search matches. Overrides config.'
     )
     
     # Milestone 2 flags (not yet implemented but documented)
@@ -110,6 +138,21 @@ def main(argv: Optional[list] = None) -> int:
     
     if args.dry_run:
         config['runtime']['dry_run'] = True
+    
+    if args.enable_search:
+        if 'search' not in config:
+            config['search'] = {}
+        config['search']['enable_search_fallback'] = True
+    
+    if args.search_threshold is not None:
+        if 'search' not in config:
+            config['search'] = {}
+        config['search']['confidence_threshold'] = args.search_threshold
+    
+    if args.interactive_search:
+        if 'search' not in config:
+            config['search'] = {}
+        config['search']['interactive_search'] = True
     
     # Check for Milestone 2 flags
     if args.skip_scraped or args.update:
@@ -162,12 +205,20 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Initialize components
     api_client = ScreenScraperClient(config)
     
+    # Get search configuration (with defaults)
+    search_config = config.get('search', {})
+    
     orchestrator = WorkflowOrchestrator(
         api_client=api_client,
         rom_directory=Path(config['paths']['roms']),
         media_directory=Path(config['paths']['media']),
         gamelist_directory=Path(config['paths']['gamelists']),
-        dry_run=config['runtime'].get('dry_run', False)
+        dry_run=config['runtime'].get('dry_run', False),
+        enable_search_fallback=search_config.get('enable_search_fallback', False),
+        search_confidence_threshold=search_config.get('confidence_threshold', 0.7),
+        search_max_results=search_config.get('max_results', 5),
+        interactive_search=search_config.get('interactive_search', False),
+        preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu'])
     )
     
     progress = ProgressTracker()
@@ -178,6 +229,10 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     print(f"{'='*60}")
     print(f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}")
     print(f"Systems: {len(systems)}")
+    if search_config.get('enable_search_fallback'):
+        print(f"Search fallback: ENABLED (threshold: {search_config.get('confidence_threshold', 0.7):.1%})")
+        if search_config.get('interactive_search'):
+            print(f"Interactive mode: ENABLED")
     print(f"{'='*60}\n")
     
     # Process each system
