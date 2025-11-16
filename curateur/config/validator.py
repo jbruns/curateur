@@ -39,6 +39,9 @@ def validate_config(config: Dict[str, Any]) -> None:
     # Validate runtime section
     errors.extend(_validate_runtime(config.get('runtime', {})))
     
+    # Validate search section
+    errors.extend(_validate_search(config.get('search', {})))
+    
     if errors:
         raise ValidationError(
             "Configuration validation failed:\n  - " + "\n  - ".join(errors)
@@ -197,5 +200,32 @@ def _validate_runtime(section: Dict[str, Any]) -> List[str]:
     threads = section.get('threads', 1)
     if not isinstance(threads, int) or threads < 1:
         errors.append("runtime.threads must be a positive integer")
+    
+    return errors
+
+
+def _validate_search(section: Dict[str, Any]) -> List[str]:
+    """Validate search options section."""
+    errors = []
+    
+    # Validate enable_search_fallback flag
+    enable_search = section.get('enable_search_fallback', False)
+    if not isinstance(enable_search, bool):
+        errors.append("search.enable_search_fallback must be a boolean")
+    
+    # Validate confidence_threshold
+    threshold = section.get('confidence_threshold', 0.7)
+    if not isinstance(threshold, (int, float)) or not (0.0 <= threshold <= 1.0):
+        errors.append("search.confidence_threshold must be between 0.0 and 1.0")
+    
+    # Validate max_results
+    max_results = section.get('max_results', 5)
+    if not isinstance(max_results, int) or not (1 <= max_results <= 10):
+        errors.append("search.max_results must be between 1 and 10")
+    
+    # Validate interactive_search flag
+    interactive = section.get('interactive_search', False)
+    if not isinstance(interactive, bool):
+        errors.append("search.interactive_search must be a boolean")
     
     return errors

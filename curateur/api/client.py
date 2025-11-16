@@ -16,6 +16,7 @@ from curateur.api.rate_limiter import RateLimiter
 from curateur.api.response_parser import (
     validate_response,
     parse_game_info,
+    parse_search_results,
     parse_user_info,
     extract_error_message,
     ResponseError
@@ -211,6 +212,141 @@ class ScreenScraperClient:
             raise SkippableAPIError(str(e))
         
         return game_data
+    
+    def search_game(
+        self,
+        rom_info: ROMInfo,
+        max_results: int = 5
+    ) -> list[Dict[str, Any]]:
+        """
+        Search for game by name using jeuRecherche.php endpoint.
+        
+        This is a fallback when hash-based lookup fails. Returns multiple
+        candidates that should be scored for confidence.
+        
+        Args:
+            rom_info: ROM information from scanner
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List of game data dictionaries (may be empty)
+            
+        Raises:
+            FatalAPIError: For fatal errors requiring stop
+            SkippableAPIError: For skippable errors
+        """
+        # Get system ID
+        try:
+            systemeid = get_systemeid(rom_info.system)
+        except KeyError as e:
+            raise SkippableAPIError(f"Platform not mapped: {e}")
+        
+        # Build API request
+        def make_request():
+            return self._query_jeu_recherche(
+                systemeid=systemeid,
+                recherche=rom_info.query_filename,
+                max_results=max_results
+            )
+        
+        # Execute with retry
+        context = f"Search: {rom_info.query_filename} ({rom_info.system.upper()})"
+        
+        try:
+            results = retry_with_backoff(
+                make_request,
+                max_attempts=self.max_retries,
+                initial_delay=self.retry_backoff,
+                backoff_factor=2.0,
+                context=context
+            )
+            return results
+        except (FatalAPIError, SkippableAPIError):
+            raise
+        except Exception as e:
+            # Convert other errors to skippable
+            raise SkippableAPIError(f"Search API error: {e}")
+    
+    def _query_jeu_recherche(
+        self,
+        systemeid: int,
+        recherche: str,
+        max_results: int = 5
+    ) -> list[Dict[str, Any]]:
+        """
+        Query jeuRecherche.php endpoint for text search.
+        
+        Args:
+            systemeid: ScreenScraper system ID
+            recherche: Search query (typically filename without extension)
+            max_results: Maximum results to return
+            
+        Returns:
+            List of parsed game data dictionaries
+            
+        Raises:
+            Various API errors
+        """
+        # Wait for rate limit
+        self.rate_limiter.wait_if_needed()
+        
+        # Build parameters
+        params = {
+            'devid': self.devid,
+            'devpassword': self.devpassword,
+            'softname': self.softname,
+            'ssid': self.ssid,
+            'sspassword': self.sspassword,
+            'output': 'xml',
+            'systemeid': systemeid,
+            'recherche': recherche,
+            'max': max_results,
+        }
+        
+        # Make request
+        url = f"{self.BASE_URL}/jeuRecherche.php"
+        
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                timeout=self.request_timeout
+            )
+        except requests.exceptions.Timeout:
+            raise Exception("Request timeout")
+        except requests.exceptions.ConnectionError:
+            raise Exception("Connection error")
+        except Exception as e:
+            raise Exception(f"Network error: {e}")
+        
+        # Handle HTTP status
+        handle_http_status(response.status_code, context=f"search:{recherche}")
+        
+        # Validate and parse response
+        try:
+            root = validate_response(response.content, expected_format='xml')
+        except ResponseError as e:
+            raise SkippableAPIError(f"Invalid response: {e}")
+        
+        # Check for API error message
+        error_msg = extract_error_message(root)
+        if error_msg:
+            raise SkippableAPIError(f"API error: {error_msg}")
+        
+        # Update rate limits from first response
+        if not self._rate_limits_initialized:
+            user_info = parse_user_info(root)
+            if user_info:
+                self.rate_limiter.update_from_api(user_info)
+                self._rate_limits_initialized = True
+        
+        # Parse search results
+        try:
+            results = parse_search_results(root)
+        except ResponseError as e:
+            raise SkippableAPIError(str(e))
+        
+        return results
     
     def get_rate_limits(self) -> Dict[str, Any]:
         """

@@ -249,9 +249,32 @@ runtime:
   # Default: false
   # Note: Useful for testing configuration and estimating quota usage
   dry_run: false
-  
-  # Enable search fallback
-  # Purpose: Use search API when direct ROM lookup fails
+
+search:
+  # Enable search fallback when hash-based lookup fails
+  # Purpose: Use jeuRecherche.php API to search by name when CRC lookup fails
   # Valid: true | false
   # Default: false
+  # Note: Searches use filename without extension, may consume more API quota
   enable_search_fallback: false
+  
+  # Minimum confidence score to accept search match (0.0-1.0)
+  # Purpose: Prevent false positives by requiring confidence threshold
+  # Valid: 0.0 - 1.0 (0.7 = 70% confidence)
+  # Default: 0.7
+  # Note: Scoring factors: filename (40%), region (30%), size (15%), media (10%), rating (5%)
+  confidence_threshold: 0.7
+  
+  # Maximum search results to consider
+  # Purpose: Limit API response size and processing time
+  # Valid: 1-10 (ScreenScraper typically returns 1-5 results)
+  # Default: 5
+  max_results: 5
+  
+  # Enable interactive prompts for search matches
+  # Purpose: Allow user to select correct match from candidates
+  # Valid: true | false
+  # Default: false
+  # Note: Prompts shown sequentially (thread-safe), displays confidence scores
+  #       Requires terminal interaction, incompatible with fully automated workflows
+  interactive_search: false

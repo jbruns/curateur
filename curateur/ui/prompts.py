@@ -5,9 +5,13 @@ Provides confirmation prompts, multiple choice selections, and input validation.
 """
 
 import logging
-from typing import Optional, Callable, List
+import threading
+from typing import Optional, Callable, List, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+# Global lock for thread-safe prompts
+_prompt_lock = threading.Lock()
 
 
 class PromptSystem:
@@ -307,3 +311,130 @@ class PromptSystem:
                 if default is not None:
                     return default
                 raise
+
+
+def prompt_for_search_match(
+    rom_filename: str,
+    candidates: List[tuple[Dict[str, Any], float]],
+    threshold: float = 0.7
+) -> Optional[Dict[str, Any]]:
+    """
+    Thread-safe prompt for user to select best search match.
+    
+    Displays candidates with confidence scores and allows user to:
+    - Select a specific match by number
+    - Skip (no match)
+    - Reject all and mark as unmatched
+    
+    Args:
+        rom_filename: Original ROM filename
+        candidates: List of (game_data, confidence_score) tuples, sorted by score
+        threshold: Confidence threshold for display context
+        
+    Returns:
+        Selected game data dictionary, or None if user skipped/rejected
+    """
+    # Acquire lock for thread-safe prompting
+    with _prompt_lock:
+        print("\n" + "="*80)
+        print(f"Search results for: {rom_filename}")
+        print("="*80)
+        
+        if not candidates:
+            print("No candidates found.")
+            return None
+        
+        # Display candidates with numbering
+        for i, (game_data, score) in enumerate(candidates, 1):
+            # Get game name (prefer English, fall back to first available)
+            names = game_data.get('names', {})
+            display_name = names.get('en') or names.get('us') or next(iter(names.values()), 'Unknown')
+            
+            # Get region info
+            regions = ', '.join(names.keys()) if names else 'unknown'
+            
+            # Get system info
+            system = game_data.get('system', 'Unknown System')
+            
+            # Confidence indicator
+            confidence_bar = _render_confidence_bar(score)
+            threshold_indicator = " ✓" if score >= threshold else " ✗"
+            
+            print(f"\n{i}. {display_name}")
+            print(f"   System: {system}")
+            print(f"   Regions: {regions}")
+            print(f"   Confidence: {score:.1%} {confidence_bar}{threshold_indicator}")
+            
+            # Show additional metadata hints
+            if 'releasedate' in game_data:
+                print(f"   Release: {game_data['releasedate']}")
+            if 'publisher' in game_data:
+                print(f"   Publisher: {game_data['publisher']}")
+        
+        print("\n" + "-"*80)
+        print("Options:")
+        print("  1-{}: Select match by number".format(len(candidates)))
+        print("  s: Skip this ROM (try again later)")
+        print("  n: No match (mark as unmatched)")
+        print("-"*80)
+        
+        # Prompt for selection
+        while True:
+            try:
+                response = input("\nYour choice: ").strip().lower()
+                
+                if not response:
+                    print("Please enter a choice")
+                    continue
+                
+                # Skip
+                if response == 's':
+                    logger.info(f"User skipped search match for {rom_filename}")
+                    print("Skipped.")
+                    return None
+                
+                # No match
+                if response == 'n':
+                    logger.info(f"User rejected all matches for {rom_filename}")
+                    print("Marked as unmatched.")
+                    return None
+                
+                # Numeric selection
+                try:
+                    choice = int(response)
+                    if 1 <= choice <= len(candidates):
+                        selected_game, selected_score = candidates[choice - 1]
+                        selected_name = selected_game.get('names', {}).get('en', 'Selected game')
+                        logger.info(
+                            f"User selected match #{choice} for {rom_filename}: "
+                            f"{selected_name} (confidence: {selected_score:.1%})"
+                        )
+                        print(f"Selected: {selected_name}")
+                        return selected_game
+                    else:
+                        print(f"Please enter a number between 1 and {len(candidates)}")
+                        continue
+                except ValueError:
+                    print("Invalid choice. Please enter a number, 's', or 'n'")
+                    continue
+                    
+            except (KeyboardInterrupt, EOFError):
+                logger.info(f"User interrupted search match prompt for {rom_filename}")
+                print("\nSkipped.")
+                return None
+
+
+def _render_confidence_bar(score: float, width: int = 20) -> str:
+    """
+    Render a visual confidence bar.
+    
+    Args:
+        score: Confidence score 0.0-1.0
+        width: Width of bar in characters
+        
+    Returns:
+        ASCII bar representation
+    """
+    filled = int(score * width)
+    empty = width - filled
+    return f"[{'█' * filled}{'░' * empty}]"
