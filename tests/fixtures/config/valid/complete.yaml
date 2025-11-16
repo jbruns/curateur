@@ -1,0 +1,62 @@
+# Complete valid configuration with all fields populated
+screenscraper:
+  user_id: "test_user"
+  user_password: "test_password"
+
+paths:
+  roms: ./test_roms
+  media: ./test_media
+  gamelists: ./test_gamelists
+  es_systems: ./tests/fixtures/es_systems/systems.xml
+
+scraping:
+  systems: ["nes", "snes"]
+  media_types:
+    - covers
+    - screenshots
+    - titlescreens
+  preferred_regions: [us, eu, jp]
+  preferred_language: en
+  crc_size_limit: 1073741824
+  image_min_dimension: 50
+  skip_scraped: false
+  update_mode: false
+  validate_gamelist: true
+  gamelist_integrity_threshold: 0.95
+  clean_mismatched_media: false
+  media_only_mode: false
+  update_policy: changed_only
+  update_metadata: true
+  update_media: true
+  merge_strategy: preserve_user_edits
+  log_changes: true
+  log_unchanged_fields: false
+  checkpoint_interval: 100
+  name_verification: normal
+  rate_limit_override_enabled: false
+  rate_limit_override:
+    max_threads: 1
+    requests_per_minute: 60
+    daily_quota: 10000
+
+media:
+  skip_existing_media: true
+
+api:
+  request_timeout: 30
+  max_retries: 3
+  retry_backoff_seconds: 5
+
+logging:
+  level: INFO
+  console: true
+  file: null
+
+runtime:
+  dry_run: false
+
+search:
+  enable_search_fallback: true
+  confidence_threshold: 0.7
+  max_results: 5
+  interactive_search: false

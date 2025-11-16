@@ -1,0 +1,7 @@
+# This is not valid YAML - syntax errors
+screenscraper:
+  user_id: "test
+  user_password: unclosed string
+paths:
+  - this should be a dict
+  not: a: list:

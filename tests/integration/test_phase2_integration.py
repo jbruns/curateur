@@ -23,7 +23,7 @@ def test_hash_calculator():
     print("Testing CRC32 hash calculator...")
     
     # Test with a fixture ROM
-    test_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'roms' / 'nes' / 'World Explorer (World).zip'
+    test_file = Path(__file__).parent.parent / 'fixtures' / 'roms' / 'nes' / 'World Explorer (World).zip'
     
     if not test_file.exists():
         print(f"  ⚠ Test file not found: {test_file}")
@@ -60,7 +60,7 @@ def test_m3u_parser():
     """Test M3U playlist parsing."""
     print("\nTesting M3U playlist parser...")
     
-    m3u_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'roms' / 'psx' / 'Sample Saga.m3u'
+    m3u_file = Path(__file__).parent.parent / 'fixtures' / 'roms' / 'psx' / 'Sample Saga.m3u'
     
     if not m3u_file.exists():
         print(f"  ⚠ Test M3U not found: {m3u_file}")
@@ -83,7 +83,7 @@ def test_disc_handler():
     """Test disc subdirectory handling."""
     print("\nTesting disc subdirectory handler...")
     
-    disc_subdir = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'roms' / 'dreamcast' / 'Demo Orbit (Disc 1).cue'
+    disc_subdir = Path(__file__).parent.parent / 'fixtures' / 'roms' / 'dreamcast' / 'Demo Orbit (Disc 1).cue'
     
     if not disc_subdir.exists():
         print(f"  ⚠ Test disc subdir not found: {disc_subdir}")
@@ -106,7 +106,7 @@ def test_nes_scanner():
     print("\nTesting NES ROM scanner...")
     
     # Load system definition
-    es_systems_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'es_systems.xml'
+    es_systems_file = Path(__file__).parent.parent / 'fixtures' / 'es_systems.xml'
     systems = parse_es_systems(es_systems_file)
     nes_system = next((s for s in systems if s.platform == 'nes'), None)
     
@@ -140,7 +140,7 @@ def test_psx_scanner():
     print("\nTesting PSX ROM scanner (with M3U)...")
     
     # Load system definition
-    es_systems_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'es_systems.xml'
+    es_systems_file = Path(__file__).parent.parent / 'fixtures' / 'es_systems.xml'
     systems = parse_es_systems(es_systems_file)
     psx_system = next((s for s in systems if s.platform == 'psx'), None)
     
@@ -177,7 +177,7 @@ def test_dreamcast_scanner():
     print("\nTesting Dreamcast ROM scanner (with disc subdir)...")
     
     # Load system definition
-    es_systems_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'es_systems.xml'
+    es_systems_file = Path(__file__).parent.parent / 'fixtures' / 'es_systems.xml'
     systems = parse_es_systems(es_systems_file)
     dc_system = next((s for s in systems if s.platform == 'dreamcast'), None)
     

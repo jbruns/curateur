@@ -121,12 +121,7 @@ def _get_element_text(parent: etree.Element, tag: str) -> Optional[str]:
 
 def _get_platform_id(system_elem: etree.Element) -> Optional[str]:
     """
-    Extract platform ID from <platformid> or <platform> element.
-    
-    Handles multiple formats:
-    - <platformid>nes</platformid>
-    - <platformid><name>nes</name></platformid>
-    - <platform>nes</platform> (simplified format)
+    Extract platform ID from <platform> element.
     
     Args:
         system_elem: <system> element
@@ -134,23 +129,14 @@ def _get_platform_id(system_elem: etree.Element) -> Optional[str]:
     Returns:
         Platform ID string or None
     """
-    # Try <platformid> first (ES-DE standard)
-    platform_elem = system_elem.find('platformid')
-    
-    if platform_elem is not None:
-        # Check for nested <name> element (alternate format)
-        name_elem = platform_elem.find('name')
-        if name_elem is not None and name_elem.text:
-            return name_elem.text.strip()
-        
-        # Check for direct text content
-        if platform_elem.text:
-            return platform_elem.text.strip()
-    
-    # Fall back to <platform> (simplified format used in tests)
+    # Get <platform> element (ES-DE standard)
     platform_elem = system_elem.find('platform')
+    
     if platform_elem is not None and platform_elem.text:
-        return platform_elem.text.strip()
+        text = platform_elem.text.strip()
+        # Return text only if not empty after stripping
+        if text:
+            return text
     
     return None
 

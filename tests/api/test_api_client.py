@@ -17,7 +17,7 @@ from curateur.scanner.rom_types import ROMInfo, ROMType
 
 
 # Fixture paths
-FIXTURES_DIR = Path(__file__).parent / 'fixtures' / 'api'
+FIXTURES_DIR = Path(__file__).parent.parent / 'fixtures' / 'api'
 ERROR_FIXTURES = FIXTURES_DIR / 'errors'
 PARTIAL_FIXTURES = FIXTURES_DIR / 'partial'
 

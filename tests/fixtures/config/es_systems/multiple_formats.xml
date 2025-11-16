@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<systemList>
+  <system>
+    <name>genesis</name>
+    <fullname>Sega Genesis</fullname>
+    <path>%ROMPATH%/genesis</path>
+    <extension>.md .MD .zip .ZIP</extension>
+    <platform>genesis</platform>
+  </system>
+  <system>
+    <name>dreamcast</name>
+    <fullname>Sega Dreamcast</fullname>
+    <path>%ROMPATH%/dreamcast</path>
+    <extension>.cdi .CDI .gdi .GDI .chd .CHD</extension>
+    <platform>dreamcast</platform>
+  </system>
+  <system>
+    <name>n64</name>
+    <fullname>Nintendo 64</fullname>
+    <path>/home/user/retrogaming/n64</path>
+    <extension>.n64 .N64 .z64 .Z64 .v64 .V64</extension>
+    <platform>n64</platform>
+  </system>
+</systemList>

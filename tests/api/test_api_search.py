@@ -45,7 +45,7 @@ class TestSearchResponseParsing:
     
     def test_parse_multiple_search_results(self):
         """Test parsing response with multiple game results."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         # Validate response structure
@@ -195,7 +195,7 @@ class TestSearchIteratorPattern:
     
     def test_iterate_over_search_results(self):
         """Test iterating through multiple search results."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)
@@ -213,7 +213,7 @@ class TestSearchIteratorPattern:
     
     def test_filter_search_results_by_system(self):
         """Test filtering search results by system."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)
@@ -231,7 +231,7 @@ class TestSearchResultComparison:
     
     def test_compare_game_ratings(self):
         """Test extracting and comparing game ratings from search results."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)
@@ -368,7 +368,7 @@ class TestSearchWithMedia:
     
     def test_extract_media_from_search_results(self):
         """Test extracting media URLs from search results."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)
@@ -388,7 +388,7 @@ class TestSearchWithMedia:
     
     def test_count_media_types_in_results(self):
         """Test counting different media types across results."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)
@@ -411,7 +411,7 @@ class TestSearchMetadata:
     
     def test_extract_server_info_from_search(self):
         """Test extracting server information from search response."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)
@@ -424,7 +424,7 @@ class TestSearchMetadata:
     
     def test_extract_user_limits_from_search(self):
         """Test extracting user rate limits from search response."""
-        fixture_path = Path(__file__).parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
+        fixture_path = Path(__file__).parent.parent / 'fixtures' / 'api' / 'jeuRecherche.xml'
         xml_data = fixture_path.read_bytes()
         
         root = validate_response(xml_data)

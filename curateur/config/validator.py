@@ -104,9 +104,8 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
     media_types = section.get('media_types', [])
     if not isinstance(media_types, list):
         errors.append("scraping.media_types must be a list")
-    elif not media_types:
-        errors.append("scraping.media_types cannot be empty")
     else:
+        # Empty list is valid - means no media download, only gamelist updates
         valid_types = {'covers', 'screenshots', 'titlescreens', 'marquees', 
                        '3dboxes', 'backcovers', 'fanart', 'manuals', 
                        'miximages', 'physicalmedia', 'videos'}

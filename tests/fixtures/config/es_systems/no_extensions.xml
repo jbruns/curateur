@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<systemList>
+  <system>
+    <name>nes</name>
+    <fullname>Nintendo Entertainment System</fullname>
+    <path>%ROMPATH%/nes</path>
+    <extension></extension>
+    <platform>nes</platform>
+  </system>
+</systemList>

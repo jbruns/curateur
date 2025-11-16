@@ -1,0 +1,10 @@
+# Minimal valid configuration with only required fields
+screenscraper:
+  user_id: "minimal_user"
+  user_password: "minimal_pass"
+
+paths:
+  roms: ./roms
+  media: ./media
+  gamelists: ./gamelists
+  es_systems: ./tests/fixtures/es_systems/systems.xml

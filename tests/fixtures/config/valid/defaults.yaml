@@ -1,0 +1,26 @@
+# Configuration mixing explicit values and defaults
+screenscraper:
+  user_id: "defaults_user"
+  user_password: "defaults_pass"
+
+paths:
+  roms: ./custom_roms
+  media: ./downloaded_media
+  gamelists: ./gamelists
+  es_systems: ./tests/fixtures/es_systems/systems.xml
+
+scraping:
+  systems: []
+  media_types:
+    - covers
+    - screenshots
+  preferred_regions: [us, wor]
+  preferred_language: en
+
+api:
+  request_timeout: 45
+  max_retries: 2
+
+logging:
+  level: DEBUG
+  console: true

@@ -24,7 +24,7 @@ def test_full_workflow():
     
     # Step 1: Load configuration
     print("\n[1/5] Loading configuration...")
-    config_path = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'test_config.yaml'
+    config_path = Path(__file__).parent.parent / 'fixtures' / 'test_config.yaml'
     
     config = load_config(config_path)
     print(f"  ✓ Config loaded: {config_path}")

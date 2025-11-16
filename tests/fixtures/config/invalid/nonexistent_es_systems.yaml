@@ -1,0 +1,9 @@
+screenscraper:
+  user_id: "test_user"
+  user_password: "test_password"
+
+paths:
+  roms: ./roms
+  media: ./media
+  gamelists: ./gamelists
+  es_systems: ./path/to/nonexistent/file.xml

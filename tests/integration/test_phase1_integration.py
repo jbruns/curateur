@@ -75,7 +75,7 @@ def test_es_systems():
     print("\nTesting ES systems parser...")
     from curateur.config.es_systems import parse_es_systems
     
-    test_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'es_systems.xml'
+    test_file = Path(__file__).parent.parent / 'fixtures' / 'es_systems.xml'
     
     assert test_file.exists(), f"Test file not found: {test_file}"
     
@@ -92,7 +92,7 @@ def test_config_loading():
     from curateur.config.loader import load_config
     from curateur.config.validator import validate_config
     
-    test_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'test_config.yaml'
+    test_file = Path(__file__).parent.parent / 'fixtures' / 'test_config.yaml'
     
     assert test_file.exists(), f"Test config not found: {test_file}"
     

@@ -1,0 +1,15 @@
+screenscraper:
+  user_id: "test_user"
+  user_password: "test_password"
+
+paths:
+  roms: ./roms
+  media: ./media
+  gamelists: ./gamelists
+  es_systems: ./systems.xml
+
+scraping:
+  media_types:
+    - covers
+    - invalid_type
+    - another_bad_type

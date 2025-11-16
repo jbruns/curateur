@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<systemList>
+  <system>
+    <name>nes</name>
+    <fullname>Nintendo Entertainment System</fullname>
+    <path>%ROMPATH%/nes</path>
+    <extension>.nes .NES .zip .ZIP</extension>
+    <platform>nes</platform>
+  </system>
+  <system>
+    <name>snes</name>
+    <fullname>Super Nintendo Entertainment System</fullname>
+    <path>%ROMPATH%/snes</path>
+    <extension>.smc .SMC .sfc .SFC .zip .ZIP</extension>
+    <platform>snes</platform>
+  </system>
+  <system>
+    <name>psx</name>
+    <fullname>Sony PlayStation</fullname>
+    <path>/absolute/path/to/roms/psx</path>
+    <extension>.cue .CUE .ccd .CCD .chd .CHD .m3u .M3U</extension>
+    <platform>psx</platform>
+  </system>
+</systemList>
