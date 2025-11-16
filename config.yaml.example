@@ -9,70 +9,249 @@ screenscraper:
 
 paths:
   # Root ROM directory (can be absolute or relative)
+  # Purpose: Source directory containing ROM files to scrape
   roms: ./roms
+  
   # Destination for downloaded media (must be writable)
+  # Purpose: Media files organized by system/media_type/filename
+  # Default: ./downloaded_media
   media: ./downloaded_media
-  # Destination for gamelists and logs
+  
+  # Destination for gamelist.xml files (must be writable)
+  # Purpose: Generated gamelist.xml per system, ES-DE compatible
+  # Default: ./gamelists
   gamelists: ./gamelists
-  # Path to ES-DE es_systems.xml used to determine systems
+  
+  # Path to ES-DE es_systems.xml (must exist and be readable)
+  # Purpose: Defines systems, extensions, and ROM paths for scanning
+  # Default: ./es_systems.xml
   es_systems: ./es_systems.xml
 
 scraping:
-  # Optional list of system short names (e.g., ["nes","snes"]); empty = all systems from es_systems.xml
+  # System short names to scrape (e.g., ["nes","snes","psx"])
+  # Purpose: Limits scraping to specific systems
+  # Valid: ES-DE system short names from es_systems.xml
+  # Default: [] (empty = all systems)
   systems: []
-  # Media types to download; order does not matter
+  
+  # Media types to download
+  # Purpose: Defines which media assets to download from ScreenScraper
+  # Valid: covers, screenshots, titlescreens, marquees, 3dboxes, backcovers,
+  #        fanart, manuals, miximages, physicalmedia, videos
+  # Default: all types
+  # Note: Order does not affect download priority
   media_types:
     - covers
     - screenshots
     - titlescreens
     - marquees
+    - 3dboxes
+    - backcovers
+    - fanart
+    - manuals
+    - miximages
+    - physicalmedia
+    - videos
+  
   # Region priority for media selection (lowercase ScreenScraper codes)
+  # Purpose: Defines region preference when multiple media variants exist
+  # Valid: us, wor (world), eu, jp, ss (ScreenScraper generic), and more
+  # Default: [us, wor, eu, jp, ss]
   preferred_regions: [us, wor, eu, jp, ss]
-  # Preferred metadata language (two-letter code)
+  
+  # Preferred metadata language (two-letter ISO 639-1 code)
+  # Purpose: Language for game titles, descriptions, genres
+  # Valid: en, fr, de, es, it, pt, ja, etc.
+  # Default: en
   preferred_language: en
-  # Maximum file size (in bytes) for CRC hashing (default 1 GiB). Set 0 to disable hashing.
+  
+  # Maximum file size (bytes) for CRC hashing
+  # Purpose: Skip CRC calculation for files larger than this (performance)
+  # Valid: Non-negative integer (0 = disabled, calculate all ROMs)
+  # Default: 1073741824 (1 GiB)
+  # Note: Large ISO/CHD files may be slow to hash
   crc_size_limit: 1073741824
-  # Minimum width/height for image verification
+  
+  # Minimum width/height (pixels) for image verification
+  # Purpose: Reject images smaller than this dimension
+  # Valid: Positive integer
+  # Default: 50
+  # Note: Prevents corrupt or placeholder images
   image_min_dimension: 50
   
-  skip_scraped: false              # Skip ROMs already in gamelist (requires update_mode: false)
-  update_mode: false               # Enable update mode (requires skip_scraped: true)
-  validate_gamelist: true          # Validate gamelist.xml integrity before operations
-  clean_mismatched_media: false    # Remove media for disabled media types
-  media_only_mode: false           # Download media only for existing gamelist entries
+  # Skip ROMs already present in gamelist.xml
+  # Purpose: Avoid re-scraping ROMs with existing entries
+  # Valid: true | false
+  # Default: false
+  # Note: Requires update_mode=false (mutually exclusive)
+  skip_scraped: false
   
-  update_policy: changed_only      # Update policy: 'always' | 'changed_only' | 'never'
-  update_metadata: true            # Update metadata fields during update mode
-  update_media: true               # Update media files during update mode
-  merge_strategy: preserve_user_edits  # Metadata merge strategy
-  log_changes: true                # Log metadata changes
-  log_unchanged_fields: false      # Log unchanged fields (verbose)
+  # Enable update mode for existing gamelist entries
+  # Purpose: Re-scrape and update metadata for existing ROMs
+  # Valid: true | false
+  # Default: false
+  # Note: Requires skip_scraped=true (mutually exclusive)
+  update_mode: false
   
-  checkpoint_interval: 0           # Checkpoint interval (0 disables checkpointing)
+  # Validate gamelist.xml integrity before operations
+  # Purpose: Compare gamelist entries to scanned ROMs, detect orphans
+  # Valid: true | false
+  # Default: true
+  # Note: Validation threshold controlled by gamelist_integrity_threshold
+  validate_gamelist: true
   
-  # Name verification strictness: strict | normal | lenient | disabled
+  # Gamelist integrity threshold (fraction of ROMs that must match)
+  # Purpose: Fail validation if match rate below this threshold
+  # Valid: 0.0 - 1.0 (0.95 = 95%)
+  # Default: 0.95
+  # Note: Used when validate_gamelist=true
+  gamelist_integrity_threshold: 0.95
+  
+  # Remove media files for disabled media types
+  # Purpose: Clean up media when media_types list changes
+  # Valid: true | false
+  # Default: false
+  # Note: Moves mismatched media to .backup directories
+  clean_mismatched_media: false
+  
+  # Download media only (skip metadata scraping)
+  # Purpose: Fetch missing media for existing gamelist entries
+  # Valid: true | false
+  # Default: false
+  # Note: Requires existing gamelist.xml with entries
+  media_only_mode: false
+  
+  # Update policy for changed ROMs (hash-based detection)
+  # Purpose: Determines when to re-scrape based on ROM changes
+  # Valid: always | changed_only | never
+  # Default: changed_only
+  # Note: 'changed_only' uses stored CRC hashes to detect changes
+  update_policy: changed_only
+  
+  # Update metadata fields during update mode
+  # Purpose: Allow metadata changes when ROM unchanged
+  # Valid: true | false
+  # Default: true
+  # Note: Respects merge_strategy for field preservation
+  update_metadata: true
+  
+  # Update media files during update mode
+  # Purpose: Re-download updated media even if ROM unchanged
+  # Valid: true | false
+  # Default: true
+  update_media: true
+  
+  # Metadata merge strategy for updates
+  # Purpose: Controls whether other gamelist.xml fields (such as playcount, kidMode, ..) are preserved or overwritten.
+  # Valid: preserve_user_edits (recommended) | overwrite_all
+  # Default: preserve_user_edits
+  merge_strategy: preserve_user_edits
+  
+  # Log metadata changes during updates
+  # Purpose: Track what fields changed during update operations
+  # Valid: true | false
+  # Default: true
+  log_changes: true
+  
+  # Log unchanged fields (verbose)
+  # Purpose: Include unchanged fields in change logs
+  # Valid: true | false
+  # Default: false
+  # Note: Generates verbose output, useful for debugging
+  log_unchanged_fields: false
+  
+  # Checkpoint interval (number of ROMs)
+  # Purpose: Save progress periodically for resume capability
+  # Valid: Non-negative integer (0 = disabled)
+  # Default: 0 (disabled)
+  # Note: Set to 50-100 for large collections, enables resume from interruption
+  checkpoint_interval: 0
+  
+  # Name verification strictness
+  # Purpose: How strictly to match game names during API verification
+  # Valid: strict | normal | lenient | disabled
+  # Default: normal
+  # Note: strict=exact, normal=normalized, lenient=fuzzy, disabled=skip check
   name_verification: normal
+  
+  # Advanced: Rate limit override (use with caution)
+  # Purpose: Override API-provided rate limits for advanced scenarios
+  # Valid: true | false
+  # Default: false
+  # Warning: Cannot exceed API limits - will be capped with warning
+  # Note: API limits are authoritative; overrides can only reduce limits safely
+  rate_limit_override_enabled: false
+  
+  # Rate limit override values (only used if rate_limit_override_enabled=true)
+  # Purpose: Manually specify rate limits (capped at API-provided limits)
+  # Valid: max_threads (1-10), requests_per_minute (1-300), daily_quota (1000-50000)
+  # Default: API-provided limits, or 1 thread/60 rpm/10000 daily if API doesn't provide
+  # Behavior: Values exceeding API limits will be capped with warning logged
+  #           Values below API limits will be honored with warning logged
+  rate_limit_override:
+    max_threads: 1                # Parallel API calls (typical API: 4, max: 8)
+    requests_per_minute: 60       # API calls per minute (typical API: 120-300)
+    daily_quota: 10000            # Daily API call limit (typical API: 20000)
+
+media:
+  # Skip download if media file already exists
+  # Purpose: Avoid re-downloading existing media files
+  # Valid: true | false
+  # Default: true
+  # Note: Checks file existence only, does not verify integrity
+  skip_existing_media: true
 
 api:
   # HTTP request timeout (seconds)
+  # Purpose: Maximum time to wait for API responses
+  # Valid: Positive number (15-60 recommended)
+  # Default: 30
   request_timeout: 30
-  # Maximum number of retry attempts for transient failures
+  
+  # Maximum retry attempts for transient failures
+  # Purpose: Auto-retry on network errors, 5xx responses
+  # Valid: Non-negative integer (0-5 recommended)
+  # Default: 3
   max_retries: 3
+  
   # Base delay (seconds) for exponential backoff
+  # Purpose: Initial wait time before retry (doubles each attempt)
+  # Valid: Non-negative number (1-10 recommended)
+  # Default: 5
+  # Note: Retry delays: 5s, 10s, 20s with backoff_factor=2
   retry_backoff_seconds: 5
 
 logging:
-  # Logging level: DEBUG, INFO, WARNING, ERROR
+  # Logging level
+  # Purpose: Controls verbosity of log output
+  # Valid: DEBUG | INFO | WARNING | ERROR
+  # Default: INFO
+  # Note: DEBUG shows all operations, ERROR shows failures only
   level: INFO
-  # Whether to log to console
+  
+  # Enable console logging
+  # Purpose: Output logs to stdout/stderr
+  # Valid: true | false
+  # Default: true
   console: true
-  # Optional file path for log output (null disables file logging)
+  
+  # Optional log file path
+  # Purpose: Write logs to file in addition to console
+  # Valid: File path or null (disabled)
+  # Default: null (no file logging)
+  # Example: ./logs/curateur.log
   file: null
 
 runtime:
-  # Enable dry-run mode (scan + API verification without downloads)
+  # Enable dry-run mode (simulation)
+  # Purpose: Scan ROMs and query API without downloading media
+  # Valid: true | false
+  # Default: false
+  # Note: Useful for testing configuration and estimating quota usage
   dry_run: false
-  # Enable jeuRecherche search fallback when direct lookup fails (Phase 2)
+  
+  # Enable search fallback
+  # Purpose: Use search API when direct ROM lookup fails
+  # Valid: true | false
+  # Default: false
   enable_search_fallback: false
-  # Number of worker threads (MVP uses 1; increase cautiously when Milestone 2 adds parallelism)
-  threads: 1

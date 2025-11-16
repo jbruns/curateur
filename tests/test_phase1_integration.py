@@ -15,19 +15,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def test_imports():
     """Test that all modules can be imported."""
     print("Testing module imports...")
-    try:
-        from curateur import __version__
-        from curateur.api.obfuscator import obfuscate, deobfuscate
-        from curateur.api.credentials import get_dev_credentials
-        from curateur.api.system_map import get_systemeid, PLATFORM_SYSTEMEID_MAP
-        from curateur.config.loader import load_config
-        from curateur.config.validator import validate_config
-        from curateur.config.es_systems import parse_es_systems, SystemDefinition
-        print("  ✓ All imports successful")
-        return True
-    except ImportError as e:
-        print(f"  ✗ Import failed: {e}")
-        return False
+    from curateur import __version__
+    from curateur.api.obfuscator import obfuscate, deobfuscate
+    from curateur.api.credentials import get_dev_credentials
+    from curateur.api.system_map import get_systemeid, PLATFORM_SYSTEMEID_MAP
+    from curateur.config.loader import load_config
+    from curateur.config.validator import validate_config
+    from curateur.config.es_systems import parse_es_systems, SystemDefinition
+    print("  ✓ All imports successful")
 
 
 def test_obfuscation():
@@ -39,12 +34,8 @@ def test_obfuscation():
     obfuscated = obfuscate(test_data)
     deobfuscated = deobfuscate(obfuscated)
     
-    if deobfuscated == test_data:
-        print("  ✓ Obfuscation round-trip successful")
-        return True
-    else:
-        print(f"  ✗ Round-trip failed: {test_data} != {deobfuscated}")
-        return False
+    assert deobfuscated == test_data, f"Round-trip failed: {test_data} != {deobfuscated}"
+    print("  ✓ Obfuscation round-trip successful")
 
 
 def test_dev_credentials():
@@ -52,19 +43,12 @@ def test_dev_credentials():
     print("\nTesting developer credentials...")
     from curateur.api.credentials import get_dev_credentials
     
-    try:
-        creds = get_dev_credentials()
-        required_keys = ['devid', 'devpassword', 'softname']
-        
-        if all(key in creds for key in required_keys):
-            print(f"  ✓ Credentials retrieved: softname={creds['softname']}")
-            return True
-        else:
-            print(f"  ✗ Missing keys in credentials: {creds.keys()}")
-            return False
-    except Exception as e:
-        print(f"  ✗ Failed to get credentials: {e}")
-        return False
+    creds = get_dev_credentials()
+    required_keys = ['devid', 'devpassword', 'softname']
+    
+    assert all(key in creds for key in required_keys), \
+        f"Missing keys in credentials: {creds.keys()}"
+    print(f"  ✓ Credentials retrieved: softname={creds['softname']}")
 
 
 def test_system_map():
@@ -79,20 +63,11 @@ def test_system_map():
         ('genesis', 1),
     ]
     
-    all_pass = True
     for platform, expected_id in test_cases:
-        try:
-            systemeid = get_systemeid(platform)
-            if systemeid == expected_id:
-                print(f"  ✓ {platform} -> {systemeid}")
-            else:
-                print(f"  ✗ {platform}: expected {expected_id}, got {systemeid}")
-                all_pass = False
-        except Exception as e:
-            print(f"  ✗ {platform}: {e}")
-            all_pass = False
-    
-    return all_pass
+        systemeid = get_systemeid(platform)
+        assert systemeid == expected_id, \
+            f"{platform}: expected {expected_id}, got {systemeid}"
+        print(f"  ✓ {platform} -> {systemeid}")
 
 
 def test_es_systems():
@@ -102,23 +77,13 @@ def test_es_systems():
     
     test_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'es_systems.xml'
     
-    if not test_file.exists():
-        print(f"  ✗ Test file not found: {test_file}")
-        return False
+    assert test_file.exists(), f"Test file not found: {test_file}"
     
-    try:
-        systems = parse_es_systems(test_file)
-        if len(systems) >= 3:
-            print(f"  ✓ Parsed {len(systems)} systems")
-            for system in systems:
-                print(f"    - {system.name} ({system.platform})")
-            return True
-        else:
-            print(f"  ✗ Expected at least 3 systems, got {len(systems)}")
-            return False
-    except Exception as e:
-        print(f"  ✗ Failed to parse: {e}")
-        return False
+    systems = parse_es_systems(test_file)
+    assert len(systems) >= 3, f"Expected at least 3 systems, got {len(systems)}"
+    print(f"  ✓ Parsed {len(systems)} systems")
+    for system in systems:
+        print(f"    - {system.name} ({system.platform})")
 
 
 def test_config_loading():
@@ -129,28 +94,17 @@ def test_config_loading():
     
     test_file = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'test_config.yaml'
     
-    if not test_file.exists():
-        print(f"  ✗ Test config not found: {test_file}")
-        return False
+    assert test_file.exists(), f"Test config not found: {test_file}"
     
-    try:
-        config = load_config(test_file)
-        print("  ✓ Config loaded")
-        
-        validate_config(config)
-        print("  ✓ Config validated")
-        
-        # Check dev credentials were injected
-        if 'devid' in config['screenscraper']:
-            print("  ✓ Dev credentials injected")
-        else:
-            print("  ✗ Dev credentials not injected")
-            return False
-        
-        return True
-    except Exception as e:
-        print(f"  ✗ Failed: {e}")
-        return False
+    config = load_config(test_file)
+    print("  ✓ Config loaded")
+    
+    validate_config(config)
+    print("  ✓ Config validated")
+    
+    # Check dev credentials were injected
+    assert 'devid' in config['screenscraper'], "Dev credentials not injected"
+    print("  ✓ Dev credentials injected")
 
 
 def main():
@@ -168,16 +122,20 @@ def main():
         test_config_loading,
     ]
     
-    results = []
+    failed = 0
     for test in tests:
-        results.append(test())
+        try:
+            test()
+        except Exception as e:
+            print(f"  ✗ Test failed: {e}")
+            failed += 1
     
     print("\n" + "=" * 60)
-    passed = sum(results)
-    total = len(results)
+    passed = len(tests) - failed
+    total = len(tests)
     print(f"Results: {passed}/{total} tests passed")
     
-    if passed == total:
+    if failed == 0:
         print("✓ Phase 1 integration test PASSED")
         print("=" * 60)
         return 0

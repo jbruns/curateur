@@ -58,46 +58,28 @@ def test_extra_fields_preservation():
         parser = GamelistParser()
         entries = parser.parse_gamelist(gamelist_path)
         
-        if len(entries) != 1:
-            print(f"  ✗ Expected 1 entry, got {len(entries)}")
-            return False
+        assert len(entries) == 1, f"Expected 1 entry, got {len(entries)}"
         
         mario = entries[0]
         
         # Check that extra fields were captured
-        if 'sortname' not in mario.extra_fields:
-            print(f"  ✗ sortname not in extra_fields")
-            return False
-        
-        if mario.extra_fields['sortname'] != 'Mario Bros., Super':
-            print(f"  ✗ Wrong sortname value: {mario.extra_fields['sortname']}")
-            return False
-        
+        assert 'sortname' in mario.extra_fields, "sortname not in extra_fields"
+        assert mario.extra_fields['sortname'] == 'Mario Bros., Super', \
+            f"Wrong sortname value: {mario.extra_fields['sortname']}"
         print(f"  ✓ Parsed sortname: '{mario.extra_fields['sortname']}'")
         
-        if 'kidgame' not in mario.extra_fields:
-            print(f"  ✗ kidgame not in extra_fields")
-            return False
-        
+        assert 'kidgame' in mario.extra_fields, "kidgame not in extra_fields"
         print(f"  ✓ Parsed kidgame: '{mario.extra_fields['kidgame']}'")
         
-        if 'altemulator' not in mario.extra_fields:
-            print(f"  ✗ altemulator not in extra_fields")
-            return False
-        
+        assert 'altemulator' in mario.extra_fields, "altemulator not in extra_fields"
         print(f"  ✓ Parsed altemulator: '{mario.extra_fields['altemulator']}'")
         
-        if 'custom-field' not in mario.extra_fields:
-            print(f"  ✗ custom-field not in extra_fields")
-            return False
-        
+        assert 'custom-field' in mario.extra_fields, "custom-field not in extra_fields"
         print(f"  ✓ Parsed custom-field: '{mario.extra_fields['custom-field']}'")
         
         # Ensure known fields are NOT in extra_fields
-        if 'name' in mario.extra_fields or 'desc' in mario.extra_fields:
-            print(f"  ✗ Known fields incorrectly in extra_fields")
-            return False
-        
+        assert 'name' not in mario.extra_fields and 'desc' not in mario.extra_fields, \
+            "Known fields incorrectly in extra_fields"
         print(f"  ✓ Known fields not in extra_fields")
         
         # Now simulate a merge with new scraped data
@@ -114,43 +96,25 @@ def test_extra_fields_preservation():
         merger = GamelistMerger()
         merged = merger.merge_entries(entries, [new_entry])
         
-        if len(merged) != 1:
-            print(f"  ✗ Expected 1 merged entry, got {len(merged)}")
-            return False
+        assert len(merged) == 1, f"Expected 1 merged entry, got {len(merged)}"
         
         merged_mario = merged[0]
         
         # Check that extra fields were preserved
-        if 'sortname' not in merged_mario.extra_fields:
-            print(f"  ✗ sortname not preserved after merge")
-            return False
-        
-        if merged_mario.extra_fields['sortname'] != 'Mario Bros., Super':
-            print(f"  ✗ sortname value changed after merge")
-            return False
-        
+        assert 'sortname' in merged_mario.extra_fields, "sortname not preserved after merge"
+        assert merged_mario.extra_fields['sortname'] == 'Mario Bros., Super', \
+            "sortname value changed after merge"
         print(f"  ✓ Extra fields preserved through merge")
         
         # Check that scraped metadata was updated
-        if merged_mario.desc != "Updated description from scraper":
-            print(f"  ✗ Description not updated: {merged_mario.desc}")
-            return False
-        
-        if merged_mario.rating != 0.95:
-            print(f"  ✗ Rating not updated: {merged_mario.rating}")
-            return False
-        
+        assert merged_mario.desc == "Updated description from scraper", \
+            f"Description not updated: {merged_mario.desc}"
+        assert merged_mario.rating == 0.95, f"Rating not updated: {merged_mario.rating}"
         print(f"  ✓ Scraped metadata updated")
         
         # Check that user fields were preserved
-        if not merged_mario.favorite:
-            print(f"  ✗ Favorite flag not preserved")
-            return False
-        
-        if merged_mario.playcount != 5:
-            print(f"  ✗ Playcount not preserved")
-            return False
-        
+        assert merged_mario.favorite, "Favorite flag not preserved"
+        assert merged_mario.playcount == 5, f"Playcount not preserved: {merged_mario.playcount}"
         print(f"  ✓ User fields preserved")
         
         # Write the merged gamelist
@@ -166,42 +130,27 @@ def test_extra_fields_preservation():
         
         # Check for extra fields in XML
         sortname_elem = game.find("sortname")
-        if sortname_elem is None or sortname_elem.text != "Mario Bros., Super":
-            print(f"  ✗ sortname not in output XML")
-            return False
-        
+        assert sortname_elem is not None and sortname_elem.text == "Mario Bros., Super", \
+            "sortname not in output XML"
         print(f"  ✓ sortname in output XML: '{sortname_elem.text}'")
         
         kidgame_elem = game.find("kidgame")
-        if kidgame_elem is None or kidgame_elem.text != "true":
-            print(f"  ✗ kidgame not in output XML")
-            return False
-        
+        assert kidgame_elem is not None and kidgame_elem.text == "true", \
+            "kidgame not in output XML"
         print(f"  ✓ kidgame in output XML: '{kidgame_elem.text}'")
         
         altemulator_elem = game.find("altemulator")
-        if altemulator_elem is None:
-            print(f"  ✗ altemulator not in output XML")
-            return False
-        
+        assert altemulator_elem is not None, "altemulator not in output XML"
         print(f"  ✓ altemulator in output XML: '{altemulator_elem.text}'")
         
         custom_elem = game.find("custom-field")
-        if custom_elem is None:
-            print(f"  ✗ custom-field not in output XML")
-            return False
-        
+        assert custom_elem is not None, "custom-field not in output XML"
         print(f"  ✓ custom-field in output XML: '{custom_elem.text}'")
         
         # Verify that playcount is NOT in the output (we don't write it)
         playcount_elem = game.find("playcount")
-        if playcount_elem is not None:
-            print(f"  ✗ playcount should not be in output XML")
-            return False
-        
+        assert playcount_elem is None, "playcount should not be in output XML"
         print(f"  ✓ playcount correctly omitted from output")
-        
-        return True
 
 
 def main():
@@ -210,14 +159,15 @@ def main():
     print("curateur - Extra Fields Preservation Test")
     print("=" * 60)
     
-    if test_extra_fields_preservation():
+    try:
+        test_extra_fields_preservation()
         print("\n" + "=" * 60)
         print("✓ Extra fields preservation test PASSED")
         print("=" * 60)
         return 0
-    else:
+    except Exception as e:
         print("\n" + "=" * 60)
-        print("✗ Extra fields preservation test FAILED")
+        print(f"✗ Extra fields preservation test FAILED: {e}")
         print("=" * 60)
         return 1
 

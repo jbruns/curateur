@@ -27,17 +27,12 @@ def test_hash_calculator():
     
     if not test_file.exists():
         print(f"  ⚠ Test file not found: {test_file}")
-        return True
     
     # Calculate hash
     crc = calculate_crc32(test_file, size_limit=10*1024*1024)  # 10MB limit
     
-    if crc and len(crc) == 8 and all(c in '0123456789ABCDEF' for c in crc):
-        print(f"  ✓ Hash calculated: {crc}")
-        return True
-    else:
-        print(f"  ✗ Invalid hash format: {crc}")
-        return False
+    assert crc and len(crc) == 8 and all(c in '0123456789ABCDEF' for c in crc), "Test failed"
+    print(f"  ✓ Test passed")
 
 
 def test_format_file_size():
@@ -51,7 +46,6 @@ def test_format_file_size():
         (1024 * 1024 * 1024, "1.00 GB"),
     ]
     
-    all_pass = True
     for size, expected in test_cases:
         result = format_file_size(size)
         if result == expected:
@@ -60,7 +54,6 @@ def test_format_file_size():
             print(f"  ✗ {size}: expected '{expected}', got '{result}'")
             all_pass = False
     
-    return all_pass
 
 
 def test_m3u_parser():
@@ -71,7 +64,6 @@ def test_m3u_parser():
     
     if not m3u_file.exists():
         print(f"  ⚠ Test M3U not found: {m3u_file}")
-        return True
     
     try:
         disc_files = parse_m3u(m3u_file)
@@ -83,10 +75,8 @@ def test_m3u_parser():
         if len(disc_files) >= 2:
             print(f"  ✓ Multi-disc game detected")
         
-        return True
     except Exception as e:
         print(f"  ✗ Failed to parse M3U: {e}")
-        return False
 
 
 def test_disc_handler():
@@ -97,27 +87,18 @@ def test_disc_handler():
     
     if not disc_subdir.exists():
         print(f"  ⚠ Test disc subdir not found: {disc_subdir}")
-        return True
+        return  # Skip test
     
-    try:
-        # Check if it's recognized as disc subdir
-        extensions = ['.cue', '.gdi']
-        is_disc = is_disc_subdirectory(disc_subdir, extensions)
-        
-        if is_disc:
-            print(f"  ✓ Disc subdirectory detected")
-        else:
-            print(f"  ✗ Not recognized as disc subdirectory")
-            return False
-        
-        # Get contained file
-        contained = get_contained_file(disc_subdir)
-        print(f"  ✓ Contained file: {contained.name}")
-        
-        return True
-    except Exception as e:
-        print(f"  ✗ Failed: {e}")
-        return False
+    # Check if it's recognized as disc subdir
+    extensions = ['.cue', '.gdi']
+    is_disc = is_disc_subdirectory(disc_subdir, extensions)
+    
+    assert is_disc, "Not recognized as disc subdirectory"
+    print(f"  ✓ Disc subdirectory detected")
+    
+    # Get contained file
+    contained = get_contained_file(disc_subdir)
+    print(f"  ✓ Contained file: {contained.name}")
 
 
 def test_nes_scanner():
@@ -129,9 +110,7 @@ def test_nes_scanner():
     systems = parse_es_systems(es_systems_file)
     nes_system = next((s for s in systems if s.platform == 'nes'), None)
     
-    if not nes_system:
-        print("  ✗ NES system not found in es_systems.xml")
-        return False
+    assert nes_system, "NES system not found in es_systems.xml"
     
     try:
         roms = scan_system(nes_system, crc_size_limit=10*1024*1024)
@@ -149,12 +128,11 @@ def test_nes_scanner():
             has_crc = "CRC" if rom.crc32 else "no CRC"
             print(f"    - {rom.filename} ({has_crc})")
         
-        return True
     except Exception as e:
         print(f"  ✗ Failed to scan: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, "Test failed"
 
 
 def test_psx_scanner():
@@ -166,9 +144,7 @@ def test_psx_scanner():
     systems = parse_es_systems(es_systems_file)
     psx_system = next((s for s in systems if s.platform == 'psx'), None)
     
-    if not psx_system:
-        print("  ✗ PSX system not found in es_systems.xml")
-        return False
+    assert psx_system, "PSX system not found in es_systems.xml"
     
     try:
         roms = scan_system(psx_system, crc_size_limit=10*1024*1024)
@@ -189,12 +165,11 @@ def test_psx_scanner():
                 print(f"      Query file: {rom.query_filename}")
                 print(f"      Disc files: {len(rom.disc_files or [])}")
         
-        return True
     except Exception as e:
         print(f"  ✗ Failed to scan: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, "Test failed"
 
 
 def test_dreamcast_scanner():
@@ -206,9 +181,7 @@ def test_dreamcast_scanner():
     systems = parse_es_systems(es_systems_file)
     dc_system = next((s for s in systems if s.platform == 'dreamcast'), None)
     
-    if not dc_system:
-        print("  ✗ Dreamcast system not found in es_systems.xml")
-        return False
+    assert dc_system, "Dreamcast system not found in es_systems.xml"
     
     try:
         roms = scan_system(dc_system, crc_size_limit=10*1024*1024)
@@ -227,12 +200,11 @@ def test_dreamcast_scanner():
                 print(f"      Query file: {rom.query_filename}")
                 print(f"      Contained: {rom.contained_file.name if rom.contained_file else 'N/A'}")
         
-        return True
     except Exception as e:
         print(f"  ✗ Failed to scan: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, "Test failed"
 
 
 def main():

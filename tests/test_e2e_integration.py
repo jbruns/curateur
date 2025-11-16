@@ -26,51 +26,38 @@ def test_full_workflow():
     print("\n[1/5] Loading configuration...")
     config_path = Path(__file__).parent.parent / 'tests' / 'fixtures' / 'test_config.yaml'
     
-    try:
-        config = load_config(config_path)
-        print(f"  ✓ Config loaded: {config_path}")
-        print(f"    User: {config['screenscraper']['user_id']}")
-        print(f"    Dev credentials: {config['screenscraper']['softname']}")
-    except Exception as e:
-        print(f"  ✗ Failed to load config: {e}")
-        return False
+    config = load_config(config_path)
+    print(f"  ✓ Config loaded: {config_path}")
+    print(f"    User: {config['screenscraper']['user_id']}")
+    print(f"    Dev credentials: {config['screenscraper']['softname']}")
+    assert config is not None, "Config should be loaded"
     
     # Step 2: Validate configuration
     print("\n[2/5] Validating configuration...")
     
-    try:
-        validate_config(config)
-        print(f"  ✓ Configuration is valid")
-        print(f"    Media types: {', '.join(config['scraping']['media_types'])}")
-        print(f"    CRC limit: {config['scraping']['crc_size_limit']} bytes")
-    except Exception as e:
-        print(f"  ✗ Validation failed: {e}")
-        return False
+    validate_config(config)
+    print(f"  ✓ Configuration is valid")
+    print(f"    Media types: {', '.join(config['scraping']['media_types'])}")
+    print(f"    CRC limit: {config['scraping']['crc_size_limit']} bytes")
     
     # Step 3: Parse ES systems
     print("\n[3/5] Parsing ES systems...")
     es_systems_path = Path(config['paths']['es_systems']).resolve()
     
-    try:
-        systems = parse_es_systems(es_systems_path)
-        print(f"  ✓ Parsed {len(systems)} systems")
-        
-        for system in systems:
-            print(f"    - {system.name} ({system.platform})")
-    except Exception as e:
-        print(f"  ✗ Failed to parse systems: {e}")
-        return False
+    systems = parse_es_systems(es_systems_path)
+    print(f"  ✓ Parsed {len(systems)} systems")
+    assert len(systems) > 0, "Should parse at least one system"
+    
+    for system in systems:
+        print(f"    - {system.name} ({system.platform})")
     
     # Step 4: Map platforms to system IDs
     print("\n[4/5] Mapping platforms to ScreenScraper system IDs...")
     
-    try:
-        for system in systems:
-            systemeid = get_systemeid(system.platform)
-            print(f"  ✓ {system.platform} -> systemeid {systemeid}")
-    except Exception as e:
-        print(f"  ✗ Failed to map platform: {e}")
-        return False
+    for system in systems:
+        systemeid = get_systemeid(system.platform)
+        print(f"  ✓ {system.platform} -> systemeid {systemeid}")
+        assert systemeid is not None, f"Should map {system.platform} to system ID"
     
     # Step 5: Scan all systems
     print("\n[5/5] Scanning ROM directories...")
@@ -79,20 +66,15 @@ def test_full_workflow():
     crc_size_limit = config['scraping']['crc_size_limit']
     
     for system in systems:
-        try:
-            roms = scan_system(system, crc_size_limit=crc_size_limit)
-            total_roms += len(roms)
-            
-            if roms:
-                print(f"  ✓ {system.name}: {len(roms)} ROM(s)")
-                for rom in roms:
-                    print(f"      - {rom.filename} ({rom.rom_type.value})")
-            else:
-                print(f"  ℹ {system.name}: No ROMs found")
-                
-        except Exception as e:
-            print(f"  ✗ {system.name}: Failed to scan: {e}")
-            return False
+        roms = scan_system(system, crc_size_limit=crc_size_limit)
+        total_roms += len(roms)
+        
+        if roms:
+            print(f"  ✓ {system.name}: {len(roms)} ROM(s)")
+            for rom in roms:
+                print(f"      - {rom.filename} ({rom.rom_type.value})")
+        else:
+            print(f"  ℹ {system.name}: No ROMs found")
     
     # Summary
     print("\n" + "=" * 60)
@@ -104,14 +86,16 @@ def test_full_workflow():
     print(f"✓ {total_roms} ROMs scanned across {len(systems)} systems")
     print("\n✓ End-to-End Integration Test PASSED")
     print("=" * 60)
-    
-    return True
 
 
 def main():
     """Run end-to-end test."""
-    success = test_full_workflow()
-    return 0 if success else 1
+    try:
+        test_full_workflow()
+        return 0
+    except Exception as e:
+        print(f"\n✗ Test failed: {e}")
+        return 1
 
 
 if __name__ == '__main__':

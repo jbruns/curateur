@@ -32,8 +32,9 @@ class ThrottleManager:
     - Automatic recovery
     
     Example:
+        # Rate limit: 120 calls per minute
         throttle = ThrottleManager(
-            default_limit=RateLimit(calls=5, window_seconds=1)
+            default_limit=RateLimit(calls=120, window_seconds=60)
         )
         
         # Wait if needed before API call

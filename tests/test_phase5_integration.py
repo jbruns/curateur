@@ -37,7 +37,7 @@ def test_game_entry_creation():
         print(f"  ✓ Basic entry created")
     else:
         print(f"  ✗ Basic entry creation failed")
-        return False
+        assert False, "Test failed"
     
     # Test HTML entity decoding
     entry_with_entities = GameEntry(
@@ -51,21 +51,20 @@ def test_game_entry_creation():
         print(f"  ✓ HTML entity decoded in name: '{entry_with_entities.name}'")
     else:
         print(f"  ✗ HTML entity decoding failed: '{entry_with_entities.name}'")
-        return False
+        assert False, "Test failed"
     
     if "Pokémon" in entry_with_entities.desc:
         print(f"  ✓ HTML entity decoded in description")
     else:
         print(f"  ✗ HTML entity decoding failed in description")
-        return False
+        assert False, "Test failed"
     
     if entry_with_entities.developer == "Nintendo & Game Freak":
         print(f"  ✓ HTML entity decoded in developer")
     else:
         print(f"  ✗ HTML entity decoding failed: '{entry_with_entities.developer}'")
-        return False
+        assert False, "Test failed"
     
-    return True
 
 
 def test_game_entry_from_api():
@@ -100,27 +99,26 @@ def test_game_entry_from_api():
         print(f"  ✓ Name extracted: '{entry.name}'")
     else:
         print(f"  ✗ Name extraction failed: '{entry.name}'")
-        return False
+        assert False, "Test failed"
     
     if entry.rating == 0.9:  # 4.5/5 = 0.9
         print(f"  ✓ Rating converted: {entry.rating}")
     else:
         print(f"  ✗ Rating conversion failed: {entry.rating}")
-        return False
+        assert False, "Test failed"
     
     if entry.releasedate == '19851018T000000':
         print(f"  ✓ Release date formatted: {entry.releasedate}")
     else:
         print(f"  ✗ Release date formatting failed: {entry.releasedate}")
-        return False
+        assert False, "Test failed"
     
     if entry.genre == 'Platform-Action':
         print(f"  ✓ Genres joined: '{entry.genre}'")
     else:
         print(f"  ✗ Genre joining failed: '{entry.genre}'")
-        return False
+        assert False, "Test failed"
     
-    return True
 
 
 def test_xml_writer():
@@ -197,13 +195,8 @@ def test_xml_writer():
         print(f"  ✓ Game metadata correct")
         
         # Validate with writer's validator
-        if writer.validate_output(output_path):
-            print(f"  ✓ XML validation passed")
-        else:
-            print(f"  ✗ XML validation failed")
-            return False
-        
-        return True
+        assert writer.validate_output(output_path), "XML validation failed"
+        print(f"  ✓ XML validation passed")
 
 
 def test_xml_parser():
@@ -268,7 +261,6 @@ def test_xml_parser():
         
         print(f"  ✓ Entry fields parsed correctly")
         
-        return True
 
 
 def test_gamelist_merger():
@@ -314,7 +306,7 @@ def test_gamelist_merger():
     
     if len(merged) != 3:
         print(f"  ✗ Expected 3 entries, got {len(merged)}")
-        return False
+        assert False, "Test failed"
     
     print(f"  ✓ Merged to 3 entries")
     
@@ -322,19 +314,19 @@ def test_gamelist_merger():
     mario = next((e for e in merged if 'Mario' in e.name), None)
     if not mario:
         print(f"  ✗ Mario entry not found")
-        return False
+        assert False, "Test failed"
     
     # Check metadata updated
     if mario.desc != "New description from API":
         print(f"  ✗ Description not updated: {mario.desc}")
-        return False
+        assert False, "Test failed"
     
     print(f"  ✓ Metadata updated from new scrape")
     
     # Check user data preserved
     if not mario.favorite or mario.playcount != 10:
         print(f"  ✗ User data not preserved (favorite={mario.favorite}, playcount={mario.playcount})")
-        return False
+        assert False, "Test failed"
     
     print(f"  ✓ User data preserved")
     
@@ -342,11 +334,10 @@ def test_gamelist_merger():
     old_game = next((e for e in merged if 'OldGame' in e.path), None)
     if not old_game:
         print(f"  ✗ Old entry not preserved")
-        return False
+        assert False, "Test failed"
     
     print(f"  ✓ Existing entries preserved")
     
-    return True
 
 
 def test_path_handler():
@@ -391,7 +382,6 @@ def test_path_handler():
             print(f"  ✗ Wrong disc basename: {disc_basename}")
             return False
         
-        return True
 
 
 def test_gamelist_generator():
@@ -446,7 +436,6 @@ def test_gamelist_generator():
             print(f"  ✗ Gamelist validation failed")
             return False
         
-        return True
 
 
 def main():

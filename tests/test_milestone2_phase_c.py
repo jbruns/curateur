@@ -391,57 +391,57 @@ class TestRateLimitOverride:
         """Test effective limits with no API or overrides"""
         config = {'scraping': {}}
         override = RateLimitOverride(config)
-        
+
         limits = override.get_effective_limits(None)
-        
+
         assert limits.max_threads == RateLimitOverride.DEFAULT_MAX_THREADS
-        assert limits.requests_per_second == RateLimitOverride.DEFAULT_REQUESTS_PER_SECOND
+        assert limits.requests_per_minute == RateLimitOverride.DEFAULT_REQUESTS_PER_MINUTE
         assert limits.daily_quota == RateLimitOverride.DEFAULT_DAILY_QUOTA
-    
+
     def test_get_effective_limits_api_provided(self):
         """Test effective limits with API-provided values"""
         config = {'scraping': {}}
         override = RateLimitOverride(config)
-        
+
         api_limits = {
             'maxthreads': 4,
-            'maxrequestsseconds': 2.0,
+            'maxrequestspermin': 120,
             'maxrequestsperday': 20000
         }
-        
+
         limits = override.get_effective_limits(api_limits)
-        
+
         assert limits.max_threads == 4
-        assert limits.requests_per_second == 2.0
+        assert limits.requests_per_minute == 120
         assert limits.daily_quota == 20000
-    
+
     def test_get_effective_limits_overrides_enabled(self):
-        """Test overrides take precedence over API limits"""
+        """Test overrides respect API limits (cannot exceed)"""
         config = {
             'scraping': {
                 'rate_limit_override_enabled': True,
                 'rate_limit_override': {
                     'max_threads': 2,
-                    'requests_per_second': 1.0,
+                    'requests_per_minute': 60,
                     'daily_quota': 5000
                 }
             }
         }
         override = RateLimitOverride(config)
-        
+
         api_limits = {
             'maxthreads': 4,
-            'maxrequestsseconds': 2.0,
+            'maxrequestspermin': 120,
             'maxrequestsperday': 20000
         }
-        
+
         limits = override.get_effective_limits(api_limits)
-        
-        # Overrides should take precedence
+
+        # Overrides below API limits are honored
         assert limits.max_threads == 2
-        assert limits.requests_per_second == 1.0
+        assert limits.requests_per_minute == 60
         assert limits.daily_quota == 5000
-    
+
     def test_get_effective_limits_partial_overrides(self):
         """Test partial overrides (only some fields overridden)"""
         config = {
@@ -453,20 +453,20 @@ class TestRateLimitOverride:
             }
         }
         override = RateLimitOverride(config)
-        
+
         api_limits = {
             'maxthreads': 4,
-            'maxrequestsseconds': 2.0,
+            'maxrequestspermin': 120,
             'maxrequestsperday': 20000
         }
-        
+
         limits = override.get_effective_limits(api_limits)
-        
+
         # Thread override applied, others from API
         assert limits.max_threads == 2
-        assert limits.requests_per_second == 2.0
+        assert limits.requests_per_minute == 120
         assert limits.daily_quota == 20000
-    
+
     def test_validate_overrides_within_limits(self):
         """Test validation passes for reasonable overrides"""
         config = {
@@ -474,7 +474,7 @@ class TestRateLimitOverride:
                 'rate_limit_override_enabled': True,
                 'rate_limit_override': {
                     'max_threads': 2,
-                    'requests_per_second': 1.5,
+                    'requests_per_minute': 90,
                     'daily_quota': 15000
                 }
             }
@@ -491,20 +491,20 @@ class TestRateLimitOverride:
                 'rate_limit_override_enabled': True,
                 'rate_limit_override': {
                     'max_threads': 10,  # Exceeds typical of 4
-                    'requests_per_second': 5.0,  # Exceeds typical of 2.0
+                    'requests_per_minute': 300,  # Exceeds typical of 120
                     'daily_quota': 50000  # Exceeds typical of 20000
                 }
             }
         }
-        
+
         with caplog.at_level('WARNING'):
             override = RateLimitOverride(config)
-        
+
         # Should have warnings in log
         assert 'max_threads=10 exceeds typical limit' in caplog.text
-        assert 'requests_per_second=5.0 exceeds typical limit' in caplog.text
+        assert 'requests_per_minute=300 exceeds typical limit' in caplog.text
         assert 'daily_quota=50000 exceeds typical limit' in caplog.text
-    
+
     def test_validate_overrides_invalid_values(self, caplog):
         """Test validation warns for invalid values"""
         config = {
@@ -512,19 +512,19 @@ class TestRateLimitOverride:
                 'rate_limit_override_enabled': True,
                 'rate_limit_override': {
                     'max_threads': 0,  # Invalid
-                    'requests_per_second': -1.0,  # Invalid
+                    'requests_per_minute': -1,  # Invalid
                     'daily_quota': 0  # Invalid
                 }
             }
         }
-        
+
         with caplog.at_level('WARNING'):
             override = RateLimitOverride(config)
-        
+
         assert 'max_threads=0 is invalid' in caplog.text
-        assert 'requests_per_second=-1.0 is invalid' in caplog.text
+        assert 'requests_per_minute=-1 is invalid' in caplog.text
         assert 'daily_quota=0 is invalid' in caplog.text
-    
+
     def test_get_override_summary_disabled(self):
         """Test summary when overrides disabled"""
         config = {'scraping': {}}
@@ -540,17 +540,49 @@ class TestRateLimitOverride:
                 'rate_limit_override_enabled': True,
                 'rate_limit_override': {
                     'max_threads': 2,
-                    'requests_per_second': 1.0
+                    'requests_per_minute': 60
                 }
             }
         }
         override = RateLimitOverride(config)
-        
+
         summary = override.get_override_summary()
         assert "ENABLED" in summary
         assert "max_threads: 2" in summary
-        assert "requests_per_second: 1.0" in summary
+        assert "requests_per_minute: 60" in summary
 
+    def test_get_effective_limits_caps_excessive_overrides(self, caplog):
+        """Test that overrides exceeding API limits are capped with warning"""
+        config = {
+            'scraping': {
+                'rate_limit_override_enabled': True,
+                'rate_limit_override': {
+                    'max_threads': 10,  # Exceeds API limit of 4
+                    'requests_per_minute': 240,  # Exceeds API limit of 120
+                    'daily_quota': 50000  # Exceeds API limit of 20000
+                }
+            }
+        }
+        override = RateLimitOverride(config)
+
+        api_limits = {
+            'maxthreads': 4,
+            'maxrequestspermin': 120,
+            'maxrequestsperday': 20000
+        }
+
+        with caplog.at_level('WARNING'):
+            limits = override.get_effective_limits(api_limits)
+
+        # Should cap at API limits
+        assert limits.max_threads == 4
+        assert limits.requests_per_minute == 120
+        assert limits.daily_quota == 20000
+
+        # Should have warnings about capping
+        assert 'max_threads=10 exceeds API limit=4' in caplog.text
+        assert 'requests_per_minute=240 exceeds API limit=120' in caplog.text
+        assert 'daily_quota=50000 exceeds API limit=20000' in caplog.text
 
 # ============================================================================
 # Integration Tests
@@ -619,7 +651,7 @@ class TestPhaseCIntegration:
         # Simulate API response with higher limits
         api_limits = {
             'maxthreads': 4,
-            'maxrequestsseconds': 2.0,
+            'maxrequestspermin': 120,
             'maxrequestsperday': 10000,
             'requeststoday': 4800  # Near override limit
         }
@@ -627,9 +659,9 @@ class TestPhaseCIntegration:
         # Get effective limits (overrides should apply)
         limits = override.get_effective_limits(api_limits)
         
-        assert limits.max_threads == 2  # Overridden
-        assert limits.requests_per_second == 2.0  # From API
-        assert limits.daily_quota == 5000  # Overridden
+        assert limits.max_threads == 2  # Overridden (conservative)
+        assert limits.requests_per_minute == 120  # From API (no override)
+        assert limits.daily_quota == 5000  # Overridden (conservative)
         
         # Check if we're near quota
         requests_remaining = limits.daily_quota - api_limits['requeststoday']

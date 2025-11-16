@@ -45,7 +45,6 @@ def test_error_handler():
         (429, "Thread limit reached"),
     ]
     
-    all_pass = True
     for code, expected in test_cases:
         msg = get_error_message(code)
         if expected in msg:
@@ -76,7 +75,6 @@ def test_error_handler():
     except SkippableAPIError:
         print("  ✓ SkippableAPIError raised for HTTP 404")
     
-    return all_pass
 
 
 def test_rate_limiter():
@@ -107,7 +105,6 @@ def test_rate_limiter():
         print(f"  ✗ Failed to update: {limits}")
         return False
     
-    return True
 
 
 def test_name_normalization():
@@ -121,7 +118,6 @@ def test_name_normalization():
         ("Street Fighter II' - Champion Edition", "street fighter ii champion edition"),
     ]
     
-    all_pass = True
     for input_name, expected in test_cases:
         result = normalize_name(input_name)
         if result == expected:
@@ -130,7 +126,6 @@ def test_name_normalization():
             print(f"  ✗ '{input_name}': expected '{expected}', got '{result}'")
             all_pass = False
     
-    return all_pass
 
 
 def test_name_similarity():
@@ -144,7 +139,6 @@ def test_name_similarity():
         ("Sonic", "Mario", 0.0),  # No similarity
     ]
     
-    all_pass = True
     for name1, name2, min_expected in test_cases:
         similarity = calculate_similarity(name1, name2)
         if similarity >= min_expected:
@@ -153,7 +147,6 @@ def test_name_similarity():
             print(f"  ✗ '{name1}' vs '{name2}': {similarity*100:.0f}% (expected >={min_expected*100:.0f}%)")
             all_pass = False
     
-    return all_pass
 
 
 def test_word_overlap():
@@ -169,7 +162,6 @@ def test_word_overlap():
         ("Sonic the Hedgehog", "Mario Bros", False),  # Different games
     ]
     
-    all_pass = True
     for name1, name2, expected in test_cases:
         result = check_word_overlap(name1, name2)
         status = "✓" if result == expected else "✗"
@@ -177,7 +169,6 @@ def test_word_overlap():
         if result != expected:
             all_pass = False
     
-    return all_pass
 
 
 def test_name_verification():
@@ -193,7 +184,6 @@ def test_name_verification():
         ("Super Mario Bros 3.nes", "Super Mario Bros. 3", "normal", True),
     ]
     
-    all_pass = True
     for rom_name, api_name, threshold, expected in test_cases:
         is_match, similarity, reason = verify_name_match(rom_name, api_name, threshold)
         status = "✓" if is_match == expected else "✗"
@@ -201,7 +191,6 @@ def test_name_verification():
         if is_match != expected:
             all_pass = False
     
-    return all_pass
 
 
 def test_html_entity_decoding():
@@ -215,7 +204,6 @@ def test_html_entity_decoding():
         ("Street Fighter II&#39;", "Street Fighter II'"),
     ]
     
-    all_pass = True
     for input_str, expected in test_cases:
         result = decode_html_entities(input_str)
         if result == expected:
@@ -224,7 +212,6 @@ def test_html_entity_decoding():
             print(f"  ✗ '{input_str}': expected '{expected}', got '{result}'")
             all_pass = False
     
-    return all_pass
 
 
 def test_response_validation():
@@ -268,14 +255,12 @@ def test_response_validation():
         print(f"  ✗ Failed to parse valid response: {e}")
         return False
     
-    return True
 
 
 def test_verification_thresholds():
     """Test verification threshold levels."""
     print("\nTesting verification thresholds...")
     
-    all_pass = True
     
     # Test threshold values
     expected = {
@@ -293,7 +278,6 @@ def test_verification_thresholds():
             print(f"  ✗ {mode}: expected {expected_val}, got {actual}")
             all_pass = False
     
-    return all_pass
 
 
 def main():

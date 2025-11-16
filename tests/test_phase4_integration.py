@@ -37,7 +37,6 @@ def test_media_types():
         ('screenmarquee', 'marquees'),
     ]
     
-    all_pass = True
     for media_type, expected_dir in test_cases:
         actual_dir = get_directory_for_media_type(media_type)
         if actual_dir == expected_dir:
@@ -46,7 +45,6 @@ def test_media_types():
             print(f"  ✗ {media_type}: expected {expected_dir}, got {actual_dir}")
             all_pass = False
     
-    return all_pass
 
 
 def test_region_detection():
@@ -61,7 +59,6 @@ def test_region_detection():
         ("Game Name.zip", []),  # No region
     ]
     
-    all_pass = True
     for filename, expected_regions in test_cases:
         detected = detect_region_from_filename(filename)
         if detected == expected_regions:
@@ -70,7 +67,6 @@ def test_region_detection():
             print(f"  ✗ '{filename}': expected {expected_regions}, got {detected}")
             all_pass = False
     
-    return all_pass
 
 
 def test_region_selection():
@@ -87,7 +83,7 @@ def test_region_selection():
         print(f"  ✓ Multi-region ROM: selected 'us' (highest priority in ROM)")
     else:
         print(f"  ✗ Expected 'us', got '{selected}'")
-        return False
+        assert False, "Test failed"
     
     # Test case 2: ROM has World, API has World and USA
     available = ['us', 'wor']
@@ -98,7 +94,7 @@ def test_region_selection():
         print(f"  ✓ World ROM: selected 'wor' (from ROM)")
     else:
         print(f"  ✗ Expected 'wor', got '{selected}'")
-        return False
+        assert False, "Test failed"
     
     # Test case 3: ROM has no region, fallback to preferred
     available = ['eu', 'jp']
@@ -109,9 +105,8 @@ def test_region_selection():
         print(f"  ✓ No ROM region: selected 'eu' (from preferred list)")
     else:
         print(f"  ✗ Expected 'eu', got '{selected}'")
-        return False
+        assert False, "Test failed"
     
-    return True
 
 
 def test_url_selector():
@@ -140,19 +135,18 @@ def test_url_selector():
             print(f"  ✓ Selected 2 media types with correct regions")
         else:
             print(f"  ✗ Wrong regions selected")
-            return False
+            assert False, "Test failed"
     else:
         print(f"  ✗ Expected box-2D and ss, got {list(selected.keys())}")
-        return False
+        assert False, "Test failed"
     
     # sstitle should not be selected (not in enabled_media_types)
     if 'sstitle' not in selected:
         print(f"  ✓ Correctly filtered out non-enabled media types")
     else:
         print(f"  ✗ Should not have selected sstitle")
-        return False
+        assert False, "Test failed"
     
-    return True
 
 
 def test_media_organizer():
@@ -171,7 +165,7 @@ def test_media_organizer():
             print(f"  ✓ Path generation: {path.relative_to(media_root)}")
         else:
             print(f"  ✗ Expected {expected}, got {path}")
-            return False
+            assert False, "Test failed"
         
         # Test ROM basename extraction
         test_cases = [
@@ -180,16 +174,10 @@ def test_media_organizer():
             ("Zelda.m3u", "Zelda"),  # M3U playlist
         ]
         
-        all_pass = True
         for rom_path, expected_basename in test_cases:
             basename = organizer.get_rom_basename(rom_path)
-            if basename == expected_basename:
-                print(f"  ✓ Basename: '{rom_path}' -> '{basename}'")
-            else:
-                print(f"  ✗ '{rom_path}': expected '{expected_basename}', got '{basename}'")
-                all_pass = False
-        
-        return all_pass
+            assert basename == expected_basename, f"'{rom_path}': expected '{expected_basename}', got '{basename}'"
+            print(f"  ✓ Basename: '{rom_path}' -> '{basename}'")
 
 
 def test_image_validator():
@@ -209,7 +197,7 @@ def test_image_validator():
         print(f"  ✓ Valid 100x100 image accepted")
     else:
         print(f"  ✗ Valid image rejected: {error}")
-        return False
+        assert False, "Test failed"
     
     # Create an image that's too small
     small_img = Image.new('RGB', (40, 40), color='blue')
@@ -222,7 +210,7 @@ def test_image_validator():
         print(f"  ✓ Small 40x40 image rejected")
     else:
         print(f"  ✗ Small image should be rejected")
-        return False
+        assert False, "Test failed"
     
     # Test invalid data
     is_valid, error = downloader._validate_image_data(b"not an image")
@@ -230,9 +218,8 @@ def test_image_validator():
         print(f"  ✓ Invalid image data rejected")
     else:
         print(f"  ✗ Invalid data should be rejected")
-        return False
+        assert False, "Test failed"
     
-    return True
 
 
 def test_download_integration():
@@ -255,7 +242,7 @@ def test_download_integration():
             print(f"  ✓ MediaDownloader initialized")
         else:
             print(f"  ✗ Initialization failed")
-            return False
+            assert False, "Test failed"
         
         # Test existing media check
         existing = downloader.check_existing_media('nes', 'Mario')
@@ -263,7 +250,7 @@ def test_download_integration():
             print(f"  ✓ No existing media detected (empty directory)")
         else:
             print(f"  ✗ Should not find existing media in empty directory")
-            return False
+            assert False, "Test failed"
         
         # Test URL selection
         media_list = [
@@ -271,13 +258,8 @@ def test_download_integration():
         ]
         
         selected = downloader.url_selector.select_media_urls(media_list, "Mario (USA).nes")
-        if 'box-2D' in selected:
-            print(f"  ✓ URL selection working")
-        else:
-            print(f"  ✗ URL selection failed")
-            return False
-        
-        return True
+        assert 'box-2D' in selected, "URL selection failed"
+        print(f"  ✓ URL selection working")
 
 
 def test_media_type_map():
@@ -287,7 +269,6 @@ def test_media_type_map():
     # Check all MVP types are mapped
     mvp_types = ['box-2D', 'ss', 'sstitle', 'screenmarquee']
     
-    all_pass = True
     for media_type in mvp_types:
         if media_type in MEDIA_TYPE_MAP:
             print(f"  ✓ {media_type} mapped to {MEDIA_TYPE_MAP[media_type]}")
@@ -295,7 +276,6 @@ def test_media_type_map():
             print(f"  ✗ {media_type} not in MEDIA_TYPE_MAP")
             all_pass = False
     
-    return all_pass
 
 
 def main():

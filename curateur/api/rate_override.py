@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class RateLimits(NamedTuple):
     """Rate limit configuration"""
     max_threads: int
-    requests_per_second: float
+    requests_per_minute: int
     daily_quota: int
 
 
@@ -33,7 +33,7 @@ class RateLimitOverride:
           rate_limit_override_enabled: false
           rate_limit_override:
             max_threads: 4
-            requests_per_second: 2.0
+            requests_per_minute: 120
             daily_quota: 10000
     
     Example:
@@ -45,18 +45,18 @@ class RateLimitOverride:
         # Use limits for rate limiting
         rate_limiter.configure(
             max_threads=limits.max_threads,
-            requests_per_second=limits.requests_per_second
+            requests_per_minute=limits.requests_per_minute
         )
     """
     
     # Default conservative limits (used as fallback)
     DEFAULT_MAX_THREADS = 1
-    DEFAULT_REQUESTS_PER_SECOND = 1.0
+    DEFAULT_REQUESTS_PER_MINUTE = 60
     DEFAULT_DAILY_QUOTA = 10000
     
     # Typical API limits (for warning purposes)
     TYPICAL_MAX_THREADS = 4
-    TYPICAL_REQUESTS_PER_SECOND = 2.0
+    TYPICAL_REQUESTS_PER_MINUTE = 120
     TYPICAL_DAILY_QUOTA = 20000
     
     def __init__(self, config: dict):
@@ -82,77 +82,131 @@ class RateLimitOverride:
         """
         Merge API-provided limits with user overrides
         
-        Priority:
-        1. User overrides (if enabled and valid)
-        2. API-provided limits (if available)
-        3. Default conservative limits
+        Rules:
+        1. API limits are authoritative upper bounds
+        2. User overrides can only reduce limits, not exceed API limits
+        3. If user tries to exceed API limit: log warning and cap at API limit
+        4. If user sets lower limit than API: log warning and honor user's choice
         
         Args:
             api_provided_limits: dict with API response fields:
                 - maxthreads: int
-                - maxrequestsseconds: float
+                - maxrequestspermin: int
                 - maxrequestsperday: int
         
         Returns:
             RateLimits with effective configuration
         
         Example:
-            # API provides: maxthreads=4, maxrequestsseconds=2.0
-            # Override: max_threads=2 (conservative)
-            # Result: max_threads=2, requests_per_second=2.0
+            # API provides: maxthreads=4, maxrequestspermin=120
+            # Override: max_threads=2 (conservative) - accepted
+            # Override: max_threads=8 (too high) - capped at 4 with warning
         """
         # Start with defaults
         max_threads = self.DEFAULT_MAX_THREADS
-        requests_per_second = self.DEFAULT_REQUESTS_PER_SECOND
+        requests_per_minute = self.DEFAULT_REQUESTS_PER_MINUTE
         daily_quota = self.DEFAULT_DAILY_QUOTA
+        
+        # Track API limits for override validation
+        api_max_threads = None
+        api_max_rpm = None
+        api_max_daily = None
         
         # Apply API-provided limits if available
         if api_provided_limits:
             if 'maxthreads' in api_provided_limits:
-                max_threads = int(api_provided_limits['maxthreads'])
-                logger.debug(f"Using API max_threads: {max_threads}")
+                api_max_threads = int(api_provided_limits['maxthreads'])
+                max_threads = api_max_threads
+                logger.debug(f"API max_threads: {max_threads}")
             
-            if 'maxrequestsseconds' in api_provided_limits:
-                requests_per_second = float(api_provided_limits['maxrequestsseconds'])
-                logger.debug(f"Using API requests_per_second: {requests_per_second}")
+            if 'maxrequestspermin' in api_provided_limits:
+                api_max_rpm = int(api_provided_limits['maxrequestspermin'])
+                requests_per_minute = api_max_rpm
+                logger.debug(f"API requests_per_minute: {requests_per_minute}")
             
             if 'maxrequestsperday' in api_provided_limits:
-                daily_quota = int(api_provided_limits['maxrequestsperday'])
-                logger.debug(f"Using API daily_quota: {daily_quota}")
+                api_max_daily = int(api_provided_limits['maxrequestsperday'])
+                daily_quota = api_max_daily
+                logger.debug(f"API daily_quota: {daily_quota}")
         
-        # Apply user overrides if enabled
+        # Apply user overrides if enabled (with API limit enforcement)
         if self.override_enabled:
             if 'max_threads' in self.custom_limits:
                 override_threads = int(self.custom_limits['max_threads'])
-                logger.info(
-                    f"Overriding max_threads: {max_threads} -> {override_threads}"
-                )
-                max_threads = override_threads
+                
+                if api_max_threads is not None:
+                    if override_threads > api_max_threads:
+                        logger.warning(
+                            f"Override max_threads={override_threads} exceeds API limit={api_max_threads}. "
+                            f"Capping at API limit to comply with ScreenScraper terms."
+                        )
+                        max_threads = api_max_threads
+                    elif override_threads < api_max_threads:
+                        logger.warning(
+                            f"Override max_threads={override_threads} is lower than API limit={api_max_threads}. "
+                            f"Using conservative user setting."
+                        )
+                        max_threads = override_threads
+                    else:
+                        max_threads = override_threads
+                else:
+                    logger.info(f"Using override max_threads: {override_threads} (no API limit available)")
+                    max_threads = override_threads
             
-            if 'requests_per_second' in self.custom_limits:
-                override_rps = float(self.custom_limits['requests_per_second'])
-                logger.info(
-                    f"Overriding requests_per_second: {requests_per_second} -> {override_rps}"
-                )
-                requests_per_second = override_rps
+            if 'requests_per_minute' in self.custom_limits:
+                override_rpm = int(self.custom_limits['requests_per_minute'])
+                
+                if api_max_rpm is not None:
+                    if override_rpm > api_max_rpm:
+                        logger.warning(
+                            f"Override requests_per_minute={override_rpm} exceeds API limit={api_max_rpm}. "
+                            f"Capping at API limit to comply with ScreenScraper terms."
+                        )
+                        requests_per_minute = api_max_rpm
+                    elif override_rpm < api_max_rpm:
+                        logger.warning(
+                            f"Override requests_per_minute={override_rpm} is lower than API limit={api_max_rpm}. "
+                            f"Using conservative user setting."
+                        )
+                        requests_per_minute = override_rpm
+                    else:
+                        requests_per_minute = override_rpm
+                else:
+                    logger.info(f"Using override requests_per_minute: {override_rpm} (no API limit available)")
+                    requests_per_minute = override_rpm
             
             if 'daily_quota' in self.custom_limits:
                 override_quota = int(self.custom_limits['daily_quota'])
-                logger.info(
-                    f"Overriding daily_quota: {daily_quota} -> {override_quota}"
-                )
-                daily_quota = override_quota
+                
+                if api_max_daily is not None:
+                    if override_quota > api_max_daily:
+                        logger.warning(
+                            f"Override daily_quota={override_quota} exceeds API limit={api_max_daily}. "
+                            f"Capping at API limit to comply with ScreenScraper terms."
+                        )
+                        daily_quota = api_max_daily
+                    elif override_quota < api_max_daily:
+                        logger.warning(
+                            f"Override daily_quota={override_quota} is lower than API limit={api_max_daily}. "
+                            f"Using conservative user setting."
+                        )
+                        daily_quota = override_quota
+                    else:
+                        daily_quota = override_quota
+                else:
+                    logger.info(f"Using override daily_quota: {override_quota} (no API limit available)")
+                    daily_quota = override_quota
         
         return RateLimits(
             max_threads=max_threads,
-            requests_per_second=requests_per_second,
+            requests_per_minute=requests_per_minute,
             daily_quota=daily_quota
         )
     
     def validate_overrides(self) -> None:
         """
         Validate override configuration
-        Warn if overrides exceed typical API limits
+        Warn about configuration issues
         """
         if not self.override_enabled:
             return
@@ -173,18 +227,18 @@ class RateLimitOverride:
                     f"{self.TYPICAL_MAX_THREADS}. This may result in API bans."
                 )
         
-        # Check requests_per_second
-        if 'requests_per_second' in self.custom_limits:
-            rps = float(self.custom_limits['requests_per_second'])
+        # Check requests_per_minute
+        if 'requests_per_minute' in self.custom_limits:
+            rpm = int(self.custom_limits['requests_per_minute'])
             
-            if rps <= 0:
+            if rpm <= 0:
                 warnings.append(
-                    f"requests_per_second={rps} is invalid. Must be greater than 0."
+                    f"requests_per_minute={rpm} is invalid. Must be greater than 0."
                 )
-            elif rps > self.TYPICAL_REQUESTS_PER_SECOND:
+            elif rpm > self.TYPICAL_REQUESTS_PER_MINUTE:
                 warnings.append(
-                    f"requests_per_second={rps} exceeds typical limit of "
-                    f"{self.TYPICAL_REQUESTS_PER_SECOND}. This may result in API bans."
+                    f"requests_per_minute={rpm} exceeds typical limit of "
+                    f"{self.TYPICAL_REQUESTS_PER_MINUTE}. May be capped by API."
                 )
         
         # Check daily_quota
@@ -236,9 +290,9 @@ class RateLimitOverride:
         if 'max_threads' in self.custom_limits:
             lines.append(f"  - max_threads: {self.custom_limits['max_threads']}")
         
-        if 'requests_per_second' in self.custom_limits:
+        if 'requests_per_minute' in self.custom_limits:
             lines.append(
-                f"  - requests_per_second: {self.custom_limits['requests_per_second']}"
+                f"  - requests_per_minute: {self.custom_limits['requests_per_minute']}"
             )
         
         if 'daily_quota' in self.custom_limits:
