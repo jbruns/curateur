@@ -45,26 +45,16 @@ def validate_response(
     return root
 
 
-def parse_game_info(root: etree.Element) -> Dict[str, Any]:
+def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
     """
-    Parse game information from jeuInfos.php response.
+    Parse a <jeu> element into game metadata.
     
     Args:
-        root: Parsed XML root element
+        jeu_elem: <jeu> XML element
         
     Returns:
         Dictionary with game metadata
-        
-    Raises:
-        ResponseError: If game not found or response invalid
     """
-    # Check for <jeu> element
-    jeu_elem = root.find('jeu')
-    
-    if jeu_elem is None:
-        # Game not found
-        raise ResponseError("Game not found in database (<jeu> element missing)")
-    
     # Extract basic metadata
     game_data = {}
     
@@ -92,6 +82,11 @@ def parse_game_info(root: etree.Element) -> Dict[str, Any]:
             game_data['name'] = game_data['names']['wor']
         elif game_data['names']:
             game_data['name'] = list(game_data['names'].values())[0]
+    
+    # System name
+    systeme = jeu_elem.find('systeme')
+    if systeme is not None and systeme.text:
+        game_data['system'] = systeme.text
     
     # Descriptions
     synopsis = jeu_elem.find('synopsis')
@@ -159,6 +154,58 @@ def parse_game_info(root: etree.Element) -> Dict[str, Any]:
         game_data['media'] = parse_media_urls(medias)
     
     return game_data
+
+
+def parse_game_info(root: etree.Element) -> Dict[str, Any]:
+    """
+    Parse game information from jeuInfos.php response.
+    
+    Args:
+        root: Parsed XML root element
+        
+    Returns:
+        Dictionary with game metadata
+        
+    Raises:
+        ResponseError: If game not found or response invalid
+    """
+    # Check for <jeu> element
+    jeu_elem = root.find('jeu')
+    
+    if jeu_elem is None:
+        # Game not found
+        raise ResponseError("Game not found in database (<jeu> element missing)")
+    
+    return _parse_jeu_element(jeu_elem)
+
+
+def parse_search_results(root: etree.Element) -> list[Dict[str, Any]]:
+    """
+    Parse game list from jeuRecherche.php response.
+    
+    Args:
+        root: Parsed XML root element with <jeux> container
+        
+    Returns:
+        List of game metadata dictionaries
+    """
+    results = []
+    
+    # Find <jeux> container
+    jeux = root.find('jeux')
+    if jeux is None:
+        return results
+    
+    # Parse each <jeu> element
+    for jeu_elem in jeux.findall('jeu'):
+        try:
+            game_data = _parse_jeu_element(jeu_elem)
+            results.append(game_data)
+        except Exception:
+            # Skip malformed entries
+            continue
+    
+    return results
 
 
 def parse_media_urls(medias_elem: etree.Element) -> Dict[str, List[Dict[str, Any]]]:

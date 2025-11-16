@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Data>
+  <serveurs>
+    <maxthreadformember>4096</maxthreadformember>
+    <threadformember>100</threadformember>
+  </serveurs>
+  <ssuser>
+    <id>test</id>
+    <maxthreads>1</maxthreads>
+    <maxrequestspermin>20</maxrequestspermin>
+    <maxrequestsperday>10000</maxrequestsperday>
+    <requeststoday>50</requeststoday>
+  </ssuser>
+  <jeux>
+  </jeux>
+</Data>

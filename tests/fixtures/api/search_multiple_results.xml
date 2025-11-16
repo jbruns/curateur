@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Data>
+  <serveurs>
+    <maxthreadformember>4096</maxthreadformember>
+    <threadformember>100</threadformember>
+  </serveurs>
+  <ssuser>
+    <id>test</id>
+    <maxthreads>1</maxthreads>
+    <maxrequestspermin>20</maxrequestspermin>
+    <maxrequestsperday>10000</maxrequestsperday>
+    <requeststoday>50</requeststoday>
+  </ssuser>
+  <jeux>
+    <jeu id="1">
+      <noms>
+        <nom region="us">Super Mario Bros.</nom>
+        <nom region="wor">Super Mario Bros.</nom>
+      </noms>
+      <systeme id="2">Nintendo Entertainment System (NES)</systeme>
+      <developpeur>Nintendo</developpeur>
+      <editeur>Nintendo</editeur>
+      <joueurs>1-2</joueurs>
+      <note>18</note>
+      <medias>
+        <media parent="jeu" type="box-2D" region="us" format="png">https://example.com/smb1_box.png</media>
+        <media parent="jeu" type="ss" region="wor" format="jpg">https://example.com/smb1_ss.jpg</media>
+      </medias>
+    </jeu>
+    <jeu id="2">
+      <noms>
+        <nom region="us">Super Mario Bros. 2</nom>
+        <nom region="wor">Super Mario Bros. 2</nom>
+      </noms>
+      <systeme id="2">Nintendo Entertainment System (NES)</systeme>
+      <developpeur>Nintendo</developpeur>
+      <editeur>Nintendo</editeur>
+      <joueurs>1-2</joueurs>
+      <note>17</note>
+      <medias>
+        <media parent="jeu" type="box-2D" region="us" format="png">https://example.com/smb2_box.png</media>
+        <media parent="jeu" type="ss" region="wor" format="jpg">https://example.com/smb2_ss.jpg</media>
+      </medias>
+    </jeu>
+    <jeu id="3">
+      <noms>
+        <nom region="us">Super Mario Bros. 3</nom>
+        <nom region="wor">Super Mario Bros. 3</nom>
+      </noms>
+      <systeme id="2">Nintendo Entertainment System (NES)</systeme>
+      <developpeur>Nintendo</developpeur>
+      <editeur>Nintendo</editeur>
+      <joueurs>1-2</joueurs>
+      <note>19</note>
+      <medias>
+        <media parent="jeu" type="box-2D" region="us" format="png">https://example.com/smb3_box.png</media>
+        <media parent="jeu" type="ss" region="wor" format="jpg">https://example.com/smb3_ss.jpg</media>
+        <media parent="jeu" type="wheel" region="us" format="png">https://example.com/smb3_wheel.png</media>
+      </medias>
+    </jeu>
+  </jeux>
+</Data>

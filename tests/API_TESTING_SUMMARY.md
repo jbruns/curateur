@@ -10,7 +10,7 @@ Comprehensive API testing infrastructure has been successfully implemented for t
 - **`pytest.ini`** - pytest configuration with custom markers (live, integration, slow)
 - **`requirements.txt`** - Updated with `responses>=0.24.0` for HTTP mocking
 
-### Test Files (4 files, 1000+ lines of test code)
+### Test Files (5 files, 1500+ lines of test code)
 1. **`tests/test_api_response_parser.py`** (449 lines)
    - 40+ tests for XML parsing and validation
    - Tests all functions in `response_parser.py`
@@ -32,8 +32,15 @@ Comprehensive API testing infrastructure has been successfully implemented for t
    - Uses known game hashes from nes.dat
    - Marked with `@pytest.mark.live`
    - Requires config.yaml with credentials
+   
+5. **`tests/test_api_search.py`** (448 lines) **NEW**
+   - 16 tests for search endpoint (jeuRecherche.php)
+   - Multiple result parsing and iteration
+   - Result filtering and comparison
+   - Media extraction from search results
+   - Server/user metadata extraction
 
-### Fixture Files (11 XML fixtures)
+### Fixture Files (15 XML fixtures)
 **Error Scenarios (6 files):**
 - `401_api_closed_nonmembers.xml` - API closed for non-members
 - `403_invalid_creds.xml` - Invalid credentials
@@ -48,6 +55,15 @@ Comprehensive API testing infrastructure has been successfully implemented for t
 
 **Malformed XML (3 files):**
 - `invalid_root.xml` - Wrong root element
+- `empty_response.xml` - Empty/invalid XML
+- `invalid_xml.xml` - Malformed XML syntax
+
+**Search Responses (4 files):** **NEW**
+- `jeuRecherche.xml` - Real Sonic search results (7338 lines)
+- `search_no_results.xml` - Empty search results
+- `search_single_result.xml` - Single game match
+- `search_multiple_results.xml` - Multiple Mario games
+- `search_partial_metadata.xml` - Results with incomplete data
 - `missing_jeu.xml` - Missing game element
 - `not_xml.xml` - Invalid XML syntax
 
@@ -92,12 +108,19 @@ Comprehensive API testing infrastructure has been successfully implemented for t
   - Response structure validation
   - Error handling with real API
 
+- ✅ **Search endpoint (jeuRecherche.php)** **NEW**
+  - Multiple result parsing
+  - Result filtering and comparison
+  - Empty results handling
+  - Media extraction from results
+  - Server/user metadata extraction
+
 ## 📊 Test Statistics
 
-- **Total test files:** 4
-- **Total lines of test code:** ~1,725 lines
-- **Total test cases:** ~85 tests
-- **Fixture files:** 11 XML files
+- **Total test files:** 5
+- **Total lines of test code:** ~2,173 lines
+- **Total test cases:** ~101 tests
+- **Fixture files:** 15 XML files (11 jeuInfos + 4 search)
 - **Games for live testing:** 8 verified NES titles
 - **HTTP status codes tested:** 200, 401, 403, 404, 423, 426, 429, 430, 431
 
@@ -132,6 +155,14 @@ Comprehensive API testing infrastructure has been successfully implemented for t
 - Automated script to fetch real API responses
 - Rate limiting built-in (3s delays)
 - Generates metadata documentation
+- Creates error scenarios and partial responses
+
+### 6. Search Endpoint Support **NEW**
+- Parse multiple game results from searches
+- Helper function `parse_search_results()` in `response_parser.py`
+- Handles empty results, partial metadata
+- Result comparison and filtering utilities
+- Real search fixture with 3+ Sonic games
 - Can be re-run to update fixtures
 
 ## 🚀 Running Tests
@@ -205,6 +236,18 @@ python tests/tools/generate_api_fixtures.py --config config.yaml
 - ✅ Multiple query rate limiting
 - ✅ Invalid game handling
 - ✅ Well-known games (Mario, Zelda, Mega Man)
+
+### Search Endpoint **NEW**
+- ✅ Multiple result parsing
+- ✅ Empty search results
+- ✅ Single game match
+- ✅ Result iteration patterns
+- ✅ System filtering
+- ✅ Rating comparison
+- ✅ Best match identification
+- ✅ Malformed entry handling
+- ✅ Media extraction from results
+- ✅ Server/user metadata
 
 ## 📝 Test Data Sources
 
