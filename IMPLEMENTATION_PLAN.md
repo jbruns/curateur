@@ -470,18 +470,19 @@ For each system in es_systems.xml:
 
 Simple decision table for determining whether to process, skip, or partially update a ROM:
 
-| ROM in gamelist.xml? | Metadata Present? | All Enabled Media Present? | Action | API Call? | Download Media? |
-|---------------------|-------------------|---------------------------|--------|-----------|----------------|
-| ❌ No | N/A | N/A | **Full Scrape** | ✅ Yes | ✅ All types |
-| ✅ Yes | ✅ Yes | ✅ Yes | **Skip** | ❌ No | ❌ No |
-| ✅ Yes | ✅ Yes | ❌ No (some missing) | **Media Only** | ❌ No | ✅ Missing only |
-| ✅ Yes | ❌ No | N/A | **Full Scrape** | ✅ Yes | ✅ All types |
-| ✅ Yes | ✅ Yes | ❌ No (update mode) | **Update & Verify** | ✅ Yes | ✅ Changed only |
+| ROM in gamelist.xml? | Metadata Present? | All Enabled Media Present? | Action | API Call? | Update Metadata? | Download Media? |
+|---------------------|-------------------|---------------------------|--------|-----------|-----------------|----------------|
+| ❌ No | N/A | N/A | **Full Scrape** | ✅ Yes | ✅ Yes | ✅ All types |
+| ✅ Yes | ✅ Yes | ✅ Yes | **Skip** | ❌ No | ❌ No | ❌ No |
+| ✅ Yes | ✅ Yes | ❌ No (some missing) | **Media Only** | ✅ Yes (for URLs) | ❌ No (preserve) | ✅ Missing only |
+| ✅ Yes | ❌ No | N/A | **Full Scrape** | ✅ Yes | ✅ Yes | ✅ All types |
+| ✅ Yes | ✅ Yes | ❌ No (update mode) | **Update & Verify** | ✅ Yes | ✅ If changed | ✅ Changed only |
 
 **Notes:**
 - MVP always does "Full Scrape" for all ROMs (skip mode disabled)
 - Milestone 2 will implement skip/update logic
 - "Enabled Media" refers to media types listed in config `media_types`
+- **Media Only mode still requires API call** to fetch media URLs (metadata already exists in gamelist)
 - Update mode (Milestone 2) uses hash verification to detect changed media
 - Configuration flags such as `skip_scraped`, `update_mode`, `clean_mismatched_media`, and `enable_search_fallback` are present in `config.yaml` for future compatibility but have no effect in MVP builds.
 
@@ -2160,17 +2161,18 @@ The tool will support intelligent re-run behavior to minimize API usage and avoi
 #### ROM Processing (Decision Table Driven)
 - Iterate ROMs discovered during scanning and map each to one of the table states (`full_scrape`, `media_only`, `skip`, `update_and_verify`)
 - Queue actions based on that state:
-  * `full_scrape` → API request + metadata + media downloads
-  * `media_only` → reuse metadata, download only missing media types
-  * `skip` → no API calls or downloads
+  * `full_scrape` → API request + metadata update + all media downloads
+  * `media_only` → API request for media URLs + download missing media only + preserve existing metadata
+  * `skip` → no API calls or downloads (all metadata and media already present)
+  * `update` → API request + hash verification + selective updates
 - `clean_mismatched_media: true` augments the `skip` path by deleting media files whose types are no longer enabled:
   ```
   Enabled: covers, screenshots, videos
   Present: covers, screenshots, videos, marquees, manuals
   Action: Delete marquees/ and manuals/ files for this game
-  Log: "✓ Cleaned 2 media types not in enabled list"
+  Log: "✓ Cleaned 2 media types not in enabled list (marquees, manuals)"
   ```
-- When the table outputs `media_only`, queue just the missing media types (no API call) and log counts, e.g. `"⟳ Downloading missing media (3/5 types present)"`
+- When the table outputs `media_only`, make API call to get media URLs but only download missing types and preserve existing gamelist metadata, e.g. `"⟳ Downloading missing media (2/5 types missing, metadata preserved)"`
 
 **Logging Examples**:
 ```
@@ -2768,7 +2770,1831 @@ Detailed tasks for each phase follow below.
 | Milestone 2 Phase C: Resilience & UX | Improve operability for long runs | Checkpoint/resume, richer console UI (rich split panels, interactive prompts), configurable rate-limit overrides |
 | Milestone 2 Phase D: Performance & Parallelism | Reduce runtime for large libraries | Multi-threaded downloads/API calls within ScreenScraper limits, tunable throttles |
 
-Milestone 2 implementation details will be elaborated after MVP delivery, but this roadmap and its success criteria define the target scope.
+---
+
+### Milestone 2 Phase A: Intelligent Skip & Validation
+
+**Estimated Time: 4-5 days**
+
+**Objective**: Enable intelligent re-run behavior that skips already-scraped games, downloads only missing media, and validates gamelist integrity.
+
+#### Components
+
+**1. Skip Manager (`curateur/workflow/skip_manager.py`)**
+
+Core decision engine implementing the [Skip Mode Decision Table](#skip-mode-decision-table-milestone-2-feature).
+
+```python
+class SkipManager:
+    """
+    Manages skip/update decisions for ROMs based on existing gamelist and media
+    
+    Implements decision table logic:
+    - Full scrape: ROM not in gamelist or missing metadata
+    - Media only: ROM in gamelist, metadata present, some media missing
+      (still requires API call to get media URLs, but reuses metadata)
+    - Skip: ROM in gamelist with complete metadata and all enabled media
+    - Update: ROM in gamelist but update_mode enabled (verify hashes)
+    """
+    
+    def __init__(self, config, gamelist_parser, media_checker):
+        self.config = config
+        self.gamelist_parser = gamelist_parser
+        self.media_checker = media_checker
+        self.skip_enabled = config.get('scraping', {}).get('skip_scraped', True)
+        self.update_mode = config.get('scraping', {}).get('update_mode', False)
+    
+    def determine_action(self, rom_info, system_name):
+        """
+        Determine processing action for a ROM
+        
+        Returns:
+            tuple: (action, media_types_to_download, reuse_metadata)
+                action: 'skip' | 'full_scrape' | 'media_only' | 'update'
+                media_types_to_download: list of media types to process
+                reuse_metadata: bool - True if existing metadata should be kept
+        """
+        pass
+    
+    def check_media_completeness(self, rom_basename, system_name, enabled_media_types):
+        """Check which enabled media types are present for a ROM"""
+        pass
+    
+    def should_clean_mismatched_media(self):
+        """Check if media type cleanup is enabled"""
+        return self.config.get('scraping', {}).get('clean_mismatched_media', False)
+```
+
+**Key Features:**
+- Decision table evaluation for each ROM
+- Media completeness checking against enabled types
+- Integration with gamelist parser for existing entries
+- Support for both skip and update modes
+- Configurable cleanup of mismatched media types
+
+**2. Gamelist Integrity Validator (`curateur/gamelist/integrity_validator.py`)**
+
+Validates gamelist.xml entries against actual ROM files on disk.
+
+```python
+class IntegrityValidator:
+    """
+    Validates gamelist integrity by comparing entries to actual ROM files
+    
+    Implements ratio-based validation:
+    - Calculate presence ratio: present_roms / gamelist_entries
+    - Warn if ratio < threshold (default: 95%)
+    - Provide cleanup options for missing ROM entries
+    """
+    
+    def __init__(self, config):
+        self.threshold = config.get('scraping', {}).get(
+            'gamelist_integrity_threshold', 0.95
+        )
+    
+    def validate_gamelist(self, gamelist_entries, scanned_roms):
+        """
+        Compare gamelist entries to scanned ROMs
+        
+        Returns:
+            ValidationResult with:
+            - is_valid: bool
+            - ratio: float
+            - missing_roms: list of gamelist entries with no ROM file
+            - orphaned_media: dict of media files for missing ROMs
+        """
+        pass
+    
+    def prompt_cleanup_action(self, validation_result, system_name):
+        """
+        Interactive prompt for handling integrity issues
+        
+        Displays:
+        - System name
+        - Total gamelist entries vs ROMs present
+        - Missing ROM count and percentage
+        - Proposed cleanup actions
+        
+        Returns: bool (proceed with cleanup)
+        """
+        pass
+    
+    def execute_cleanup(self, validation_result, system_name, media_root, gamelist_path):
+        """
+        Execute cleanup operations:
+        1. Remove missing ROM entries from gamelist.xml
+        2. Move orphaned media to CLEANUP folder
+        3. Log cleanup actions
+        """
+        pass
+```
+
+**Key Features:**
+- Configurable integrity threshold (default: 95%)
+- Interactive cleanup prompts with detailed statistics
+- Safe media relocation to `CLEANUP/<system>/<media_type>/`
+- Atomic gamelist updates (temp file + rename)
+- Detailed logging of cleanup operations
+
+**3. Media Mismatch Cleaner (`curateur/media/mismatch_cleaner.py`)**
+
+Removes media types that are no longer enabled in configuration.
+
+```python
+class MismatchCleaner:
+    """
+    Cleans media files for types not in enabled list
+    
+    Example:
+        Enabled: covers, screenshots, videos
+        Present: covers, screenshots, videos, marquees, manuals
+        Action: Delete marquees/ and manuals/ files
+    """
+    
+    def __init__(self, config, media_root):
+        self.enabled_types = config.get('scraping', {}).get('media_types', [])
+        self.media_root = Path(media_root)
+        self.cleanup_enabled = config.get('scraping', {}).get(
+            'clean_mismatched_media', False
+        )
+    
+    def scan_media_files(self, rom_basename, system_name):
+        """
+        Scan all media files for a ROM
+        
+        Returns:
+            dict: {media_type: [file_paths]}
+        """
+        pass
+    
+    def clean_mismatched_types(self, rom_basename, system_name):
+        """
+        Delete media files for types not in enabled list
+        
+        Returns:
+            CleanupResult with:
+            - cleaned_types: list of media types removed
+            - file_count: number of files deleted
+            - errors: list of cleanup errors
+        """
+        pass
+```
+
+**Key Features:**
+- Opt-in cleanup (disabled by default)
+- Safe file deletion with error handling
+- Logging of cleaned media types and counts
+- Dry-run support for testing
+
+**4. Media-Only Download Handler (`curateur/workflow/media_handler.py`)**
+
+Handles selective media downloads for ROMs with existing metadata.
+
+```python
+class MediaOnlyHandler:
+    """
+    Handles media downloads for ROMs with existing gamelist entries
+    
+    Used when:
+    - ROM already in gamelist with complete metadata
+    - Some enabled media types are missing from disk
+    - Skip mode determines media_only action
+    
+    Note: API call is still required to get media URLs, but existing
+    metadata in gamelist.xml is preserved (not overwritten).
+    """
+    
+    def __init__(self, config):
+        self.config = config
+    
+    def process_media_only(self, rom_info, existing_metadata, missing_media_types, api_response):
+        """
+        Download only missing media types without updating metadata
+        
+        Args:
+            rom_info: ROM file information
+            existing_metadata: Metadata from existing gamelist entry
+            missing_media_types: List of media types to download
+            api_response: API response containing media URLs
+        
+        Process:
+        1. Extract media URLs from API response
+        2. Download only the missing media types
+        3. Skip downloading media that already exists
+        4. Preserve existing gamelist metadata (don't update)
+        5. Log selective media download status
+        
+        Returns:
+            MediaDownloadResult with counts of downloaded/skipped media
+        """
+        pass
+    
+    def should_skip_existing_media(self, media_path):
+        """
+        Check if existing media file should be preserved
+        
+        Returns: bool - True if file exists and skip_existing_media enabled
+        """
+        if not self.config.get('scraping', {}).get('skip_existing_media', True):
+            return False
+        return media_path.exists()
+```
+
+#### Testing
+
+**Integration Tests (`tests/test_milestone2_phase_a.py`)**
+
+1. **Skip Mode Tests**
+   - Test full_scrape for new ROMs
+   - Test skip for complete ROMs
+   - Test media_only for ROMs with missing media
+   - Test decision table with various configurations
+
+2. **Integrity Validation Tests**
+   - Test validation with 100% presence ratio
+   - Test validation below threshold (trigger warning)
+   - Test cleanup execution
+   - Test orphaned media relocation
+
+3. **Mismatch Cleaner Tests**
+   - Test cleanup with enabled types subset
+   - Test preservation of enabled types
+   - Test dry-run mode
+   - Test error handling
+
+**Fixtures Required:**
+- Existing gamelist.xml with varied completeness
+- ROM directories with missing files
+- Media directories with mixed types
+- Configuration files with different thresholds
+
+#### Acceptance Criteria
+
+- ✅ Skip mode correctly identifies complete ROMs (no API call, no processing)
+- ✅ Media-only mode makes API call but preserves existing metadata, downloads only missing media
+- ✅ Existing media files not overwritten when skip_existing_media enabled
+- ✅ Integrity validator detects missing ROMs below threshold
+- ✅ Cleanup prompt displays accurate statistics
+- ✅ Orphaned media relocated to CLEANUP folder structure
+- ✅ Mismatch cleaner removes only non-enabled media types
+- ✅ All operations atomic with proper error handling
+
+---
+
+### Milestone 2 Phase B: Update & Media Governance
+
+**Estimated Time: 5-6 days**
+
+**Objective**: Implement hash-based verification, decommissioned media management, extended media validation, and search fallback.
+
+#### Components
+
+**1. Hash Verification Pipeline (`curateur/media/hash_verifier.py`)**
+
+Multi-tier hash verification system for detecting media changes.
+
+```python
+class HashVerifier:
+    """
+    Verifies media files against API response hashes
+    
+    Hash priority (fastest to slowest):
+    1. File size comparison (bytes)
+    2. CRC32 hash (if available in API response)
+    3. SHA1 hash (if available in API response)
+    """
+    
+    def __init__(self):
+        self.cache = {}  # Cache computed hashes
+    
+    def verify_media_file(self, local_path, api_media_entry):
+        """
+        Verify local media file matches API expectations
+        
+        Args:
+            local_path: Path to local media file
+            api_media_entry: API response media data with:
+                - url: Download URL
+                - size: File size in bytes (optional)
+                - crc: CRC32 hash (optional)
+                - sha1: SHA1 hash (optional)
+        
+        Returns:
+            VerificationResult:
+                - needs_download: bool
+                - reason: str (e.g., "size mismatch", "CRC match", "file missing")
+                - verification_method: str (e.g., "size+CRC", "size only")
+        """
+        pass
+    
+    def calculate_file_crc32(self, file_path):
+        """Calculate CRC32 hash of file (cached)"""
+        pass
+    
+    def calculate_file_sha1(self, file_path):
+        """Calculate SHA1 hash of file (cached)"""
+        pass
+    
+    def clear_cache(self):
+        """Clear hash cache (called between systems)"""
+        pass
+```
+
+**Key Features:**
+- Multi-tier verification with fallback
+- Hash caching for performance
+- Detailed verification logging
+- Support for partial API response data
+
+**2. Decommissioned Media Manager (`curateur/media/cleanup_manager.py`)**
+
+Manages media files that are no longer available from ScreenScraper.
+
+```python
+class CleanupManager:
+    """
+    Manages decommissioned media (no longer available from ScreenScraper)
+    
+    Implements safety rules:
+    - Move unavailable media to CLEANUP/<system>/<media_type>/
+    - Rollback if ALL media would be decommissioned
+    - Preserve at least one media file per game
+    """
+    
+    def __init__(self, config, media_root):
+        self.media_root = Path(media_root)
+        self.cleanup_root = self.media_root / "CLEANUP"
+    
+    def check_decommissioned_media(self, rom_basename, system_name, 
+                                   local_media_files, api_media_types,
+                                   enabled_media_types):
+        """
+        Identify media files that should be decommissioned
+        
+        Rules:
+        - Media type not in API response
+        - Media type IS in enabled list
+        - File exists locally
+        
+        Returns:
+            DecommissionPlan:
+                - files_to_move: list of (media_type, file_path)
+                - remaining_count: int (after decommission)
+                - should_rollback: bool (if remaining_count == 0)
+        """
+        pass
+    
+    def execute_decommission(self, plan, system_name):
+        """
+        Execute decommission operations
+        
+        1. Check rollback flag (abort if True)
+        2. Create CLEANUP directory structure
+        3. Move files to CLEANUP/<system>/<media_type>/
+        4. Log all operations
+        5. Return success/failure status
+        """
+        pass
+    
+    def rollback_decommission(self, plan):
+        """
+        Rollback decommission operations (if executed)
+        Used when all media would be removed
+        """
+        pass
+```
+
+**Key Features:**
+- Automatic rollback protection (no games left without media)
+- Organized cleanup directory structure
+- Atomic file moves with error handling
+- Detailed logging of decommission reasons
+
+**3. Extended Media Verification (`curateur/media/extended_validator.py`)**
+
+Validation for non-image media types (PDFs, videos).
+
+```python
+class ExtendedMediaValidator:
+    """
+    Validates PDF and video files beyond basic image validation
+    
+    Checks:
+    - PDF: Valid PDF header, readable structure, page count > 0
+    - Video: Valid container format, playable streams, duration > 0
+    """
+    
+    def __init__(self, config):
+        self.pdf_enabled = config.get('scraping', {}).get('pdf_verification', True)
+        self.video_enabled = config.get('scraping', {}).get('video_verification', True)
+    
+    def validate_pdf(self, file_path):
+        """
+        Validate PDF file
+        
+        Checks:
+        1. File starts with %PDF-
+        2. File is readable by PDF library
+        3. Has at least one page
+        
+        Returns:
+            ValidationResult: (is_valid, reason)
+        """
+        pass
+    
+    def validate_video(self, file_path):
+        """
+        Validate video file
+        
+        Checks:
+        1. Valid container format (MP4, AVI, etc.)
+        2. Has video stream
+        3. Duration > 0 seconds
+        
+        Returns:
+            ValidationResult: (is_valid, reason, metadata)
+        """
+        pass
+```
+
+**Dependencies:**
+- `PyPDF2` or `pypdf` for PDF validation
+- `ffprobe` (from ffmpeg) for video validation (optional)
+
+**Key Features:**
+- Lightweight validation without full parsing
+- Configurable enable/disable per type
+- Detailed error reporting
+- Retry logic for invalid downloads
+
+**4. Search Fallback Client (`curateur/api/search_client.py`)**
+
+Text-based search fallback when hash matching fails.
+
+```python
+class SearchClient:
+    """
+    ScreenScraper jeuRecherche.php search client
+    
+    Used when:
+    - Direct hash matching fails (404)
+    - enable_search_fallback is True
+    - Name verification failed on initial attempt
+    """
+    
+    def __init__(self, api_client, config):
+        self.api_client = api_client
+        self.enabled = config.get('scraping', {}).get('enable_search_fallback', False)
+        self.confidence_threshold = config.get('scraping', {}).get(
+            'search_confidence_threshold', 0.98
+        )
+    
+    def normalize_search_query(self, rom_filename):
+        """
+        Normalize ROM filename for search
+        
+        Removes:
+        - Region codes: (USA), (Europe), (Japan), etc.
+        - Language codes: (En), (Fr), (De), etc.
+        - Disc numbers: (Disc 1), CD1, etc.
+        - Version info: (Rev A), (v1.1), etc.
+        - Extensions and archive markers
+        
+        Returns: normalized search string
+        """
+        pass
+    
+    def search_game(self, normalized_query, system_id):
+        """
+        Query jeuRecherche.php endpoint
+        
+        Args:
+            normalized_query: Cleaned game name
+            system_id: ScreenScraper systemeid
+        
+        Returns:
+            SearchResults:
+                - matches: list of potential games with confidence scores
+                - best_match: highest confidence match (if above threshold)
+                - search_query: normalized query used
+        """
+        pass
+    
+    def calculate_search_confidence(self, normalized_query, search_result_name):
+        """
+        Calculate similarity between search query and result
+        Uses fuzzy matching (SequenceMatcher)
+        
+        Returns: confidence score (0.0-1.0)
+        """
+        pass
+    
+    def fetch_by_game_id(self, game_id, system_id):
+        """
+        Fetch full game details using jeuInfos.php with game ID
+        Called after search finds a high-confidence match
+        """
+        pass
+```
+
+**Key Features:**
+- Configurable confidence threshold (default: 98%)
+- Intelligent query normalization
+- Fuzzy matching with SequenceMatcher
+- Integration with existing API client
+- Opt-in activation
+
+#### Testing
+
+**Integration Tests (`tests/test_milestone2_phase_b.py`)**
+
+1. **Hash Verification Tests**
+   - Test size-only verification
+   - Test CRC32 verification
+   - Test SHA1 verification
+   - Test verification cache performance
+   - Test missing hash scenarios
+
+2. **Decommission Manager Tests**
+   - Test media relocation to CLEANUP
+   - Test rollback protection (all media removal)
+   - Test partial decommission
+   - Test error handling during moves
+
+3. **Extended Validation Tests**
+   - Test valid/invalid PDF files
+   - Test valid/invalid video files
+   - Test validation disable flags
+   - Test retry logic
+
+4. **Search Fallback Tests**
+   - Test query normalization
+   - Test confidence scoring
+   - Test threshold filtering
+   - Test game ID fetch
+   - Test disabled search fallback
+
+**Fixtures Required:**
+- Media files with known hashes
+- Invalid PDF/video files
+- ScreenScraper search response samples
+- ROMs with various naming conventions
+
+#### Acceptance Criteria
+
+- ✅ Hash verification detects changed media files
+- ✅ Unchanged media skipped (hash match)
+- ✅ Decommission manager safely relocates unavailable media
+- ✅ Rollback prevents removal of all media for a game
+- ✅ PDF validation rejects corrupt/empty files
+- ✅ Video validation rejects unplayable files
+- ✅ Search fallback finds games by normalized name
+- ✅ High confidence threshold prevents false matches
+- ✅ Update mode completes without re-downloading unchanged media
+
+---
+
+### Milestone 2 Phase C: Resilience & UX
+
+**Estimated Time: 4-5 days**
+
+**Objective**: Improve reliability and user experience for long-running scraping operations.
+
+#### Components
+
+**1. Checkpoint System (`curateur/workflow/checkpoint.py`)**
+
+Progress tracking with resume capability for interrupted runs.
+
+```python
+class CheckpointManager:
+    """
+    Manages scraping progress checkpoints for resume capability
+    
+    Checkpoint file: <gamelists>/<system>/.curateur_checkpoint.json
+    
+    Features:
+    - Configurable save intervals (default: every 100 ROMs)
+    - Smart triggering on system boundaries
+    - Atomic file writes
+    - Progress statistics tracking
+    """
+    
+    def __init__(self, gamelist_dir, system_name, config):
+        self.checkpoint_file = Path(gamelist_dir) / ".curateur_checkpoint.json"
+        self.system_name = system_name
+        self.interval = config.get('scraping', {}).get('checkpoint_interval', 100)
+        self.processed_count = 0
+        self.data = self._init_checkpoint_data()
+    
+    def _init_checkpoint_data(self):
+        """Initialize checkpoint data structure"""
+        return {
+            'system': self.system_name,
+            'timestamp': None,
+            'processed_roms': [],
+            'failed_roms': [],
+            'api_quota': {},
+            'stats': {
+                'total_roms': 0,
+                'processed': 0,
+                'successful': 0,
+                'failed': 0,
+                'skipped': 0,
+                'media_only': 0
+            }
+        }
+    
+    def load_checkpoint(self):
+        """
+        Load existing checkpoint file
+        
+        Returns:
+            Checkpoint data dict or None if not found/invalid
+        """
+        pass
+    
+    def save_checkpoint(self, force=False):
+        """
+        Save checkpoint at interval or when forced
+        
+        Args:
+            force: Save immediately regardless of interval
+        
+        Smart triggering:
+        - Every N ROMs (configured interval)
+        - At system boundaries (force=True)
+        - Before fatal errors (force=True)
+        """
+        pass
+    
+    def add_processed_rom(self, filename, action, success, reason=None):
+        """
+        Record processed ROM
+        
+        Args:
+            filename: ROM filename
+            action: 'full_scrape' | 'media_only' | 'skip' | 'update'
+            success: bool
+            reason: Optional failure reason
+        """
+        pass
+    
+    def is_processed(self, filename):
+        """Check if ROM was already processed"""
+        return filename in self.data['processed_roms']
+    
+    def update_api_quota(self, quota_info):
+        """Update API quota tracking from response"""
+        pass
+    
+    def remove_checkpoint(self):
+        """Remove checkpoint file after successful completion"""
+        pass
+```
+
+**Checkpoint Prompt Function:**
+
+```python
+def prompt_resume_from_checkpoint(checkpoint_data):
+    """
+    Interactive prompt for checkpoint resume
+    
+    Displays:
+    - System name
+    - Last checkpoint time
+    - Progress statistics
+    - Failed ROM count
+    
+    Returns: bool (True to resume, False to start fresh)
+    """
+    pass
+```
+
+**Key Features:**
+- Configurable intervals (0 = disabled)
+- Smart triggering on system boundaries
+- Resume from partial progress
+- API quota tracking across runs
+- Automatic cleanup on completion
+
+**2. Rich Console UI (`curateur/ui/console_ui.py`)**
+
+Modern terminal interface using the `rich` library.
+
+```python
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.table import Table
+
+class ConsoleUI:
+    """
+    Rich-based console interface with split panels
+    
+    Layout:
+    ┌─────────────────────────────────────────┐
+    │ Header: System Progress                 │
+    ├─────────────────────────────────────────┤
+    │ Main: Current Operation                 │
+    │  ├─ System: NES (1/5)                  │
+    │  ├─ ROM: Star Quest (15/150)           │
+    │  ├─ Progress Bar: [████░░] 10%         │
+    │  └─ Status: Downloading cover...       │
+    ├─────────────────────────────────────────┤
+    │ Footer: Statistics & Quota              │
+    │  ├─ Success: 145 | Failed: 5           │
+    │  └─ API: 1250/10000 requests           │
+    └─────────────────────────────────────────┘
+    """
+    
+    def __init__(self, config):
+        self.console = Console()
+        self.layout = self._create_layout()
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        )
+        self.live = None
+    
+    def _create_layout(self):
+        """Create split panel layout"""
+        layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="main", ratio=1),
+            Layout(name="footer", size=5)
+        )
+        return layout
+    
+    def start(self):
+        """Start live display"""
+        self.live = Live(self.layout, console=self.console, refresh_per_second=4)
+        self.live.start()
+    
+    def stop(self):
+        """Stop live display"""
+        if self.live:
+            self.live.stop()
+    
+    def update_header(self, system_name, system_num, total_systems):
+        """Update header panel with system progress"""
+        pass
+    
+    def update_main(self, operation_status):
+        """
+        Update main panel with current operation
+        
+        Args:
+            operation_status: dict with:
+                - rom_name: str
+                - rom_num: int
+                - total_roms: int
+                - action: str ('scraping', 'downloading', 'skipping', etc.)
+                - details: str (optional detail message)
+        """
+        pass
+    
+    def update_footer(self, stats, api_quota):
+        """Update footer panel with statistics and quota"""
+        pass
+    
+    def show_error(self, message):
+        """Display error message (pauses live display)"""
+        pass
+    
+    def show_warning(self, message):
+        """Display warning message"""
+        pass
+```
+
+**Key Features:**
+- Split panel layout with live updates
+- Progress bars for systems and ROMs
+- Real-time statistics display
+- API quota monitoring
+- Non-blocking error/warning displays
+
+**3. Interactive Prompt System (`curateur/ui/prompts.py`)**
+
+User interaction for confirmations and choices.
+
+```python
+class PromptSystem:
+    """
+    Interactive prompt system for user decisions
+    
+    Features:
+    - Yes/no confirmations
+    - Multiple choice selections
+    - Input validation
+    - Default values
+    - Timeout support (optional)
+    """
+    
+    def confirm(self, message, default=None):
+        """
+        Yes/no confirmation prompt
+        
+        Args:
+            message: Prompt message
+            default: 'y' | 'n' | None
+        
+        Returns: bool
+        """
+        pass
+    
+    def choose(self, message, choices, default=None):
+        """
+        Multiple choice selection
+        
+        Args:
+            message: Prompt message
+            choices: List of choice strings
+            default: Default choice index
+        
+        Returns: Selected choice string
+        """
+        pass
+    
+    def input_text(self, message, default=None, validator=None):
+        """
+        Text input with optional validation
+        
+        Args:
+            message: Prompt message
+            default: Default value
+            validator: Function to validate input
+        
+        Returns: Validated input string
+        """
+        pass
+```
+
+**4. Rate Limit Override System (`curateur/api/rate_override.py`)**
+
+Configurable rate limit overrides for advanced users.
+
+```python
+class RateLimitOverride:
+    """
+    Manual rate limit overrides for advanced scenarios
+    
+    Use cases:
+    - Developer/premium accounts with higher limits
+    - Testing with restricted quotas
+    - Custom throttling for shared networks
+    
+    WARNING: Exceeding ScreenScraper limits may result in temporary bans
+    """
+    
+    def __init__(self, config):
+        self.override_enabled = config.get('scraping', {}).get(
+            'rate_limit_override_enabled', False
+        )
+        self.custom_limits = config.get('scraping', {}).get(
+            'rate_limit_override', {}
+        )
+    
+    def get_effective_limits(self, api_provided_limits):
+        """
+        Merge API-provided limits with user overrides
+        
+        Priority:
+        1. API-provided limits (if available and not overridden)
+        2. User overrides (if enabled)
+        3. Default conservative limits
+        
+        Returns:
+            RateLimits:
+                - max_threads: int
+                - requests_per_second: float
+                - daily_quota: int
+        """
+        pass
+    
+    def validate_overrides(self):
+        """
+        Validate override configuration
+        Warn if overrides exceed typical API limits
+        """
+        pass
+```
+
+**Configuration Example:**
+
+```yaml
+scraping:
+  # Rate limit overrides (USE WITH CAUTION)
+  rate_limit_override_enabled: false
+  rate_limit_override:
+    max_threads: 4           # ScreenScraper may provide lower
+    requests_per_second: 2.0 # Throttle more aggressively
+    daily_quota: 10000       # Hard limit (stops if exceeded)
+```
+
+#### Testing
+
+**Integration Tests (`tests/test_milestone2_phase_c.py`)**
+
+1. **Checkpoint Tests**
+   - Test checkpoint save at intervals
+   - Test checkpoint load and resume
+   - Test smart triggering at system boundaries
+   - Test cleanup after completion
+   - Test corruption recovery
+
+2. **UI Tests**
+   - Test panel rendering (snapshot testing)
+   - Test progress bar updates
+   - Test error/warning display
+   - Test statistics formatting
+
+3. **Prompt Tests**
+   - Test confirmation inputs
+   - Test choice selection
+   - Test input validation
+   - Test default values
+
+4. **Rate Override Tests**
+   - Test override merging
+   - Test validation warnings
+   - Test disabled overrides
+   - Test limit enforcement
+
+**Fixtures Required:**
+- Partial checkpoint files
+- Long-running operation simulations
+- Mock console output capture
+- Rate limit scenarios
+
+#### Acceptance Criteria
+
+- ✅ Checkpoint saves at configured intervals
+- ✅ Resume correctly skips processed ROMs
+- ✅ Smart checkpointing on system boundaries
+- ✅ Rich UI displays live progress without flicker
+- ✅ Statistics update in real-time
+- ✅ Error/warning displays don't disrupt live UI
+- ✅ Interactive prompts work correctly
+- ✅ Rate limit overrides merge with API limits
+- ✅ Warnings shown for aggressive overrides
+
+---
+
+### Milestone 2 Phase D: Performance & Parallelism
+
+**Estimated Time: 5-6 days**
+
+**Objective**: Optimize performance through parallel operations while respecting ScreenScraper API limits.
+
+#### Components
+
+**1. Thread Pool Manager (`curateur/workflow/thread_pool.py`)**
+
+Manages parallel API calls and downloads within ScreenScraper limits.
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
+class ThreadPoolManager:
+    """
+    Manages parallel operations within ScreenScraper thread limits
+    
+    Features:
+    - Respects API-provided maxthreads limit
+    - Separate pools for API and downloads
+    - Dynamic pool sizing based on API quota
+    - Graceful degradation to single-threaded
+    """
+    
+    def __init__(self, config):
+        self.config = config
+        self.api_pool = None
+        self.download_pool = None
+        self.max_threads = 1  # Conservative default
+        self.lock = threading.Lock()
+    
+    def initialize_pools(self, api_provided_limits):
+        """
+        Initialize thread pools based on API limits
+        
+        Args:
+            api_provided_limits: dict with 'maxthreads' from API response
+        """
+        # Get max threads from API or config override
+        self.max_threads = self._determine_max_threads(api_provided_limits)
+        
+        # Create pools (API uses fewer threads than downloads)
+        self.api_pool = ThreadPoolExecutor(
+            max_workers=max(1, self.max_threads // 2),
+            thread_name_prefix="api"
+        )
+        self.download_pool = ThreadPoolExecutor(
+            max_workers=self.max_threads,
+            thread_name_prefix="download"
+        )
+    
+    def _determine_max_threads(self, api_limits):
+        """
+        Determine max threads considering:
+        1. API-provided maxthreads
+        2. User override (if enabled and valid)
+        3. Conservative default (1)
+        """
+        pass
+    
+    def submit_api_batch(self, api_func, rom_batch):
+        """
+        Submit batch of API requests
+        
+        Args:
+            api_func: Function to call for each ROM
+            rom_batch: List of ROM info dicts
+        
+        Returns:
+            Iterator of (rom, result) tuples as they complete
+        """
+        futures = {}
+        for rom in rom_batch:
+            future = self.api_pool.submit(api_func, rom)
+            futures[future] = rom
+        
+        for future in as_completed(futures):
+            rom = futures[future]
+            try:
+                result = future.result()
+                yield (rom, result)
+            except Exception as e:
+                yield (rom, {'error': str(e)})
+    
+    def submit_download_batch(self, download_func, media_batch):
+        """
+        Submit batch of media downloads
+        
+        Similar to API batch but uses download pool
+        """
+        pass
+    
+    def shutdown(self):
+        """Gracefully shutdown all pools"""
+        if self.api_pool:
+            self.api_pool.shutdown(wait=True)
+        if self.download_pool:
+            self.download_pool.shutdown(wait=True)
+```
+
+**Key Features:**
+- API-aware thread limits
+- Separate pools for different operation types
+- Graceful error handling per thread
+- Progress tracking across threads
+- Clean shutdown on interruption
+
+**2. Connection Pool Manager (`curateur/api/connection_pool.py`)**
+
+HTTP connection pooling for efficient requests.
+
+```python
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+class ConnectionPoolManager:
+    """
+    Manages HTTP connection pooling for efficient parallel requests
+    
+    Features:
+    - Persistent connections
+    - Connection reuse across threads
+    - Automatic retry logic
+    - Timeout configuration
+    """
+    
+    def __init__(self, config):
+        self.session = None
+        self.config = config
+    
+    def create_session(self, max_connections=10):
+        """
+        Create requests session with connection pooling
+        
+        Configuration:
+        - Connection pool size based on thread count
+        - Keep-alive enabled
+        - Automatic retry with exponential backoff
+        - Conservative timeouts
+        """
+        session = requests.Session()
+        
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"]
+        )
+        
+        # Configure adapter with connection pooling
+        adapter = HTTPAdapter(
+            pool_connections=max_connections,
+            pool_maxsize=max_connections * 2,
+            max_retries=retry_strategy,
+            pool_block=False
+        )
+        
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Set timeouts
+        session.timeout = (10, 30)  # (connect, read)
+        
+        return session
+    
+    def get_session(self):
+        """Get or create session (thread-safe)"""
+        if self.session is None:
+            self.session = self.create_session()
+        return self.session
+    
+    def close_session(self):
+        """Close session and release connections"""
+        if self.session:
+            self.session.close()
+            self.session = None
+```
+
+**3. Work Queue Manager (`curateur/workflow/work_queue.py`)**
+
+Prioritized work queue for ROM processing.
+
+```python
+import queue
+from dataclasses import dataclass
+from enum import IntEnum
+
+class Priority(IntEnum):
+    """Work priority levels"""
+    HIGH = 1      # Failed retries, user-requested
+    NORMAL = 2    # Standard processing
+    LOW = 3       # Media-only, background tasks
+
+@dataclass
+class WorkItem:
+    """Work queue item"""
+    rom_info: dict
+    action: str  # 'full_scrape' | 'media_only' | 'update'
+    priority: Priority
+    retry_count: int = 0
+
+class WorkQueueManager:
+    """
+    Manages prioritized work queue for ROM processing
+    
+    Features:
+    - Priority-based processing
+    - Retry handling with exponential backoff
+    - Dynamic reordering
+    - Progress tracking
+    """
+    
+    def __init__(self, max_retries=3):
+        self.queue = queue.PriorityQueue()
+        self.max_retries = max_retries
+        self.processed = set()
+        self.failed = []
+    
+    def add_work(self, rom_info, action, priority=Priority.NORMAL):
+        """Add work item to queue"""
+        item = WorkItem(rom_info, action, priority)
+        self.queue.put((priority.value, item))
+    
+    def get_work(self, timeout=None):
+        """
+        Get next work item from queue
+        
+        Returns: WorkItem or None if queue empty
+        """
+        try:
+            _, item = self.queue.get(timeout=timeout)
+            return item
+        except queue.Empty:
+            return None
+    
+    def retry_failed(self, work_item, error):
+        """
+        Requeue failed work with higher priority
+        
+        Rules:
+        - Increment retry_count
+        - If < max_retries: requeue with HIGH priority
+        - If >= max_retries: add to failed list
+        """
+        pass
+    
+    def get_stats(self):
+        """
+        Get queue statistics
+        
+        Returns: dict with pending, processed, failed counts
+        """
+        pass
+```
+
+**4. Throttle Manager (`curateur/api/throttle.py`)**
+
+Request throttling to stay within rate limits.
+
+```python
+import time
+import threading
+from collections import deque
+
+class ThrottleManager:
+    """
+    Request throttling to respect rate limits
+    
+    Features:
+    - Sliding window rate limiting
+    - Per-second and per-day limits
+    - Thread-safe operation
+    - Adaptive throttling on 429 responses
+    """
+    
+    def __init__(self, config):
+        self.requests_per_second = config.get('scraping', {}).get(
+            'rate_limit_override', {}
+        ).get('requests_per_second', 1.0)
+        self.daily_quota = None
+        self.daily_used = 0
+        
+        self.request_times = deque(maxlen=100)
+        self.lock = threading.Lock()
+        self.adaptive_delay = 0.0
+    
+    def wait_for_slot(self):
+        """
+        Wait until a request slot is available
+        
+        Implements sliding window algorithm:
+        1. Remove requests older than 1 second
+        2. Check if rate limit would be exceeded
+        3. Sleep if necessary
+        4. Record request time
+        """
+        with self.lock:
+            now = time.time()
+            
+            # Remove old requests (>1 second ago)
+            while self.request_times and now - self.request_times[0] > 1.0:
+                self.request_times.popleft()
+            
+            # Calculate required wait time
+            if len(self.request_times) >= self.requests_per_second:
+                oldest = self.request_times[0]
+                wait_time = 1.0 - (now - oldest)
+                if wait_time > 0:
+                    time.sleep(wait_time + self.adaptive_delay)
+                    now = time.time()
+            
+            # Record this request
+            self.request_times.append(now)
+            self.daily_used += 1
+    
+    def check_daily_quota(self):
+        """
+        Check if daily quota exceeded
+        
+        Returns: bool (True if quota available)
+        """
+        if self.daily_quota and self.daily_used >= self.daily_quota:
+            return False
+        return True
+    
+    def handle_rate_limit_error(self):
+        """
+        Adaptive throttling after 429 response
+        Increases delay temporarily
+        """
+        with self.lock:
+            self.adaptive_delay = min(self.adaptive_delay + 0.5, 5.0)
+    
+    def reset_adaptive_delay(self):
+        """Reset adaptive delay after successful requests"""
+        with self.lock:
+            self.adaptive_delay = max(self.adaptive_delay - 0.1, 0.0)
+    
+    def update_quota(self, api_response):
+        """Update quota from API response ssuser section"""
+        pass
+```
+
+**5. Performance Monitor (`curateur/workflow/performance.py`)**
+
+Tracks and reports performance metrics.
+
+```python
+import time
+from dataclasses import dataclass
+from typing import Dict
+
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics snapshot"""
+    total_roms: int
+    processed_roms: int
+    elapsed_time: float
+    roms_per_second: float
+    estimated_remaining: float
+    api_calls: int
+    downloads: int
+    cache_hits: int
+    thread_utilization: float
+
+class PerformanceMonitor:
+    """
+    Monitors and reports performance metrics
+    
+    Tracks:
+    - Processing rate (ROMs/second)
+    - API call rate
+    - Download rate
+    - Thread utilization
+    - ETA calculation
+    """
+    
+    def __init__(self):
+        self.start_time = time.time()
+        self.metrics = {
+            'roms_processed': 0,
+            'api_calls': 0,
+            'downloads': 0,
+            'cache_hits': 0,
+            'errors': 0
+        }
+        self.snapshots = []
+    
+    def record_event(self, event_type):
+        """Record performance event"""
+        self.metrics[event_type] = self.metrics.get(event_type, 0) + 1
+    
+    def get_metrics(self, total_roms) -> PerformanceMetrics:
+        """Calculate current performance metrics"""
+        elapsed = time.time() - self.start_time
+        processed = self.metrics['roms_processed']
+        
+        roms_per_sec = processed / elapsed if elapsed > 0 else 0
+        remaining = total_roms - processed
+        eta = remaining / roms_per_sec if roms_per_sec > 0 else 0
+        
+        return PerformanceMetrics(
+            total_roms=total_roms,
+            processed_roms=processed,
+            elapsed_time=elapsed,
+            roms_per_second=roms_per_sec,
+            estimated_remaining=eta,
+            api_calls=self.metrics['api_calls'],
+            downloads=self.metrics['downloads'],
+            cache_hits=self.metrics['cache_hits'],
+            thread_utilization=0.0  # TODO: Calculate from thread pool
+        )
+    
+    def take_snapshot(self, total_roms):
+        """Take performance snapshot for trend analysis"""
+        self.snapshots.append({
+            'timestamp': time.time(),
+            'metrics': self.get_metrics(total_roms)
+        })
+```
+
+#### Testing
+
+**Integration Tests (`tests/test_milestone2_phase_d.py`)**
+
+1. **Thread Pool Tests**
+   - Test parallel API calls
+   - Test parallel downloads
+   - Test thread limit enforcement
+   - Test graceful degradation
+   - Test error handling per thread
+
+2. **Connection Pool Tests**
+   - Test connection reuse
+   - Test pool size limits
+   - Test retry logic
+   - Test timeout handling
+
+3. **Queue Tests**
+   - Test priority ordering
+   - Test retry logic
+   - Test failure tracking
+   - Test queue statistics
+
+4. **Throttle Tests**
+   - Test rate limiting enforcement
+   - Test sliding window algorithm
+   - Test adaptive throttling
+   - Test daily quota enforcement
+
+5. **Performance Tests**
+   - Benchmark: 100 ROMs sequential vs parallel
+   - Benchmark: API call throughput
+   - Benchmark: Download throughput
+   - Test ETA accuracy
+
+**Performance Benchmarks:**
+- Single-threaded baseline: ~X ROMs/minute
+- 2-thread target: >1.5X baseline
+- 4-thread target: >2.5X baseline
+- Memory usage: <500MB for 1000 ROM queue
+
+#### Acceptance Criteria
+
+- ✅ Parallel API calls respect maxthreads limit
+- ✅ Parallel downloads complete successfully
+- ✅ Thread pool initializes based on API limits
+- ✅ Connection pooling reduces latency
+- ✅ Rate limiting prevents 429 errors
+- ✅ Work queue prioritizes retries
+- ✅ Performance improves with thread count (linear scaling up to limit)
+- ✅ Memory usage remains reasonable under load
+- ✅ ETA calculation accurate within 10%
+- ✅ Graceful handling of thread exceptions
+
+---
+
+### Milestone 2 Testing Strategy
+
+#### Test Organization
+
+```
+tests/
+├── test_milestone2_phase_a.py        # Skip & validation tests
+├── test_milestone2_phase_b.py        # Update & governance tests
+├── test_milestone2_phase_c.py        # Resilience & UX tests
+├── test_milestone2_phase_d.py        # Performance & parallelism tests
+├── test_milestone2_e2e.py            # End-to-end integration tests
+└── fixtures/
+    ├── milestone2/
+    │   ├── existing_gamelists/       # Pre-populated gamelists
+    │   ├── partial_media/            # Incomplete media sets
+    │   ├── checkpoint_states/        # Checkpoint scenarios
+    │   ├── hash_test_files/          # Files with known hashes
+    │   └── api_responses/            # Mock API responses
+    └── ...
+```
+
+#### End-to-End Scenarios
+
+**Scenario 1: Skip Mode Re-Run**
+1. Start with complete gamelist + media
+2. Add 10 new ROMs
+3. Run with skip_scraped=true
+4. Verify: Only 10 ROMs processed, API calls = 10
+
+**Scenario 2: Update Mode with Changes**
+1. Start with complete gamelist + media
+2. Modify media files (change content)
+3. Run with update_mode=true
+4. Verify: Changed media re-downloaded, unchanged skipped
+
+**Scenario 3: Integrity Validation**
+1. Start with gamelist for 100 ROMs
+2. Remove 10 ROM files
+3. Run with skip_scraped=true
+4. Verify: Prompt shown, cleanup executed, 90 ROMs remain
+
+**Scenario 4: Checkpoint Resume**
+1. Start scraping 500 ROMs
+2. Interrupt after 200 processed
+3. Resume from checkpoint
+4. Verify: ROMs 1-200 skipped, 201-500 processed
+
+**Scenario 5: Parallel Performance**
+1. Scrape 100 ROMs single-threaded (baseline)
+2. Scrape 100 ROMs with 4 threads
+3. Verify: >2X speedup, all media correct
+
+#### Performance Acceptance Tests
+
+```python
+def test_parallel_speedup():
+    """Verify parallel operations improve performance"""
+    # Baseline: single-threaded
+    start = time.time()
+    scrape_roms(rom_list, threads=1)
+    baseline_time = time.time() - start
+    
+    # Parallel: 4 threads
+    start = time.time()
+    scrape_roms(rom_list, threads=4)
+    parallel_time = time.time() - start
+    
+    speedup = baseline_time / parallel_time
+    assert speedup > 2.0, f"Expected >2X speedup, got {speedup:.2f}X"
+
+def test_memory_usage():
+    """Verify memory usage stays within bounds"""
+    process = psutil.Process()
+    
+    # Baseline memory
+    baseline_mb = process.memory_info().rss / 1024 / 1024
+    
+    # Process 1000 ROMs
+    scrape_roms(rom_list_1000)
+    
+    # Check memory
+    current_mb = process.memory_info().rss / 1024 / 1024
+    increase_mb = current_mb - baseline_mb
+    
+    assert increase_mb < 500, f"Memory increased by {increase_mb:.0f}MB (limit: 500MB)"
+```
+
+---
+
+### Milestone 2 Configuration Changes
+
+#### New Configuration File: `config.milestone2.yaml`
+
+Full configuration with all Milestone 2 features enabled:
+
+```yaml
+# Milestone 2 Configuration
+# Breaking changes from MVP - not backward compatible
+
+# Directory paths
+paths:
+  roms: "./roms"
+  media: "./downloaded_media"
+  gamelists: "./gamelists"
+  es_systems: "./es_systems.xml"
+
+# ScreenScraper credentials
+screenscraper:
+  user_id: "your_username"
+  user_password: "your_password"
+
+# Scraping configuration
+scraping:
+  # CRC hashing
+  crc_size_limit: 1073741824  # 1GB
+  
+  # Skip mode (Milestone 2)
+  skip_scraped: true                      # Skip complete ROMs
+  skip_existing_media: true               # Skip individual media files
+  clean_mismatched_media: true            # Clean non-enabled media types
+  gamelist_integrity_threshold: 0.95      # Warn if <95% ROMs present
+  
+  # Update mode (Milestone 2)
+  update_mode: false                      # Hash verification mode
+  hash_verification_method: "auto"        # auto | size | crc | sha1
+  
+  # Search fallback (Milestone 2)
+  enable_search_fallback: true            # Text search when hash fails
+  search_confidence_threshold: 0.98       # Minimum match confidence (98%)
+  
+  # Name verification
+  name_verification: "normal"             # strict | normal | lenient | disabled
+  prompt_on_mismatch: false
+  skip_on_mismatch: true
+  
+  # Media verification (Milestone 2 extended)
+  image_verification: true                # Validate image files
+  image_min_dimension: 50                 # Minimum width/height
+  pdf_verification: true                  # Validate PDF files
+  video_verification: true                # Validate video files
+  retry_invalid_media: true               # Retry failed validations
+  
+  # Media types (ALL types enabled in Milestone 2)
+  media_types:
+    - covers          # box-2D (front covers)
+    - screenshots     # SS (in-game screenshots)
+    - titlescreens    # sstitle (title screens)
+    - marquees        # wheel/marquee art
+    - videos          # video gameplay
+    - manuals         # PDF manuals
+    - fanart          # fanart/wallpapers
+    - backcovers      # box-2D-back
+    - 3dboxes         # box-3D
+    - physicalmedia   # disc/cartridge art
+    - miximages       # composite images
+  
+  # Checkpoint system (Milestone 2)
+  checkpoint_interval: 100                # Save every 100 ROMs (0=disable)
+  
+  # Performance (Milestone 2)
+  parallel_enabled: true                  # Enable parallel operations
+  max_threads: 0                          # 0=auto (use API limit)
+  
+  # Rate limit overrides (USE WITH CAUTION)
+  rate_limit_override_enabled: false
+  rate_limit_override:
+    max_threads: 4
+    requests_per_second: 2.0
+    daily_quota: 10000
+  
+  # Region and language preferences
+  preferred_regions: [us, wor, eu, jp, ss]
+  preferred_language: en
+
+# Output configuration
+output:
+  auto_favorite_threshold: 0.9            # 4.5+ stars
+
+# Logging
+logging:
+  level: INFO                             # DEBUG | INFO | WARNING | ERROR
+  file: null                              # Optional log file path
+  console: true
+
+# UI Configuration (Milestone 2)
+ui:
+  rich_console: true                      # Enable rich console UI
+  show_progress_bars: true
+  refresh_rate: 4                         # Updates per second
+  interactive_prompts: true
+
+# Derived paths (not configurable):
+# - Checkpoint: <gamelists>/<system>/.curateur_checkpoint.json
+# - Error logs: <gamelists>/<system>/curateur_summary.log
+# - Cleanup: <media>/CLEANUP/<system>/<media_type>/
+```
+
+#### Migration from MVP
+
+**Breaking Changes:**
+- Configuration validation enforces all Milestone 2 media types
+- Checkpoint format different (not compatible with MVP if any existed)
+- CLI flags added for skip/update modes
+- No backward compatibility for MVP gamelists (works forward only)
+
+**Migration Steps:**
+1. Backup existing `config.yaml` and gamelists
+2. Copy `config.milestone2.yaml` to `config.yaml`
+3. Update credentials and paths
+4. Review and enable desired media types (all enabled by default)
+5. Configure checkpoint and parallel settings
+6. Run with `--update` flag to refresh all metadata/media
+
+**Recommended First Run:**
+```bash
+# Full re-scrape with all media types
+curateur --config config.yaml --update
+
+# Or start fresh (delete old gamelists)
+rm -rf gamelists/*
+curateur --config config.yaml
+```
+
+---
+
+### Milestone 2 File Structure
+
+New files added for Milestone 2:
+
+```
+curateur/
+├── api/
+│   ├── connection_pool.py        # HTTP connection pooling
+│   ├── rate_override.py          # Rate limit overrides
+│   ├── search_client.py          # jeuRecherche.php search fallback
+│   └── throttle.py               # Request throttling
+├── gamelist/
+│   └── integrity_validator.py    # Gamelist integrity validation
+├── media/
+│   ├── cleanup_manager.py        # Decommissioned media handling
+│   ├── extended_validator.py     # PDF/video validation
+│   ├── hash_verifier.py          # Hash-based verification
+│   └── mismatch_cleaner.py       # Media type mismatch cleanup
+├── ui/
+│   ├── __init__.py
+│   ├── console_ui.py             # Rich-based console interface
+│   └── prompts.py                # Interactive prompts
+├── workflow/
+│   ├── checkpoint.py             # Checkpoint/resume system
+│   ├── media_queue.py            # Media-only queue manager
+│   ├── performance.py            # Performance monitoring
+│   ├── skip_manager.py           # Skip mode decision engine
+│   ├── thread_pool.py            # Thread pool management
+│   └── work_queue.py             # Prioritized work queue
+└── ...
+
+tests/
+├── test_milestone2_phase_a.py    # Phase A tests
+├── test_milestone2_phase_b.py    # Phase B tests
+├── test_milestone2_phase_c.py    # Phase C tests
+├── test_milestone2_phase_d.py    # Phase D tests
+├── test_milestone2_e2e.py        # End-to-end tests
+└── fixtures/
+    └── milestone2/
+        ├── existing_gamelists/
+        ├── partial_media/
+        ├── checkpoint_states/
+        ├── hash_test_files/
+        └── api_responses/
+
+# New configuration files
+config.milestone2.yaml            # Full Milestone 2 config example
+MILESTONE2_MIGRATION.md           # Migration guide from MVP
+```
+
+---
+
+### Milestone 2 Implementation Timeline
+
+**Total Estimated Time: 18-22 days**
+
+| Phase | Duration | Dependencies | Deliverables |
+|-------|----------|--------------|--------------|
+| **Phase A: Skip & Validation** | 4-5 days | MVP complete | Skip manager, integrity validator, mismatch cleaner, media queue |
+| **Phase B: Update & Governance** | 5-6 days | Phase A | Hash verifier, cleanup manager, extended validator, search client |
+| **Phase C: Resilience & UX** | 4-5 days | Phases A, B | Checkpoint system, rich UI, prompts, rate overrides |
+| **Phase D: Performance** | 5-6 days | Phases A, B, C | Thread pools, connection pooling, work queue, throttle, monitoring |
+
+**Parallel Work Opportunities:**
+- Phase C (UI) can start before Phase B completes
+- Testing can begin as each phase completes
+- Documentation can be written in parallel
+
+**Risk Mitigation:**
+- Start with Phase A (foundational for others)
+- Phase D performance goals may need tuning
+- Thread limit testing requires ScreenScraper cooperation
+- Extended media validation may need optional dependencies
+
+---
+
+### Milestone 2 Success Criteria (Final Verification)
+
+Before declaring Milestone 2 complete, verify all criteria:
+
+**Functional Requirements:**
+- ✅ Skip mode completes re-run in <10% time of full scrape (for unchanged ROMs)
+- ✅ Update mode detects and updates only changed media (hash verification)
+- ✅ Integrity validation correctly identifies and cleans missing ROMs
+- ✅ Decommissioned media relocated safely with rollback protection
+- ✅ All media types downloadable and validated (covers through miximages)
+- ✅ Search fallback finds games when hash matching fails (>95% success with normalized names)
+- ✅ Checkpoint/resume works across system boundaries
+- ✅ Rich console UI displays without flicker or lag
+
+**Performance Requirements:**
+- ✅ 4-thread operation >2.5X faster than single-threaded (on 100+ ROM set)
+- ✅ Memory usage <500MB for 1000 ROM queue
+- ✅ Connection pooling reduces average request time by >30%
+- ✅ Rate limiting prevents 429 errors (zero occurrences in testing)
+
+**Reliability Requirements:**
+- ✅ Zero data loss in checkpoint/resume scenarios
+- ✅ Atomic operations for all file writes (gamelist, media, checkpoint)
+- ✅ Graceful degradation when API limits reached
+- ✅ All errors logged with context and recovery steps
+
+**Usability Requirements:**
+- ✅ Configuration validation provides clear error messages
+- ✅ Interactive prompts have sensible defaults
+- ✅ Progress displays show accurate ETA (within 10%)
+- ✅ Error summaries actionable by users
+- ✅ Migration guide tested with real MVP→M2 upgrade
+
+**Testing Requirements:**
+- ✅ All integration tests passing (100+ tests)
+- ✅ End-to-end scenarios validated (5 scenarios minimum)
+- ✅ Performance benchmarks meet targets
+- ✅ Memory leak testing (24-hour run, no growth)
+- ✅ Stress testing (10,000+ ROM library)
+
+---
+
+### Milestone 2 Notes
+
+**Design Decisions:**
+
+1. **No Backward Compatibility**: Milestone 2 is a breaking change from MVP. This allows clean architectural improvements without technical debt. Users must re-scrape or use `--update` flag.
+
+2. **All Media Types Enabled**: Once Milestone 2 is complete, all media types are enabled by default in the example config. This maximizes ScreenScraper data utilization and provides complete ES-DE library enrichment.
+
+3. **Smart Checkpoint Intervals**: Checkpoints save at configurable intervals (default: 100 ROMs) AND at system boundaries. This balances performance impact with recovery granularity. System boundary checkpoints ensure clean resume points.
+
+4. **Conservative Threading**: Default thread count uses API-provided `maxthreads` value. Overrides available but require explicit enable flag with warnings. This protects users from accidental API bans.
+
+5. **Rollback Protection**: Decommissioned media system includes automatic rollback if ALL media would be removed for a game. This prevents accidental complete media loss.
+
+**Future Enhancements (Beyond Milestone 2):**
+
+- Archive support (7z, rar) - extract and scan contents
+- Custom media sources (local artwork, alternative APIs)
+- Gamelist diff/merge tools for manual editing
+- Web UI for configuration and monitoring
+- Docker container for isolated operation
+- Batch processing scripts for multiple ROM sets
+
+These enhancements are explicitly out of scope for Milestone 2 but documented for future consideration.
 
 ## Dependencies
 
