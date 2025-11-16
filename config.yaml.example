@@ -34,12 +34,22 @@ scraping:
   crc_size_limit: 1073741824
   # Minimum width/height for image verification
   image_min_dimension: 50
-  # Phase 2 feature flags (leave false for MVP)
-  skip_mode: false
-  update_mode: false
-  clean_mismatched_media: false
-  # Checkpoint interval (0 disables checkpointing)
-  checkpoint_interval: 0
+  
+  skip_scraped: false              # Skip ROMs already in gamelist (requires update_mode: false)
+  update_mode: false               # Enable update mode (requires skip_scraped: true)
+  validate_gamelist: true          # Validate gamelist.xml integrity before operations
+  clean_mismatched_media: false    # Remove media for disabled media types
+  media_only_mode: false           # Download media only for existing gamelist entries
+  
+  update_policy: changed_only      # Update policy: 'always' | 'changed_only' | 'never'
+  update_metadata: true            # Update metadata fields during update mode
+  update_media: true               # Update media files during update mode
+  merge_strategy: preserve_user_edits  # Metadata merge strategy
+  log_changes: true                # Log metadata changes
+  log_unchanged_fields: false      # Log unchanged fields (verbose)
+  
+  checkpoint_interval: 0           # Checkpoint interval (0 disables checkpointing)
+  
   # Name verification strictness: strict | normal | lenient | disabled
   name_verification: normal
 
