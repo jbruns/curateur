@@ -15,7 +15,7 @@ _DEV_ID_OBFUSCATED = bytearray([
 ])
 
 _DEV_PASSWORD_OBFUSCATED = bytearray([
-    33, 4, 28, 16, 29, 29, 17, 35, 8, 75, 26,
+    25, 45, 6, 82, 58, 33, 68, 4, 44, 7, 86,
 ])
 
 # Version is used to construct softname
