@@ -138,6 +138,9 @@ class GamelistWriter:
         if entry.favorite:
             self._add_element(game, "favorite", "true")
         
+        if entry.playcount is not None:
+            self._add_element(game, "playcount", str(entry.playcount))
+        
         if entry.lastplayed:
             self._add_element(game, "lastplayed", entry.lastplayed)
         

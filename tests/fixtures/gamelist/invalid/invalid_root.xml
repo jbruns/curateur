@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wrongRoot>
+	<game>
+		<path>./Test.nes</path>
+		<name>Test Game</name>
+	</game>
+</wrongRoot>

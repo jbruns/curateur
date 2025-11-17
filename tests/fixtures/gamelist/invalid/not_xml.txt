@@ -1,0 +1,4 @@
+This is not XML at all
+Just plain text
+path=./Test.nes
+name=Test Game

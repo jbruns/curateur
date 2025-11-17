@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gameList>
+	<provider>
+		<System>Sony PlayStation</System>
+		<software>curateur</software>
+		<database>ScreenScraper.fr</database>
+		<web>http://www.screenscraper.fr</web>
+	</provider>
+	<game id="54321" source="ScreenScraper.fr">
+		<path>./Final Fantasy VII.cue</path>
+		<name>Final Fantasy VII</name>
+		<desc>An epic RPG adventure.</desc>
+		<rating>0.96</rating>
+		<releasedate>19970131T000000</releasedate>
+		<developer>Square</developer>
+		<publisher>Sony</publisher>
+		<genre>RPG</genre>
+		<players>1</players>
+		<hash></hash>
+	</game>
+</gameList>
