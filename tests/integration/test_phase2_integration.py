@@ -113,7 +113,8 @@ def test_nes_scanner():
     assert nes_system, "NES system not found in es_systems.xml"
     
     try:
-        roms = scan_system(nes_system, crc_size_limit=10*1024*1024)
+        # Scan NES ROMs
+        roms = scan_system(nes_system, rom_root=test_rom_dir, crc_size_limit=10*1024*1024)
         print(f"  ✓ Scanned {len(roms)} ROMs")
         
         # Check that all are standard ROMs
@@ -147,7 +148,8 @@ def test_psx_scanner():
     assert psx_system, "PSX system not found in es_systems.xml"
     
     try:
-        roms = scan_system(psx_system, crc_size_limit=10*1024*1024)
+        # Scan PSX ROMs
+        roms = scan_system(psx_system, rom_root=test_rom_dir, crc_size_limit=10*1024*1024)
         print(f"  ✓ Scanned {len(roms)} ROMs")
         
         # Check for M3U
@@ -184,7 +186,7 @@ def test_dreamcast_scanner():
     assert dc_system, "Dreamcast system not found in es_systems.xml"
     
     try:
-        roms = scan_system(dc_system, crc_size_limit=10*1024*1024)
+        roms = scan_system(dc_system, rom_root=test_rom_dir, crc_size_limit=10*1024*1024)
         print(f"  ✓ Scanned {len(roms)} ROMs")
         
         # Check for disc subdirs

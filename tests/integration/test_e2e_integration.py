@@ -64,9 +64,10 @@ def test_full_workflow():
     
     total_roms = 0
     crc_size_limit = config['scraping']['crc_size_limit']
+    rom_root = Path(config['paths']['roms']).expanduser().resolve()
     
     for system in systems:
-        roms = scan_system(system, crc_size_limit=crc_size_limit)
+        roms = scan_system(system, rom_root=rom_root, crc_size_limit=crc_size_limit)
         total_roms += len(roms)
         
         if roms:

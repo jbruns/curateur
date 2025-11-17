@@ -68,6 +68,79 @@ class TestSystemDefinition:
         # Extensions should be normalized to lowercase during parsing
         # This test verifies the method behavior
         assert system.supports_m3u() is False
+    
+    def test_resolve_rom_path_with_rompath_placeholder(self):
+        """Test resolve_rom_path replaces %ROMPATH% placeholder."""
+        system = SystemDefinition(
+            name='nes',
+            fullname='Nintendo Entertainment System',
+            path='%ROMPATH%/nes',
+            extensions=['.nes'],
+            platform='nes'
+        )
+        rom_root = Path('/emulation/roms')
+        result = system.resolve_rom_path(rom_root)
+        
+        assert result == Path('/emulation/roms/nes').resolve()
+    
+    def test_resolve_rom_path_with_absolute_path(self):
+        """Test resolve_rom_path handles absolute paths unchanged."""
+        system = SystemDefinition(
+            name='nes',
+            fullname='Nintendo Entertainment System',
+            path='/custom/nes/roms',
+            extensions=['.nes'],
+            platform='nes'
+        )
+        rom_root = Path('/emulation/roms')
+        result = system.resolve_rom_path(rom_root)
+        
+        assert result == Path('/custom/nes/roms').resolve()
+    
+    def test_resolve_rom_path_with_tilde(self):
+        """Test resolve_rom_path expands tilde in paths."""
+        system = SystemDefinition(
+            name='nes',
+            fullname='Nintendo Entertainment System',
+            path='~/my_roms/nes',
+            extensions=['.nes'],
+            platform='nes'
+        )
+        rom_root = Path('/emulation/roms')
+        result = system.resolve_rom_path(rom_root)
+        
+        # Should expand to user's home directory
+        expected = Path('~/my_roms/nes').expanduser().resolve()
+        assert result == expected
+    
+    def test_resolve_rom_path_case_insensitive_rompath(self):
+        """Test resolve_rom_path handles %rompath% case-insensitively."""
+        system = SystemDefinition(
+            name='nes',
+            fullname='Nintendo Entertainment System',
+            path='%rompath%/nes',
+            extensions=['.nes'],
+            platform='nes'
+        )
+        rom_root = Path('/emulation/roms')
+        result = system.resolve_rom_path(rom_root)
+        
+        assert result == Path('/emulation/roms/nes').resolve()
+    
+    def test_resolve_rom_path_with_backslash(self):
+        """Test resolve_rom_path handles Windows-style backslash after %ROMPATH%."""
+        system = SystemDefinition(
+            name='nes',
+            fullname='Nintendo Entertainment System',
+            path='%ROMPATH%\\\\nes',
+            extensions=['.nes'],
+            platform='nes'
+        )
+        rom_root = Path('/emulation/roms')
+        result = system.resolve_rom_path(rom_root)
+        
+        assert result == Path('/emulation/roms/nes').resolve()
+
 
 
 @pytest.mark.unit
