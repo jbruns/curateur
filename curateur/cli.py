@@ -1,6 +1,7 @@
 """Command-line interface for curateur."""
 
 import sys
+import logging
 import argparse
 from pathlib import Path
 from typing import Optional
@@ -108,6 +109,47 @@ For more information, see IMPLEMENTATION_PLAN.md
     return parser
 
 
+def _setup_logging(config: dict) -> None:
+    """
+    Setup logging configuration from config.
+    
+    Args:
+        config: Configuration dictionary
+    """
+    logging_config = config.get('logging', {})
+    
+    # Get log level
+    level_str = logging_config.get('level', 'INFO').upper()
+    level = getattr(logging, level_str, logging.INFO)
+    
+    # Configure root logger
+    handlers = []
+    
+    # Console handler
+    if logging_config.get('console', True):
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setLevel(level)
+        formatter = logging.Formatter('%(levelname)s: %(message)s')
+        console_handler.setFormatter(formatter)
+        handlers.append(console_handler)
+    
+    # File handler (if configured)
+    log_file = logging_config.get('file')
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        handlers=handlers,
+        force=True  # Override any existing configuration
+    )
+
+
 def main(argv: Optional[list] = None) -> int:
     """
     Main entry point for curateur CLI.
@@ -131,6 +173,9 @@ def main(argv: Optional[list] = None) -> int:
     except Exception as e:
         print(f"Unexpected error loading config: {e}", file=sys.stderr)
         return 1
+    
+    # Setup logging from config
+    _setup_logging(config)
     
     # Apply CLI overrides
     if args.systems:
@@ -186,7 +231,7 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     """
     # Parse es_systems.xml
     try:
-        es_systems_path = Path(config['paths']['es_systems'])
+        es_systems_path = Path(config['paths']['es_systems']).expanduser()
         all_systems = parse_es_systems(es_systems_path)
     except Exception as e:
         print(f"Error parsing es_systems.xml: {e}", file=sys.stderr)
@@ -210,9 +255,9 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     
     orchestrator = WorkflowOrchestrator(
         api_client=api_client,
-        rom_directory=Path(config['paths']['roms']),
-        media_directory=Path(config['paths']['media']),
-        gamelist_directory=Path(config['paths']['gamelists']),
+        rom_directory=Path(config['paths']['roms']).expanduser(),
+        media_directory=Path(config['paths']['media']).expanduser(),
+        gamelist_directory=Path(config['paths']['gamelists']).expanduser(),
         dry_run=config['runtime'].get('dry_run', False),
         enable_search_fallback=search_config.get('enable_search_fallback', False),
         search_confidence_threshold=search_config.get('confidence_threshold', 0.7),
@@ -237,13 +282,12 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     
     # Process each system
     for system in systems:
-        progress.start_system(system.fullname, 0)  # Will update with ROM count
-        
         try:
             result = orchestrator.scrape_system(
                 system=system,
                 media_types=config['scraping'].get('media_types', ['box-2D', 'ss']),
-                preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu'])
+                preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
+                progress_tracker=progress
             )
             
             # Log each ROM result

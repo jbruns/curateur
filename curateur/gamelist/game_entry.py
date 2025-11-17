@@ -86,9 +86,9 @@ class GameEntry:
         names = game_info.get('names', {})
         name = names.get('us') or names.get('wor') or names.get('eu') or list(names.values())[0] if names else 'Unknown'
         
-        # Extract preferred description
+        # Extract preferred description (use language codes, not region codes)
         descs = game_info.get('descriptions', {})
-        desc = descs.get('us') or descs.get('wor') or descs.get('eu') or None
+        desc = descs.get('en') or descs.get('fr') or descs.get('de') or descs.get('es') or None
         
         # Convert rating from 0-5 scale to 0-1 scale
         api_rating = game_info.get('rating')

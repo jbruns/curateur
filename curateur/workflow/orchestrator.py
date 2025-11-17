@@ -107,7 +107,8 @@ class WorkflowOrchestrator:
         self,
         system: SystemDefinition,
         media_types: List[str] = None,
-        preferred_regions: List[str] = None
+        preferred_regions: List[str] = None,
+        progress_tracker = None
     ) -> SystemResult:
         """
         Scrape a single system.
@@ -116,6 +117,7 @@ class WorkflowOrchestrator:
             system: System definition
             media_types: Media types to download (default: ['box-2D', 'ss'])
             preferred_regions: Region priority list (default: ['us', 'wor', 'eu'])
+            progress_tracker: Optional progress tracker to update with ROM count
             
         Returns:
             SystemResult with scraping statistics
@@ -127,7 +129,15 @@ class WorkflowOrchestrator:
             preferred_regions = ['us', 'wor', 'eu']
         
         # Step 1: Scan ROMs
-        rom_entries = scan_system(system, crc_size_limit=1073741824)
+        rom_entries = scan_system(
+            system,
+            rom_root=self.rom_directory,
+            crc_size_limit=1073741824
+        )
+        
+        # Notify progress tracker with actual ROM count
+        if progress_tracker:
+            progress_tracker.start_system(system.fullname, len(rom_entries))
         
         results = []
         scraped_count = 0
@@ -239,7 +249,7 @@ class WorkflowOrchestrator:
             
             # Step 3: Download media
             media_downloader = MediaDownloader(
-                media_directory=self.media_directory / system.name,
+                media_root=self.media_directory / system.name,
                 preferred_regions=preferred_regions
             )
             

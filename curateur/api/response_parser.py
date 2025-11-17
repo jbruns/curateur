@@ -116,12 +116,17 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
     genres_elem = jeu_elem.find('genres')
     if genres_elem is not None:
         genres = []
+        # Prefer English genre names
         for genre in genres_elem.findall('genre'):
-            noms = genre.find('noms')
-            if noms is not None:
-                nom = noms.find('nom')
-                if nom is not None and nom.text:
-                    genres.append(decode_html_entities(nom.text))
+            langue = genre.get('langue', 'en')
+            if langue == 'en' and genre.text:
+                genres.append(decode_html_entities(genre.text))
+        # If no English genres found, take any language
+        if not genres:
+            for genre in genres_elem.findall('genre'):
+                if genre.text:
+                    genres.append(decode_html_entities(genre.text))
+                    break  # Just take the first one
         if genres:
             game_data['genres'] = genres
     

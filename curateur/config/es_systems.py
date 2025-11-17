@@ -18,6 +18,37 @@ class SystemDefinition:
     def supports_m3u(self) -> bool:
         """Check if system supports M3U playlists."""
         return '.m3u' in self.extensions
+    
+    def resolve_rom_path(self, rom_root: Path) -> Path:
+        """
+        Resolve ROM path by replacing %ROMPATH% placeholder.
+        
+        Args:
+            rom_root: Root ROM directory from config
+            
+        Returns:
+            Resolved path
+            
+        Examples:
+            - "%ROMPATH%/nes" with rom_root="/roms" -> "/roms/nes"
+            - "/absolute/path" -> "/absolute/path" (unchanged)
+            - "~/my/roms/nes" -> "/Users/user/my/roms/nes" (expanded)
+        """
+        path_str = self.path
+        
+        # Replace %ROMPATH% placeholder (case-insensitive, handle both / and \)
+        if '%ROMPATH%' in path_str.upper():
+            # Find the actual case-sensitive match
+            import re
+            path_str = re.sub(
+                r'%ROMPATH%[/\\]?',
+                str(rom_root) + '/',
+                path_str,
+                flags=re.IGNORECASE
+            )
+        
+        # Expand user home directory and resolve
+        return Path(path_str).expanduser().resolve()
 
 
 class ESSystemsError(Exception):

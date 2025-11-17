@@ -79,7 +79,7 @@ def _validate_paths(section: Dict[str, Any]) -> List[str]:
         if not section.get(path_key):
             errors.append(f"paths.{path_key} is required")
         else:
-            path = Path(section[path_key])
+            path = Path(section[path_key]).expanduser()
             
             # Check es_systems.xml exists
             if path_key == 'es_systems':

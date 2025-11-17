@@ -22,6 +22,7 @@ class ScannerError(Exception):
 
 def scan_system(
     system: SystemDefinition,
+    rom_root: Path,
     crc_size_limit: int = 1073741824
 ) -> List[ROMInfo]:
     """
@@ -29,6 +30,7 @@ def scan_system(
     
     Args:
         system: System definition from es_systems.xml
+        rom_root: Root ROM directory (for %ROMPATH% substitution)
         crc_size_limit: Maximum file size for CRC calculation (default 1GB)
         
     Returns:
@@ -37,7 +39,7 @@ def scan_system(
     Raises:
         ScannerError: If ROM directory cannot be scanned
     """
-    rom_path = Path(system.path).expanduser().resolve()
+    rom_path = system.resolve_rom_path(rom_root)
     
     # Check if directory exists
     if not rom_path.exists():

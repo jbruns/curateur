@@ -1,6 +1,8 @@
 """ScreenScraper API client implementation."""
 
+import logging
 import requests
+import time
 from typing import Dict, Any, Optional
 from urllib.parse import urlencode
 
@@ -22,6 +24,8 @@ from curateur.api.response_parser import (
     ResponseError
 )
 from curateur.api.name_verifier import verify_name_match, format_verification_result
+
+logger = logging.getLogger(__name__)
 
 
 class ScreenScraperClient:
@@ -58,6 +62,14 @@ class ScreenScraperClient:
         
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
+    
+    def _build_redacted_url(self, url: str, params: Dict[str, Any]) -> str:
+        """Build URL with credentials redacted for logging."""
+        redacted_params = params.copy()
+        redacted_params['devpassword'] = 'redacted'
+        redacted_params['sspassword'] = 'redacted'
+        query_string = urlencode(redacted_params)
+        return f"{url}?{query_string}"
     
     def query_game(self, rom_info: ROMInfo) -> Optional[Dict[str, Any]]:
         """
@@ -171,6 +183,12 @@ class ScreenScraperClient:
         # Make request
         url = f"{self.BASE_URL}/jeuInfos.php"
         
+        # Log request URL with redacted credentials
+        if logger.isEnabledFor(logging.DEBUG):
+            redacted_url = self._build_redacted_url(url, params)
+            logger.debug(f"API Request: {redacted_url}")
+        
+        start_time = time.time()
         try:
             response = requests.get(
                 url,
@@ -183,6 +201,12 @@ class ScreenScraperClient:
             raise Exception("Connection error")
         except Exception as e:
             raise Exception(f"Network error: {e}")
+        
+        elapsed_time = time.time() - start_time
+        
+        # Log response
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
         
         # Handle HTTP status
         handle_http_status(response.status_code, context=romnom)
@@ -306,6 +330,12 @@ class ScreenScraperClient:
         # Make request
         url = f"{self.BASE_URL}/jeuRecherche.php"
         
+        # Log request URL with redacted credentials
+        if logger.isEnabledFor(logging.DEBUG):
+            redacted_url = self._build_redacted_url(url, params)
+            logger.debug(f"API Request: {redacted_url}")
+        
+        start_time = time.time()
         try:
             response = requests.get(
                 url,
@@ -318,6 +348,12 @@ class ScreenScraperClient:
             raise Exception("Connection error")
         except Exception as e:
             raise Exception(f"Network error: {e}")
+        
+        elapsed_time = time.time() - start_time
+        
+        # Log response
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
         
         # Handle HTTP status
         handle_http_status(response.status_code, context=f"search:{recherche}")
