@@ -155,10 +155,24 @@ def _validate_api(section: Dict[str, Any]) -> List[str]:
     if not isinstance(timeout, (int, float)) or timeout <= 0:
         errors.append("api.request_timeout must be a positive number")
     
-    # Validate retries
-    retries = section.get('max_retries', 3)
-    if not isinstance(retries, int) or retries < 0:
-        errors.append("api.max_retries must be a non-negative integer")
+    # Phase E: Validate max_retries (required, range 1-10)
+    if 'max_retries' in section:
+        retries = section['max_retries']
+        if not isinstance(retries, int):
+            errors.append("api.max_retries must be an integer")
+        elif retries < 1 or retries > 10:
+            errors.append("api.max_retries must be between 1 and 10")
+    # Use default if not specified (validation passes)
+    
+    # Phase E: Validate requests_per_minute (optional, range 1-300)
+    if 'requests_per_minute' in section:
+        rpm = section['requests_per_minute']
+        if not isinstance(rpm, int):
+            errors.append("api.requests_per_minute must be an integer")
+        elif rpm < 1 or rpm > 300:
+            errors.append("api.requests_per_minute must be between 1 and 300")
+        # Note: requests_per_minute from API authentication response is authoritative
+        # Config value is used as minimum constraint (min of API and config)
     
     # Validate backoff
     backoff = section.get('retry_backoff_seconds', 5)

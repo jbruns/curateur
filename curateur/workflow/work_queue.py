@@ -68,7 +68,7 @@ class WorkQueueManager:
         """
         self.queue = queue.PriorityQueue()
         self.max_retries = max_retries
-        self.processed = set()
+        self.processed_count = 0
         self.failed = []
         self.lock = threading.Lock()
         self._item_counter = 0  # For stable sorting when priorities equal
@@ -167,8 +167,9 @@ class WorkQueueManager:
         Args:
             work_item: Completed work item
         """
-        filename = work_item.rom_info.get('filename', 'unknown')
-        self.processed.add(filename)
+        with self.lock:
+            self.processed_count += 1
+        filename = work_item.rom_info.get('filename', work_item.rom_info.get('id', 'unknown'))
         logger.debug(f"Marked processed: {filename}")
     
     def is_empty(self) -> bool:
@@ -187,9 +188,12 @@ class WorkQueueManager:
         Returns:
             dict with pending, processed, failed counts
         """
+        with self.lock:
+            processed = self.processed_count
+        
         return {
             'pending': self.queue.qsize(),
-            'processed': len(self.processed),
+            'processed': processed,
             'failed': len(self.failed),
             'max_retries': self.max_retries
         }

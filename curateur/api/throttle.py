@@ -66,6 +66,8 @@ class ThrottleManager:
         self.locks = {}
         self.call_history = {}  # endpoint -> deque of timestamps
         self.backoff_until = {}  # endpoint -> timestamp
+        self.consecutive_429s = {}  # endpoint -> count for exponential backoff
+        self.backoff_multiplier = {}  # endpoint -> current multiplier
         self.global_lock = threading.Lock()
     
     def _get_endpoint_lock(self, endpoint: str) -> threading.Lock:
@@ -74,6 +76,8 @@ class ThrottleManager:
             if endpoint not in self.locks:
                 self.locks[endpoint] = threading.Lock()
                 self.call_history[endpoint] = deque()
+                self.consecutive_429s[endpoint] = 0
+                self.backoff_multiplier[endpoint] = 1
             return self.locks[endpoint]
     
     def wait_if_needed(self, endpoint: str) -> float:
@@ -145,7 +149,8 @@ class ThrottleManager:
         """
         Handle 429 rate limit response
         
-        Implements adaptive backoff if enabled.
+        Implements adaptive backoff with exponential multiplier if enabled.
+        Consecutive 429s increase backoff: 1x -> 2x -> 4x -> 8x (capped at 8x)
         
         Args:
             endpoint: API endpoint that returned 429
@@ -158,18 +163,47 @@ class ThrottleManager:
                 # Default backoff: 60 seconds
                 retry_after = 60
             
-            backoff_until = time.time() + retry_after
+            # Track consecutive 429s and calculate exponential backoff multiplier
+            self.consecutive_429s[endpoint] += 1
+            
+            # Calculate multiplier: 1x, 2x, 4x, 8x (capped at 8x)
+            multiplier = min(2 ** (self.consecutive_429s[endpoint] - 1), 8)
+            self.backoff_multiplier[endpoint] = multiplier
+            
+            # Apply multiplier to retry_after
+            actual_backoff = retry_after * multiplier
+            backoff_until = time.time() + actual_backoff
             self.backoff_until[endpoint] = backoff_until
             
             logger.warning(
                 f"Rate limit hit for {endpoint}: "
-                f"backing off for {retry_after}s"
+                f"backing off for {actual_backoff}s "
+                f"(base={retry_after}s, multiplier={multiplier}x, consecutive_429s={self.consecutive_429s[endpoint]})"
             )
             
             # Clear recent call history to be conservative
             if self.adaptive:
                 self.call_history[endpoint].clear()
                 logger.info(f"Cleared call history for {endpoint}")
+    
+    def reset_backoff_multiplier(self, endpoint: str) -> None:
+        """
+        Reset backoff multiplier after successful request
+        
+        Args:
+            endpoint: API endpoint with successful request
+        """
+        lock = self._get_endpoint_lock(endpoint)
+        
+        with lock:
+            if self.consecutive_429s[endpoint] > 0:
+                logger.info(
+                    f"Resetting backoff multiplier for {endpoint} "
+                    f"(was {self.backoff_multiplier[endpoint]}x after "
+                    f"{self.consecutive_429s[endpoint]} consecutive 429s)"
+                )
+                self.consecutive_429s[endpoint] = 0
+                self.backoff_multiplier[endpoint] = 1
     
     def get_stats(self, endpoint: str) -> dict:
         """
@@ -179,7 +213,7 @@ class ThrottleManager:
             endpoint: API endpoint name
         
         Returns:
-            dict with recent_calls, backoff_remaining
+            dict with recent_calls, backoff_remaining, backoff_multiplier, consecutive_429s
         """
         lock = self._get_endpoint_lock(endpoint)
         
@@ -202,12 +236,14 @@ class ThrottleManager:
                 'limit': self.default_limit.calls,
                 'window_seconds': self.default_limit.window_seconds,
                 'backoff_remaining': backoff_remaining,
-                'in_backoff': backoff_remaining > 0
+                'in_backoff': backoff_remaining > 0,
+                'backoff_multiplier': self.backoff_multiplier.get(endpoint, 1),
+                'consecutive_429s': self.consecutive_429s.get(endpoint, 0)
             }
     
     def reset(self, endpoint: Optional[str] = None) -> None:
         """
-        Reset throttle state
+        Reset throttle state including backoff multipliers
         
         Args:
             endpoint: Specific endpoint to reset (None = all)
@@ -218,10 +254,14 @@ class ThrottleManager:
                 self.call_history[endpoint].clear()
                 if endpoint in self.backoff_until:
                     del self.backoff_until[endpoint]
+                self.consecutive_429s[endpoint] = 0
+                self.backoff_multiplier[endpoint] = 1
                 logger.info(f"Reset throttle for {endpoint}")
         else:
             with self.global_lock:
                 for ep in list(self.call_history.keys()):
                     self.call_history[ep].clear()
                 self.backoff_until.clear()
+                self.consecutive_429s.clear()
+                self.backoff_multiplier.clear()
                 logger.info("Reset all throttles")

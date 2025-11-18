@@ -17,12 +17,13 @@ from ..config.es_systems import SystemDefinition
 from ..scanner.rom_scanner import scan_system
 from ..scanner.rom_types import ROMInfo
 from ..api.client import ScreenScraperClient
-from ..api.error_handler import SkippableAPIError
+from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
 from ..api.match_scorer import calculate_match_confidence
 from ..ui.prompts import prompt_for_search_match
 from ..media.media_downloader import MediaDownloader
 from ..gamelist.generator import GamelistGenerator
 from ..gamelist.game_entry import GameEntry
+from ..workflow.work_queue import WorkQueueManager, Priority
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ class SystemResult:
     failed: int
     skipped: int
     results: List[ScrapingResult]
+    work_queue_stats: Optional[dict] = None
+    failed_items: Optional[list] = None
+    not_found_items: Optional[list] = None
 
 
 class WorkflowOrchestrator:
@@ -67,6 +71,7 @@ class WorkflowOrchestrator:
         rom_directory: Path,
         media_directory: Path,
         gamelist_directory: Path,
+        work_queue: WorkQueueManager,
         dry_run: bool = False,
         enable_search_fallback: bool = False,
         search_confidence_threshold: float = 0.7,
@@ -75,8 +80,7 @@ class WorkflowOrchestrator:
         preferred_regions: Optional[List[str]] = None,
         thread_manager: Optional['ThreadPoolManager'] = None,
         performance_monitor: Optional['PerformanceMonitor'] = None,
-        console_ui: Optional['ConsoleUI'] = None,
-        work_queue: Optional['WorkQueueManager'] = None
+        console_ui: Optional['ConsoleUI'] = None
     ):
         """
         Initialize workflow orchestrator.
@@ -86,6 +90,7 @@ class WorkflowOrchestrator:
             rom_directory: Root directory for ROMs
             media_directory: Root directory for downloaded media
             gamelist_directory: Root directory for gamelists
+            work_queue: WorkQueueManager for retry handling (required)
             dry_run: If True, simulate actions without making changes
             enable_search_fallback: Enable search when hash lookup fails
             search_confidence_threshold: Minimum confidence score to accept match
@@ -95,12 +100,12 @@ class WorkflowOrchestrator:
             thread_manager: Optional ThreadPoolManager for parallel operations
             performance_monitor: Optional PerformanceMonitor for metrics tracking
             console_ui: Optional ConsoleUI for rich display
-            work_queue: Optional WorkQueueManager for retry handling
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
         self.media_directory = media_directory
         self.gamelist_directory = gamelist_directory
+        self.work_queue = work_queue
         self.dry_run = dry_run
         self.enable_search_fallback = enable_search_fallback
         self.search_confidence_threshold = search_confidence_threshold
@@ -112,7 +117,6 @@ class WorkflowOrchestrator:
         self.thread_manager = thread_manager
         self.performance_monitor = performance_monitor
         self.console_ui = console_ui
-        self.work_queue = work_queue
         
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
@@ -154,14 +158,15 @@ class WorkflowOrchestrator:
             progress_tracker.start_system(system.fullname, len(rom_entries))
         
         results = []
+        not_found_items = []
         scraped_count = 0
         failed_count = 0
         skipped_count = 0
         
         # Step 2-4: Process each ROM (parallel or sequential)
         if self.thread_manager and not self.dry_run:
-            # Use parallel processing
-            results = self._scrape_roms_parallel(
+            # Use parallel processing with work queue
+            results, not_found_items = self._scrape_roms_parallel(
                 system,
                 rom_entries,
                 media_types,
@@ -201,13 +206,23 @@ class WorkflowOrchestrator:
             except Exception as e:
                 logger.warning(f"Failed to write unmatched ROMs log for {system.name}: {e}")
         
+        # Step 7: Write not-found items log if any
+        if not_found_items:
+            try:
+                self._write_not_found_summary(system, not_found_items)
+            except Exception as e:
+                logger.warning(f"Failed to write not-found summary for {system.name}: {e}")
+        
         return SystemResult(
             system_name=system.fullname,
             total_roms=len(rom_entries),
             scraped=scraped_count,
             failed=failed_count,
             skipped=skipped_count,
-            results=results
+            results=results,
+            work_queue_stats=self.work_queue.get_stats() if self.work_queue else None,
+            failed_items=self.work_queue.get_failed_items() if self.work_queue else None,
+            not_found_items=not_found_items
         )
     
     def _scrape_rom(
@@ -326,9 +341,11 @@ class WorkflowOrchestrator:
         rom_entries: List[ROMInfo],
         media_types: List[str],
         preferred_regions: List[str]
-    ) -> List[ScrapingResult]:
+    ) -> Tuple[List[ScrapingResult], List[dict]]:
         """
-        Scrape ROMs in parallel using ThreadPoolManager.
+        Scrape ROMs in parallel using WorkQueueManager and ThreadPoolManager.
+        
+        Uses work queue consumer pattern with selective retry based on error category.
         
         Args:
             system: System definition
@@ -337,14 +354,38 @@ class WorkflowOrchestrator:
             preferred_regions: Region priority list
             
         Returns:
-            List of ScrapingResult
+            Tuple of (results list, not_found_items list)
         """
         results = []
+        not_found_items = []  # Track 404 errors separately
         rom_count = 0
         
-        # Define scraping function for parallel execution
-        def scrape_single_rom(rom_info: ROMInfo) -> dict:
-            """Wrapper for parallel API calls"""
+        # Populate work queue with all ROM entries
+        for rom_info in rom_entries:
+            rom_info_dict = {
+                'filename': rom_info.filename,
+                'path': str(rom_info.path),
+                'system': rom_info.system,
+                'file_size': rom_info.file_size,
+                'crc32': rom_info.crc32,
+                'query_filename': rom_info.query_filename,
+                'basename': rom_info.basename
+            }
+            self.work_queue.add_work(rom_info_dict, 'full_scrape', Priority.NORMAL)
+        
+        # Define work item processor
+        def process_work_item(work_item) -> dict:
+            """Process a single work item from the queue"""
+            rom_info_dict = work_item.rom_info
+            
+            # Reconstruct ROMInfo from dict
+            rom_info = ROMInfo(
+                path=Path(rom_info_dict['path']),
+                system=rom_info_dict['system'],
+                file_size=rom_info_dict['file_size'],
+                crc32=rom_info_dict.get('crc32')
+            )
+            
             try:
                 # Query API
                 game_info = None
@@ -355,109 +396,177 @@ class WorkflowOrchestrator:
                     if self.performance_monitor:
                         self.performance_monitor.record_api_call()
                     logger.debug(f"Hash lookup successful for {rom_info.filename}")
-                except SkippableAPIError as e:
-                    logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
+                except Exception as e:
+                    # Categorize error for selective retry
+                    exception, category = categorize_error(e)
                     
-                    # Try search fallback if enabled
-                    if self.enable_search_fallback:
-                        logger.info(f"Attempting search fallback for {rom_info.filename}")
-                        game_info = self._search_fallback(rom_info, preferred_regions)
+                    if category == ErrorCategory.NOT_FOUND:
+                        # 404 - don't retry, track separately
+                        return {
+                            'rom_info': rom_info,
+                            'category': 'not_found',
+                            'error': str(exception)
+                        }
+                    elif category == ErrorCategory.RETRYABLE:
+                        # 429, 5xx, network - retry
+                        return {
+                            'rom_info': rom_info,
+                            'category': 'retryable',
+                            'error': str(exception)
+                        }
+                    elif category == ErrorCategory.FATAL:
+                        # 403 auth failure - propagate
+                        raise exception
+                    else:
+                        # NON_RETRYABLE - log and skip
+                        logger.debug(f"Hash lookup failed for {rom_info.filename}: {exception}")
                         
-                        if game_info:
-                            logger.info(f"Search fallback successful for {rom_info.filename}")
-                            if self.performance_monitor:
-                                self.performance_monitor.record_api_call()
-                        else:
-                            logger.info(f"Search fallback found no matches for {rom_info.filename}")
+                        # Try search fallback if enabled
+                        if self.enable_search_fallback:
+                            logger.info(f"Attempting search fallback for {rom_info.filename}")
+                            try:
+                                game_info = self._search_fallback(rom_info, preferred_regions)
+                                if game_info:
+                                    logger.info(f"Search fallback successful for {rom_info.filename}")
+                                    if self.performance_monitor:
+                                        self.performance_monitor.record_api_call()
+                            except Exception as search_e:
+                                search_exception, search_category = categorize_error(search_e)
+                                if search_category == ErrorCategory.NOT_FOUND:
+                                    return {
+                                        'rom_info': rom_info,
+                                        'category': 'not_found',
+                                        'error': str(search_exception)
+                                    }
+                                elif search_category == ErrorCategory.RETRYABLE:
+                                    return {
+                                        'rom_info': rom_info,
+                                        'category': 'retryable',
+                                        'error': str(search_exception)
+                                    }
                 
-                return {'rom_info': rom_info, 'game_info': game_info}
+                return {'rom_info': rom_info, 'game_info': game_info, 'category': 'success'}
                 
             except Exception as e:
-                return {'rom_info': rom_info, 'error': str(e)}
+                exception, category = categorize_error(e)
+                if category == ErrorCategory.FATAL:
+                    raise exception
+                return {
+                    'rom_info': rom_info,
+                    'category': category.value,
+                    'error': str(exception)
+                }
         
-        # Process API calls in parallel
-        for rom_info, api_result in self.thread_manager.submit_api_batch(
-            scrape_single_rom, rom_entries
-        ):
+        # Work queue consumption loop
+        while not self.work_queue.is_empty():
+            work_item = self.work_queue.get_work(timeout=0.1)
+            if not work_item:
+                continue
+            
             rom_count += 1
+            rom_info_dict = work_item.rom_info
             
             # Update UI if available
             if self.console_ui:
                 self.console_ui.update_main({
-                    'rom_name': rom_info.filename,
+                    'rom_name': rom_info_dict['filename'],
                     'rom_num': rom_count,
                     'total_roms': len(rom_entries),
                     'action': 'scraping',
                     'details': 'Fetching metadata...'
                 })
-            
-            # Handle API result
-            if 'error' in api_result:
-                # API call failed
-                result = ScrapingResult(
-                    rom_path=rom_info.path,
-                    success=False,
-                    error=api_result['error']
+                
+                # Update work queue stats in UI
+                queue_stats = self.work_queue.get_stats()
+                self.console_ui.update_work_queue_stats(
+                    pending=queue_stats['pending'],
+                    processed=queue_stats['processed'],
+                    failed=queue_stats['failed'],
+                    not_found=len(not_found_items),
+                    retry_count=sum(item['retry_count'] for item in self.work_queue.get_failed_items())
                 )
-                results.append(result)
-                continue
             
-            game_info = api_result.get('game_info')
-            
-            if not game_info:
-                # Track as unmatched
-                system_name = system.name
-                if system_name not in self.unmatched_roms:
-                    self.unmatched_roms[system_name] = []
-                self.unmatched_roms[system_name].append(rom_info.filename)
+            # Process the work item
+            try:
+                api_result = process_work_item(work_item)
                 
-                result = ScrapingResult(
-                    rom_path=rom_info.path,
-                    success=False,
-                    error="No game info found from API"
-                )
-                results.append(result)
-                continue
-            
-            # Download media in parallel
-            media_paths, media_count = self._download_media_parallel(
-                system=system,
-                rom_info=rom_info,
-                game_info=game_info,
-                media_types=media_types,
-                preferred_regions=preferred_regions
-            )
-            
-            # Update performance monitor
-            if self.performance_monitor:
-                self.performance_monitor.record_rom_processed()
+                # Handle result based on category
+                if api_result['category'] == 'not_found':
+                    # 404 - track separately and mark processed
+                    not_found_items.append({
+                        'rom_info': api_result['rom_info'],
+                        'error': api_result['error']
+                    })
+                    self.work_queue.mark_processed(work_item)
+                    continue
                 
-                # Log metrics periodically
-                if rom_count % 10 == 0:
-                    self.performance_monitor.log_metrics()
+                elif api_result['category'] == 'retryable':
+                    # Retry with higher priority
+                    self.work_queue.retry_failed(work_item, api_result['error'])
+                    continue
                 
-                # Update UI footer with metrics
-                if self.console_ui:
-                    metrics = self.performance_monitor.get_metrics()
-                    self.console_ui.update_footer(
-                        stats={
-                            'successful': metrics.roms_processed,
-                            'failed': len([r for r in results if not r.success])
-                        },
-                        api_quota={'requests_today': metrics.api_calls, 'max_requests_per_day': 10000}
+                elif api_result['category'] == 'success':
+                    game_info = api_result.get('game_info')
+                    rom_info = api_result['rom_info']
+                    
+                    if not game_info:
+                        # No game info but not an error - mark as unmatched
+                        system_name = system.name
+                        if system_name not in self.unmatched_roms:
+                            self.unmatched_roms[system_name] = []
+                        self.unmatched_roms[system_name].append(rom_info.filename)
+                        
+                        result = ScrapingResult(
+                            rom_path=rom_info.path,
+                            success=False,
+                            error="No game info found from API"
+                        )
+                        results.append(result)
+                        self.work_queue.mark_processed(work_item)
+                        continue
+                    
+                    # Download media in parallel
+                    media_paths, media_count = self._download_media_parallel(
+                        system=system,
+                        rom_info=rom_info,
+                        game_info=game_info,
+                        media_types=media_types,
+                        preferred_regions=preferred_regions
                     )
+                    
+                    # Update performance monitor
+                    if self.performance_monitor:
+                        self.performance_monitor.record_rom_processed()
+                    
+                    result = ScrapingResult(
+                        rom_path=rom_info.path,
+                        success=True,
+                        api_id=str(game_info.get('id', '')),
+                        media_downloaded=media_count,
+                        game_info=game_info,
+                        media_paths=media_paths
+                    )
+                    results.append(result)
+                    self.work_queue.mark_processed(work_item)
+                
+                else:
+                    # Other categories - log and mark processed
+                    rom_info = api_result['rom_info']
+                    logger.warning(f"Non-retryable error for {rom_info.filename}: {api_result.get('error', 'unknown')}")
+                    result = ScrapingResult(
+                        rom_path=rom_info.path,
+                        success=False,
+                        error=api_result.get('error', 'Unknown error')
+                    )
+                    results.append(result)
+                    self.work_queue.mark_processed(work_item)
             
-            result = ScrapingResult(
-                rom_path=rom_info.path,
-                success=True,
-                api_id=str(game_info.get('id', '')),
-                media_downloaded=media_count,
-                game_info=game_info,
-                media_paths=media_paths
-            )
-            results.append(result)
+            except Exception as e:
+                # Fatal error - propagate
+                logger.error(f"Fatal error processing work item: {e}")
+                raise
         
-        return results
+        return results, not_found_items
     
     def _download_media_parallel(
         self,
@@ -699,3 +808,49 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.error(f"Failed to write unmatched ROMs log: {e}")
             raise
+    
+    def _write_not_found_summary(self, system: SystemDefinition, not_found_items: List[dict]) -> None:
+        """
+        Write not-found items (404 errors) to summary file.
+        
+        Creates a text file listing all ROMs that returned 404 from the API.
+        
+        Args:
+            system: System definition
+            not_found_items: List of dicts with rom_info and error
+        """
+        if not not_found_items:
+            return
+        
+        # Write to gamelist directory
+        output_dir = self.gamelist_directory / system.name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / f"{system.name}_not_found.txt"
+        
+        try:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(f"# Not Found ROMs for {system.fullname}\n")
+                f.write(f"# Generated: {timestamp}\n")
+                f.write(f"# Total ROMs not found in ScreenScraper: {len(not_found_items)}\n")
+                f.write("#\n")
+                f.write("# These ROMs returned 404 (Not Found) from the API\n")
+                f.write("#\n\n")
+                
+                for item in sorted(not_found_items, key=lambda x: x['rom_info'].filename):
+                    rom_info = item['rom_info']
+                    error = item['error']
+                    f.write(f"ROM: {rom_info.filename}\n")
+                    if hasattr(rom_info, 'crc32') and rom_info.crc32:
+                        f.write(f"  CRC32: {rom_info.crc32}\n")
+                    f.write(f"  Size: {rom_info.file_size} bytes\n")
+                    f.write(f"  Error: {error}\n")
+                    f.write("\n")
+            
+            logger.info(f"Wrote not-found items to {output_file}")
+        except Exception as e:
+            logger.error(f"Failed to write not-found summary: {e}")
+            raise
+

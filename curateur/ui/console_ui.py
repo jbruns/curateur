@@ -85,6 +85,7 @@ class ConsoleUI:
         self.current_operation = {}
         self.current_stats = {}
         self.current_quota = {}
+        self.current_work_queue_stats = {}
     
     def _create_layout(self) -> Layout:
         """Create split panel layout"""
@@ -92,6 +93,7 @@ class ConsoleUI:
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="main", ratio=1),
+            Layout(name="queue", size=3),
             Layout(name="footer", size=5)
         )
         return layout
@@ -234,6 +236,56 @@ class ConsoleUI:
         
         self.layout["footer"].update(
             Panel(footer_table, title="Statistics", border_style="blue")
+        )
+    
+    def update_work_queue_stats(
+        self,
+        pending: int,
+        processed: int,
+        failed: int,
+        not_found: int,
+        retry_count: int
+    ) -> None:
+        """
+        Update work queue statistics display
+        
+        Args:
+            pending: Number of pending work items
+            processed: Number of processed items
+            failed: Number of failed items (retries exhausted)
+            not_found: Number of not-found items (404)
+            retry_count: Total number of retry attempts
+        """
+        self.current_work_queue_stats = {
+            'pending': pending,
+            'processed': processed,
+            'failed': failed,
+            'not_found': not_found,
+            'retry_count': retry_count
+        }
+        
+        # Create work queue stats display
+        queue_table = Table.grid(padding=(0, 2))
+        queue_table.add_column(style="bold")
+        queue_table.add_column()
+        queue_table.add_column(style="bold")
+        queue_table.add_column()
+        queue_table.add_column(style="bold")
+        queue_table.add_column()
+        
+        queue_table.add_row(
+            "Queue:", Text(str(pending), style="blue"),
+            "Processed:", Text(str(processed), style="green"),
+            "Failed:", Text(str(failed), style="red" if failed > 0 else "dim")
+        )
+        queue_table.add_row(
+            "Not Found:", Text(str(not_found), style="yellow"),
+            "Retries:", Text(str(retry_count), style="cyan"),
+            "", ""
+        )
+        
+        self.layout["queue"].update(
+            Panel(queue_table, title="Work Queue", border_style="cyan")
         )
     
     def show_error(self, message: str) -> None:

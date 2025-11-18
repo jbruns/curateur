@@ -254,8 +254,35 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     conn_manager = ConnectionPoolManager(config)
     session = conn_manager.get_session(max_connections=10)
     
-    # Initialize API client with shared session
-    api_client = ScreenScraperClient(config, session=session)
+    # Phase E: Validate API configuration
+    max_retries = config.get('api', {}).get('max_retries', 3)
+    if not isinstance(max_retries, int) or max_retries < 1 or max_retries > 10:
+        logger.warning(f"Invalid api.max_retries value: {max_retries}, using default: 3")
+        max_retries = 3
+    
+    # Phase E: Initialize ThrottleManager
+    from curateur.api.throttle import ThrottleManager, RateLimit
+    
+    # Get requests per minute from config (optional override)
+    config_rpm = config.get('api', {}).get('requests_per_minute')
+    
+    # Initialize with a default rate limit (will be updated from API response)
+    default_rpm = 120  # Conservative default
+    if config_rpm and isinstance(config_rpm, int) and 1 <= config_rpm <= 300:
+        default_rpm = config_rpm
+        logger.info(f"Using configured requests_per_minute: {default_rpm}")
+    
+    throttle_manager = ThrottleManager(
+        default_limit=RateLimit(calls=default_rpm, window_seconds=60),
+        adaptive=True
+    )
+    
+    # Phase E: Initialize WorkQueueManager
+    from curateur.workflow.work_queue import WorkQueueManager
+    work_queue = WorkQueueManager(max_retries=max_retries)
+    
+    # Initialize API client with throttle_manager
+    api_client = ScreenScraperClient(config, throttle_manager=throttle_manager, session=session)
     
     # Phase D: Initialize thread pool manager and get API limits
     from curateur.workflow.thread_pool import ThreadPoolManager
@@ -301,12 +328,13 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Get search configuration (with defaults)
     search_config = config.get('search', {})
     
-    # Initialize orchestrator with Phase D components
+    # Initialize orchestrator with Phase D & E components
     orchestrator = WorkflowOrchestrator(
         api_client=api_client,
         rom_directory=Path(config['paths']['roms']).expanduser(),
         media_directory=Path(config['paths']['media']).expanduser(),
         gamelist_directory=Path(config['paths']['gamelists']).expanduser(),
+        work_queue=work_queue,
         dry_run=config['runtime'].get('dry_run', False),
         enable_search_fallback=search_config.get('enable_search_fallback', False),
         search_confidence_threshold=search_config.get('confidence_threshold', 0.7),
@@ -385,15 +413,32 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 progress.finish_system()
                 continue
     finally:
-        # Phase D: Clean up resources
+        # Phase D & E: Clean up resources and log work queue state
         if console_ui:
             console_ui.stop()
+        
+        # Log work queue state on interrupt
+        if work_queue:
+            queue_stats = work_queue.get_stats()
+            failed_items = work_queue.get_failed_items()
+            
+            if queue_stats['pending'] > 0:
+                logger.warning(f"Work queue has {queue_stats['pending']} pending items")
+            
+            if failed_items:
+                logger.warning(f"Work queue has {len(failed_items)} failed items (retries exhausted):")
+                for item in failed_items[:10]:  # Log first 10
+                    logger.warning(f"  - {item['rom_info'].get('filename', 'unknown')}: {item['error']}")
         
         if thread_manager:
             thread_manager.shutdown(wait=True)
         
         if conn_manager:
             conn_manager.close_session()
+        
+        # Reset throttle manager state
+        if throttle_manager:
+            throttle_manager.reset()
     
     # Print final summary (unless using console UI)
     if not console_ui:
@@ -408,6 +453,65 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
             print(f"  API calls: {summary['total_api_calls']}")
             print(f"  Downloads: {summary['total_downloads']}")
             print(f"  Peak memory: {summary['peak_memory_mb']:.1f} MB")
+        
+        # Print work queue statistics
+        if work_queue:
+            queue_stats = work_queue.get_stats()
+            failed_items = work_queue.get_failed_items()
+            
+            print(f"\nWork Queue Statistics:")
+            print(f"  Processed: {queue_stats['processed']}")
+            print(f"  Failed (retries exhausted): {queue_stats['failed']}")
+            print(f"  Max retries per item: {queue_stats['max_retries']}")
+            
+            # Calculate total retry attempts
+            total_retries = sum(item['retry_count'] for item in failed_items)
+            print(f"  Total retry attempts: {total_retries}")
+            
+            if failed_items:
+                print(f"\n  Failed Items:")
+                for item in failed_items[:10]:  # Show first 10
+                    rom_name = item['rom_info'].get('filename', 'unknown')
+                    action = item['action']
+                    retry_count = item['retry_count']
+                    error = item['error']
+                    print(f"    - {rom_name} ({action}): {retry_count} retries - {error}")
+                
+                if len(failed_items) > 10:
+                    print(f"    ... and {len(failed_items) - 10} more")
+        
+        # Print throttle statistics
+        if throttle_manager and api_client:
+            from curateur.api.client import APIEndpoint
+            
+            print(f"\nThrottle Manager Statistics:")
+            total_wait_time = 0.0
+            max_backoff_multiplier = 1
+            backoff_events = 0
+            
+            for endpoint in APIEndpoint:
+                stats = throttle_manager.get_stats(endpoint.value)
+                
+                # Estimate wait time from backoff
+                if stats['backoff_remaining'] > 0:
+                    total_wait_time += stats['backoff_remaining']
+                
+                if stats['consecutive_429s'] > 0:
+                    backoff_events += stats['consecutive_429s']
+                
+                if stats['backoff_multiplier'] > max_backoff_multiplier:
+                    max_backoff_multiplier = stats['backoff_multiplier']
+                
+                print(f"  {endpoint.value}:")
+                print(f"    Recent calls: {stats['recent_calls']}/{stats['limit']}")
+                print(f"    Backoff multiplier: {stats['backoff_multiplier']}x")
+                print(f"    Consecutive 429s: {stats['consecutive_429s']}")
+                if stats['in_backoff']:
+                    print(f"    In backoff: {stats['backoff_remaining']:.1f}s remaining")
+            
+            print(f"  Summary:")
+            print(f"    Total backoff events: {backoff_events}")
+            print(f"    Max backoff multiplier reached: {max_backoff_multiplier}x")
     
     # Write error log if needed
     if error_logger.has_errors():

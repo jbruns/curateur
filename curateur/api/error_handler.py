@@ -1,7 +1,20 @@
 """Unified error handling for ScreenScraper API interactions."""
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+from enum import Enum
 import time
+import logging
+import sys
+
+logger = logging.getLogger(__name__)
+
+
+class ErrorCategory(Enum):
+    """Categorize errors for selective retry logic."""
+    RETRYABLE = "retryable"        # 429, 5xx, network - should retry
+    NOT_FOUND = "not_found"        # 404 - track separately, don't retry
+    NON_RETRYABLE = "non_retryable"  # 400 - don't retry
+    FATAL = "fatal"                # 403, auth - halt execution
 
 
 class APIError(Exception):
@@ -55,13 +68,22 @@ def get_error_message(status_code: int) -> str:
     )
 
 
-def handle_http_status(status_code: int, context: str = "") -> None:
+def handle_http_status(
+    status_code: int,
+    context: str = "",
+    throttle_manager: Optional[Any] = None,
+    endpoint: Optional[str] = None,
+    retry_after: Optional[int] = None
+) -> None:
     """
     Handle HTTP status code and raise appropriate exception.
     
     Args:
         status_code: HTTP status code from API
         context: Additional context for error message
+        throttle_manager: Optional ThrottleManager for 429 handling
+        endpoint: Optional endpoint name for throttle tracking
+        retry_after: Optional Retry-After header value
         
     Raises:
         FatalAPIError: For fatal errors (403, 423, 426, 430)
@@ -72,8 +94,16 @@ def handle_http_status(status_code: int, context: str = "") -> None:
     if context:
         msg = f"{msg} ({context})"
     
+    # Handle 429 with throttle manager if provided
+    if status_code == 429 and throttle_manager and endpoint:
+        throttle_manager.handle_rate_limit(endpoint, retry_after)
+    
     # Fatal errors - stop execution
-    if status_code in [403, 423, 426, 430]:
+    if status_code == 403:
+        # Authentication failure - critical halt
+        logger.critical("Authentication failure - halting execution")
+        sys.exit(1)
+    elif status_code in [423, 426, 430]:
         raise FatalAPIError(msg)
     
     # Retryable errors - wait and retry
@@ -89,6 +119,42 @@ def handle_http_status(status_code: int, context: str = "") -> None:
         raise APIError(msg)
 
 
+def categorize_error(exception: Exception) -> Tuple[Exception, ErrorCategory]:
+    """
+    Categorize an error for selective retry logic.
+    
+    Args:
+        exception: Exception to categorize
+        
+    Returns:
+        Tuple of (exception, ErrorCategory)
+    """
+    # Fatal errors - halt execution
+    if isinstance(exception, FatalAPIError):
+        return (exception, ErrorCategory.FATAL)
+    
+    # Check for 404 (not found) - track separately
+    error_str = str(exception).lower()
+    if isinstance(exception, SkippableAPIError) and ('not found' in error_str or '404' in error_str):
+        return (exception, ErrorCategory.NOT_FOUND)
+    
+    # Non-retryable skippable errors (e.g., 400 malformed request)
+    if isinstance(exception, SkippableAPIError):
+        return (exception, ErrorCategory.NON_RETRYABLE)
+    
+    # Retryable errors (429, 5xx, network issues)
+    if isinstance(exception, RetryableAPIError):
+        return (exception, ErrorCategory.RETRYABLE)
+    
+    # Check for network-related exceptions
+    retryable_keywords = ['timeout', 'connection', 'network', 'temporary', 'unavailable', '5']
+    if any(keyword in error_str for keyword in retryable_keywords):
+        return (exception, ErrorCategory.RETRYABLE)
+    
+    # Default to non-retryable
+    return (exception, ErrorCategory.NON_RETRYABLE)
+
+
 def retry_with_backoff(
     func,
     max_attempts: int = 3,
@@ -97,7 +163,7 @@ def retry_with_backoff(
     context: str = ""
 ):
     """
-    Retry a function with exponential backoff.
+    Retry a function with exponential backoff using selective retry logic.
     
     Args:
         func: Function to retry
@@ -110,7 +176,7 @@ def retry_with_backoff(
         Function result if successful
         
     Raises:
-        Last exception if all retries fail
+        Last exception if all retries fail or if error is FATAL/NOT_FOUND/NON_RETRYABLE
     """
     delay = initial_delay
     last_exception = None
@@ -118,28 +184,32 @@ def retry_with_backoff(
     for attempt in range(1, max_attempts + 1):
         try:
             return func()
-        except RetryableAPIError as e:
-            last_exception = e
-            if attempt < max_attempts:
-                print(f"  ⚠ {context}: {e}")
-                print(f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})...")
-                time.sleep(delay)
-                delay *= backoff_factor
-            else:
-                print(f"  ✗ {context}: Failed after {max_attempts} attempts")
-        except (FatalAPIError, SkippableAPIError):
-            # Don't retry fatal or skippable errors
-            raise
         except Exception as e:
-            # Network errors or other exceptions
-            last_exception = e
-            if attempt < max_attempts:
-                print(f"  ⚠ {context}: Network error: {e}")
-                print(f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})...")
-                time.sleep(delay)
-                delay *= backoff_factor
-            else:
-                print(f"  ✗ {context}: Failed after {max_attempts} attempts")
+            # Categorize the error
+            exception, category = categorize_error(e)
+            last_exception = exception
+            
+            # Fatal errors - propagate immediately
+            if category == ErrorCategory.FATAL:
+                raise exception
+            
+            # Not found errors - don't retry, propagate immediately
+            if category == ErrorCategory.NOT_FOUND:
+                raise exception
+            
+            # Non-retryable errors - don't retry, propagate immediately
+            if category == ErrorCategory.NON_RETRYABLE:
+                raise exception
+            
+            # Retryable errors - retry with backoff
+            if category == ErrorCategory.RETRYABLE:
+                if attempt < max_attempts:
+                    print(f"  ⚠ {context}: {exception}")
+                    print(f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})...")
+                    time.sleep(delay)
+                    delay *= backoff_factor
+                else:
+                    print(f"  ✗ {context}: Failed after {max_attempts} attempts")
     
     # All retries exhausted
     if last_exception:

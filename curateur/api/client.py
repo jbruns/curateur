@@ -3,6 +3,7 @@
 import logging
 import requests
 import time
+from enum import Enum
 from typing import Dict, Any, Optional
 from urllib.parse import urlencode
 
@@ -14,7 +15,7 @@ from curateur.api.error_handler import (
     FatalAPIError,
     SkippableAPIError
 )
-from curateur.api.rate_limiter import RateLimiter
+from curateur.api.throttle import ThrottleManager
 from curateur.api.response_parser import (
     validate_response,
     parse_game_info,
@@ -28,6 +29,13 @@ from curateur.api.name_verifier import verify_name_match, format_verification_re
 logger = logging.getLogger(__name__)
 
 
+class APIEndpoint(Enum):
+    """ScreenScraper API endpoints."""
+    JEU_INFOS = 'jeuInfos.php'
+    JEU_RECHERCHE = 'jeuRecherche.php'
+    MEDIA_JEU = 'mediaJeu.php'
+
+
 class ScreenScraperClient:
     """
     Client for ScreenScraper API.
@@ -37,12 +45,13 @@ class ScreenScraperClient:
     
     BASE_URL = "https://api.screenscraper.fr/api2"
     
-    def __init__(self, config: Dict[str, Any], session: Optional[requests.Session] = None):
+    def __init__(self, config: Dict[str, Any], throttle_manager: ThrottleManager, session: Optional[requests.Session] = None):
         """
         Initialize API client.
         
         Args:
             config: Configuration dictionary with screenscraper credentials
+            throttle_manager: ThrottleManager instance for rate limiting
             session: Optional requests.Session for connection pooling
         """
         # Authentication
@@ -61,8 +70,8 @@ class ScreenScraperClient:
         # HTTP session (use provided or create new)
         self.session = session if session else requests.Session()
         
-        # Rate limiter (will be updated from first API response)
-        self.rate_limiter = RateLimiter()
+        # Throttle manager for rate limiting
+        self.throttle_manager = throttle_manager
         
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
@@ -212,8 +221,18 @@ class ScreenScraperClient:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
         
-        # Handle HTTP status
-        handle_http_status(response.status_code, context=romnom)
+        # Handle HTTP status (pass throttle_manager for 429 handling)
+        handle_http_status(
+            response.status_code, 
+            context=romnom,
+            throttle_manager=self.throttle_manager,
+            endpoint=APIEndpoint.JEU_INFOS.value,
+            retry_after=response.headers.get('Retry-After')
+        )
+        
+        # Reset backoff on successful request
+        if response.status_code == 200:
+            self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_INFOS.value)
         
         # Validate and parse response
         try:
@@ -226,12 +245,9 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Update rate limits from first response
+        # Update rate limits from first response (already handled by throttle_manager initialization)
         if not self._rate_limits_initialized:
-            user_info = parse_user_info(root)
-            if user_info:
-                self.rate_limiter.update_from_api(user_info)
-                self._rate_limits_initialized = True
+            self._rate_limits_initialized = True
         
         # Parse game info
         try:
@@ -316,7 +332,7 @@ class ScreenScraperClient:
             Various API errors
         """
         # Wait for rate limit
-        self.rate_limiter.wait_if_needed()
+        self.throttle_manager.wait_if_needed(APIEndpoint.JEU_RECHERCHE.value)
         
         # Build parameters
         params = {
@@ -359,8 +375,18 @@ class ScreenScraperClient:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
         
-        # Handle HTTP status
-        handle_http_status(response.status_code, context=f"search:{recherche}")
+        # Handle HTTP status (pass throttle_manager for 429 handling)
+        handle_http_status(
+            response.status_code,
+            context=f"search:{recherche}",
+            throttle_manager=self.throttle_manager,
+            endpoint=APIEndpoint.JEU_RECHERCHE.value,
+            retry_after=response.headers.get('Retry-After')
+        )
+        
+        # Reset backoff on successful request
+        if response.status_code == 200:
+            self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_RECHERCHE.value)
         
         # Validate and parse response
         try:
@@ -373,12 +399,9 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Update rate limits from first response
+        # Update rate limits from first response (already handled by throttle_manager initialization)
         if not self._rate_limits_initialized:
-            user_info = parse_user_info(root)
-            if user_info:
-                self.rate_limiter.update_from_api(user_info)
-                self._rate_limits_initialized = True
+            self._rate_limits_initialized = True
         
         # Parse search results
         try:
@@ -393,6 +416,10 @@ class ScreenScraperClient:
         Get current rate limit information.
         
         Returns:
-            Dictionary with rate limit info
+            Dictionary with rate limit info from throttle manager
         """
-        return self.rate_limiter.get_limits()
+        # Return stats for all endpoints
+        return {
+            endpoint.value: self.throttle_manager.get_stats(endpoint.value)
+            for endpoint in APIEndpoint
+        }
