@@ -37,12 +37,13 @@ class ScreenScraperClient:
     
     BASE_URL = "https://api.screenscraper.fr/api2"
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], session: Optional[requests.Session] = None):
         """
         Initialize API client.
         
         Args:
             config: Configuration dictionary with screenscraper credentials
+            session: Optional requests.Session for connection pooling
         """
         # Authentication
         self.devid = config['screenscraper']['devid']
@@ -56,6 +57,9 @@ class ScreenScraperClient:
         self.max_retries = config.get('api', {}).get('max_retries', 3)
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
+        
+        # HTTP session (use provided or create new)
+        self.session = session if session else requests.Session()
         
         # Rate limiter (will be updated from first API response)
         self.rate_limiter = RateLimiter()
@@ -190,7 +194,7 @@ class ScreenScraperClient:
         
         start_time = time.time()
         try:
-            response = requests.get(
+            response = self.session.get(
                 url,
                 params=params,
                 timeout=self.request_timeout
@@ -337,7 +341,7 @@ class ScreenScraperClient:
         
         start_time = time.time()
         try:
-            response = requests.get(
+            response = self.session.get(
                 url,
                 params=params,
                 timeout=self.request_timeout

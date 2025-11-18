@@ -10,7 +10,7 @@ Coordinates the complete scraping workflow:
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 
 from ..config.es_systems import SystemDefinition
@@ -72,7 +72,11 @@ class WorkflowOrchestrator:
         search_confidence_threshold: float = 0.7,
         search_max_results: int = 5,
         interactive_search: bool = False,
-        preferred_regions: Optional[List[str]] = None
+        preferred_regions: Optional[List[str]] = None,
+        thread_manager: Optional['ThreadPoolManager'] = None,
+        performance_monitor: Optional['PerformanceMonitor'] = None,
+        console_ui: Optional['ConsoleUI'] = None,
+        work_queue: Optional['WorkQueueManager'] = None
     ):
         """
         Initialize workflow orchestrator.
@@ -88,6 +92,10 @@ class WorkflowOrchestrator:
             search_max_results: Maximum search results to consider
             interactive_search: Enable interactive prompts for search matches
             preferred_regions: Region preference list for scoring
+            thread_manager: Optional ThreadPoolManager for parallel operations
+            performance_monitor: Optional PerformanceMonitor for metrics tracking
+            console_ui: Optional ConsoleUI for rich display
+            work_queue: Optional WorkQueueManager for retry handling
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
@@ -99,6 +107,12 @@ class WorkflowOrchestrator:
         self.search_max_results = search_max_results
         self.interactive_search = interactive_search
         self.preferred_regions = preferred_regions or ['us', 'wor', 'eu']
+        
+        # Phase D components (optional)
+        self.thread_manager = thread_manager
+        self.performance_monitor = performance_monitor
+        self.console_ui = console_ui
+        self.work_queue = work_queue
         
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
@@ -144,17 +158,28 @@ class WorkflowOrchestrator:
         failed_count = 0
         skipped_count = 0
         
-        # Step 2-4: Process each ROM
-        for rom_info in rom_entries:
-            result = self._scrape_rom(
+        # Step 2-4: Process each ROM (parallel or sequential)
+        if self.thread_manager and not self.dry_run:
+            # Use parallel processing
+            results = self._scrape_roms_parallel(
                 system,
-                rom_info,
+                rom_entries,
                 media_types,
                 preferred_regions
             )
-            
-            results.append(result)
-            
+        else:
+            # Use sequential processing
+            for rom_info in rom_entries:
+                result = self._scrape_rom(
+                    system,
+                    rom_info,
+                    media_types,
+                    preferred_regions
+                )
+                results.append(result)
+        
+        # Count results
+        for result in results:
             if result.success:
                 scraped_count += 1
             elif result.error:
@@ -294,6 +319,220 @@ class WorkflowOrchestrator:
                 success=False,
                 error=str(e)
             )
+    
+    def _scrape_roms_parallel(
+        self,
+        system: SystemDefinition,
+        rom_entries: List[ROMInfo],
+        media_types: List[str],
+        preferred_regions: List[str]
+    ) -> List[ScrapingResult]:
+        """
+        Scrape ROMs in parallel using ThreadPoolManager.
+        
+        Args:
+            system: System definition
+            rom_entries: List of ROM information from scanner
+            media_types: Media types to download
+            preferred_regions: Region priority list
+            
+        Returns:
+            List of ScrapingResult
+        """
+        results = []
+        rom_count = 0
+        
+        # Define scraping function for parallel execution
+        def scrape_single_rom(rom_info: ROMInfo) -> dict:
+            """Wrapper for parallel API calls"""
+            try:
+                # Query API
+                game_info = None
+                
+                # Try hash-based lookup first
+                try:
+                    game_info = self.api_client.query_game(rom_info)
+                    if self.performance_monitor:
+                        self.performance_monitor.record_api_call()
+                    logger.debug(f"Hash lookup successful for {rom_info.filename}")
+                except SkippableAPIError as e:
+                    logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
+                    
+                    # Try search fallback if enabled
+                    if self.enable_search_fallback:
+                        logger.info(f"Attempting search fallback for {rom_info.filename}")
+                        game_info = self._search_fallback(rom_info, preferred_regions)
+                        
+                        if game_info:
+                            logger.info(f"Search fallback successful for {rom_info.filename}")
+                            if self.performance_monitor:
+                                self.performance_monitor.record_api_call()
+                        else:
+                            logger.info(f"Search fallback found no matches for {rom_info.filename}")
+                
+                return {'rom_info': rom_info, 'game_info': game_info}
+                
+            except Exception as e:
+                return {'rom_info': rom_info, 'error': str(e)}
+        
+        # Process API calls in parallel
+        for rom_info, api_result in self.thread_manager.submit_api_batch(
+            scrape_single_rom, rom_entries
+        ):
+            rom_count += 1
+            
+            # Update UI if available
+            if self.console_ui:
+                self.console_ui.update_main({
+                    'rom_name': rom_info.filename,
+                    'rom_num': rom_count,
+                    'total_roms': len(rom_entries),
+                    'action': 'scraping',
+                    'details': 'Fetching metadata...'
+                })
+            
+            # Handle API result
+            if 'error' in api_result:
+                # API call failed
+                result = ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=False,
+                    error=api_result['error']
+                )
+                results.append(result)
+                continue
+            
+            game_info = api_result.get('game_info')
+            
+            if not game_info:
+                # Track as unmatched
+                system_name = system.name
+                if system_name not in self.unmatched_roms:
+                    self.unmatched_roms[system_name] = []
+                self.unmatched_roms[system_name].append(rom_info.filename)
+                
+                result = ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=False,
+                    error="No game info found from API"
+                )
+                results.append(result)
+                continue
+            
+            # Download media in parallel
+            media_paths, media_count = self._download_media_parallel(
+                system=system,
+                rom_info=rom_info,
+                game_info=game_info,
+                media_types=media_types,
+                preferred_regions=preferred_regions
+            )
+            
+            # Update performance monitor
+            if self.performance_monitor:
+                self.performance_monitor.record_rom_processed()
+                
+                # Log metrics periodically
+                if rom_count % 10 == 0:
+                    self.performance_monitor.log_metrics()
+                
+                # Update UI footer with metrics
+                if self.console_ui:
+                    metrics = self.performance_monitor.get_metrics()
+                    self.console_ui.update_footer(
+                        stats={
+                            'successful': metrics.roms_processed,
+                            'failed': len([r for r in results if not r.success])
+                        },
+                        api_quota={'requests_today': metrics.api_calls, 'max_requests_per_day': 10000}
+                    )
+            
+            result = ScrapingResult(
+                rom_path=rom_info.path,
+                success=True,
+                api_id=str(game_info.get('id', '')),
+                media_downloaded=media_count,
+                game_info=game_info,
+                media_paths=media_paths
+            )
+            results.append(result)
+        
+        return results
+    
+    def _download_media_parallel(
+        self,
+        system: SystemDefinition,
+        rom_info: ROMInfo,
+        game_info: dict,
+        media_types: List[str],
+        preferred_regions: List[str]
+    ) -> Tuple[dict, int]:
+        """
+        Download media files in parallel using ThreadPoolManager.
+        
+        Args:
+            system: System definition
+            rom_info: ROM information
+            game_info: Game metadata from API
+            media_types: Media types to download
+            preferred_regions: Region priority list
+            
+        Returns:
+            Tuple of (media_paths dict, media_count)
+        """
+        media_downloader = MediaDownloader(
+            media_root=self.media_directory / system.name,
+            preferred_regions=preferred_regions
+        )
+        
+        # Collect media to download
+        media_batch = []
+        for media_type in media_types:
+            media_data = game_info.get('media', {}).get(media_type, [])
+            
+            if media_data:
+                media_url = media_data[0].get('url') if isinstance(media_data, list) else media_data.get('url')
+                
+                if media_url:
+                    media_batch.append({
+                        'media_type': media_type,
+                        'media_url': media_url,
+                        'game_name': game_info.get('name', rom_info.basename)
+                    })
+        
+        if not media_batch:
+            return {}, 0
+        
+        # Define download function for parallel execution
+        def download_single_media(media_item: dict) -> Optional[Path]:
+            """Wrapper for parallel media downloads"""
+            try:
+                media_path = media_downloader.download_media(
+                    media_type=media_item['media_type'],
+                    media_url=media_item['media_url'],
+                    game_name=media_item['game_name']
+                )
+                
+                if media_path and self.performance_monitor:
+                    self.performance_monitor.record_download()
+                
+                return media_path
+            except Exception as e:
+                logger.debug(f"Media download failed: {e}")
+                return None
+        
+        # Download media in parallel
+        media_paths = {}
+        media_count = 0
+        
+        for media_item, download_result in self.thread_manager.submit_download_batch(
+            download_single_media, media_batch
+        ):
+            if 'error' not in download_result and download_result:
+                media_paths[media_item['media_type']] = str(download_result)
+                media_count += 1
+        
+        return media_paths, media_count
     
     def _search_fallback(
         self,

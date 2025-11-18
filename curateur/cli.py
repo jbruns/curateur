@@ -6,6 +6,8 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 from curateur import __version__
 from curateur.config.loader import load_config, ConfigError
 from curateur.config.validator import validate_config, ValidationError
@@ -247,12 +249,59 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     else:
         systems = all_systems
     
-    # Initialize components
-    api_client = ScreenScraperClient(config)
+    # Phase D: Initialize connection pool manager
+    from curateur.api.connection_pool import ConnectionPoolManager
+    conn_manager = ConnectionPoolManager(config)
+    session = conn_manager.get_session(max_connections=10)
+    
+    # Initialize API client with shared session
+    api_client = ScreenScraperClient(config, session=session)
+    
+    # Phase D: Initialize thread pool manager and get API limits
+    from curateur.workflow.thread_pool import ThreadPoolManager
+    thread_manager = ThreadPoolManager(config)
+    
+    # Authenticate and get API limits for thread pool initialization
+    try:
+        # Get rate limits from API (first API call initializes them)
+        api_limits = api_client.get_rate_limits()
+        thread_manager.initialize_pools(api_limits)
+    except Exception as e:
+        logger.warning(f"Could not initialize thread pools from API: {e}")
+        thread_manager.initialize_pools(None)  # Use defaults
+    
+    # Phase D: Count total ROMs for performance monitor
+    total_roms = 0
+    for system in systems:
+        try:
+            from curateur.scanner.rom_scanner import scan_system
+            rom_entries = scan_system(
+                system,
+                rom_root=Path(config['paths']['roms']).expanduser(),
+                crc_size_limit=1073741824
+            )
+            total_roms += len(rom_entries)
+        except Exception:
+            pass  # Continue counting other systems
+    
+    # Phase D: Initialize performance monitor
+    from curateur.workflow.performance import PerformanceMonitor
+    performance_monitor = PerformanceMonitor(total_roms=total_roms) if total_roms > 0 else None
+    
+    # Phase D: Initialize console UI (optional, based on TTY)
+    from curateur.ui.console_ui import ConsoleUI
+    console_ui = None
+    if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
+        try:
+            console_ui = ConsoleUI(config)
+            console_ui.start()
+        except Exception as e:
+            logger.warning(f"Could not initialize console UI: {e}")
     
     # Get search configuration (with defaults)
     search_config = config.get('search', {})
     
+    # Initialize orchestrator with Phase D components
     orchestrator = WorkflowOrchestrator(
         api_client=api_client,
         rom_directory=Path(config['paths']['roms']).expanduser(),
@@ -263,65 +312,102 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
         search_confidence_threshold=search_config.get('confidence_threshold', 0.7),
         search_max_results=search_config.get('max_results', 5),
         interactive_search=search_config.get('interactive_search', False),
-        preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu'])
+        preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
+        thread_manager=thread_manager,
+        performance_monitor=performance_monitor,
+        console_ui=console_ui
     )
     
     progress = ProgressTracker()
     error_logger = ErrorLogger()
     
-    # Print header
-    print(f"\ncurateur v{__version__}")
-    print(f"{'='*60}")
-    print(f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}")
-    print(f"Systems: {len(systems)}")
-    if search_config.get('enable_search_fallback'):
-        print(f"Search fallback: ENABLED (threshold: {search_config.get('confidence_threshold', 0.7):.1%})")
-        if search_config.get('interactive_search'):
-            print(f"Interactive mode: ENABLED")
-    print(f"{'='*60}\n")
+    # Print header (unless using console UI)
+    if not console_ui:
+        print(f"\ncurateur v{__version__}")
+        print(f"{'='*60}")
+        print(f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}")
+        print(f"Systems: {len(systems)}")
+        if search_config.get('enable_search_fallback'):
+            print(f"Search fallback: ENABLED (threshold: {search_config.get('confidence_threshold', 0.7):.1%})")
+            if search_config.get('interactive_search'):
+                print(f"Interactive mode: ENABLED")
+        if thread_manager and thread_manager.max_threads > 1:
+            print(f"Parallel processing: {thread_manager.max_threads} threads")
+        print(f"{'='*60}\n")
     
     # Process each system
-    for system in systems:
-        try:
-            result = orchestrator.scrape_system(
-                system=system,
-                media_types=config['scraping'].get('media_types', ['box-2D', 'ss']),
-                preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
-                progress_tracker=progress
-            )
-            
-            # Log each ROM result
-            for rom_result in result.results:
-                if rom_result.success:
-                    media_info = f"{rom_result.media_downloaded} media files" if rom_result.media_downloaded > 0 else "no media"
-                    progress.log_rom(
-                        rom_result.rom_path.name,
-                        'success',
-                        media_info
+    try:
+        for system in systems:
+            try:
+                # Update UI header
+                if console_ui:
+                    console_ui.update_header(
+                        system_name=system.name,
+                        system_num=systems.index(system) + 1,
+                        total_systems=len(systems)
                     )
-                elif rom_result.error:
-                    progress.log_rom(
-                        rom_result.rom_path.name,
-                        'failed',
-                        rom_result.error
-                    )
-                    error_logger.log_error(rom_result.rom_path.name, rom_result.error)
-                else:
-                    progress.log_rom(
-                        rom_result.rom_path.name,
-                        'skipped',
-                        ''
-                    )
-            
-            progress.finish_system()
-            
-        except Exception as e:
-            print(f"\nError processing system {system.fullname}: {e}")
-            progress.finish_system()
-            continue
+                
+                result = orchestrator.scrape_system(
+                    system=system,
+                    media_types=config['scraping'].get('media_types', ['box-2D', 'ss']),
+                    preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
+                    progress_tracker=progress
+                )
+                
+                # Log each ROM result (if not using console UI)
+                if not console_ui:
+                    for rom_result in result.results:
+                        if rom_result.success:
+                            media_info = f"{rom_result.media_downloaded} media files" if rom_result.media_downloaded > 0 else "no media"
+                            progress.log_rom(
+                                rom_result.rom_path.name,
+                                'success',
+                                media_info
+                            )
+                        elif rom_result.error:
+                            progress.log_rom(
+                                rom_result.rom_path.name,
+                                'failed',
+                                rom_result.error
+                            )
+                            error_logger.log_error(rom_result.rom_path.name, rom_result.error)
+                        else:
+                            progress.log_rom(
+                                rom_result.rom_path.name,
+                                'skipped',
+                                ''
+                            )
+                
+                progress.finish_system()
+                
+            except Exception as e:
+                print(f"\nError processing system {system.fullname}: {e}")
+                progress.finish_system()
+                continue
+    finally:
+        # Phase D: Clean up resources
+        if console_ui:
+            console_ui.stop()
+        
+        if thread_manager:
+            thread_manager.shutdown(wait=True)
+        
+        if conn_manager:
+            conn_manager.close_session()
     
-    # Print final summary
-    progress.print_final_summary()
+    # Print final summary (unless using console UI)
+    if not console_ui:
+        progress.print_final_summary()
+        
+        # Print performance summary if available
+        if performance_monitor:
+            summary = performance_monitor.get_summary()
+            print(f"\nPerformance Summary:")
+            print(f"  Total time: {summary['elapsed_seconds']:.1f}s")
+            print(f"  ROMs/second: {summary['avg_roms_per_second']:.2f}")
+            print(f"  API calls: {summary['total_api_calls']}")
+            print(f"  Downloads: {summary['total_downloads']}")
+            print(f"  Peak memory: {summary['peak_memory_mb']:.1f} MB")
     
     # Write error log if needed
     if error_logger.has_errors():
