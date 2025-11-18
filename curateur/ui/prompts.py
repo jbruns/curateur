@@ -438,3 +438,31 @@ def _render_confidence_bar(score: float, width: int = 20) -> str:
     filled = int(score * width)
     empty = width - filled
     return f"[{'█' * filled}{'░' * empty}]"
+
+
+# Module-level convenience functions
+_default_prompt_system = None
+
+
+def _get_prompt_system() -> PromptSystem:
+    """Get or create default PromptSystem instance."""
+    global _default_prompt_system
+    if _default_prompt_system is None:
+        _default_prompt_system = PromptSystem()
+    return _default_prompt_system
+
+
+def confirm(message: str, default: bool = False) -> bool:
+    """
+    Module-level confirm function for simple yes/no prompts.
+    
+    Args:
+        message: Prompt message
+        default: Default value if user just presses Enter
+        
+    Returns:
+        True for yes, False for no
+    """
+    prompt_system = _get_prompt_system()
+    default_str = 'y' if default else 'n'
+    return prompt_system.confirm(message, default=default_str)

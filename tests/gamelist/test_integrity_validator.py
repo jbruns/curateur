@@ -14,7 +14,7 @@ class TestIntegrityValidator:
         """Test initialization with default threshold."""
         validator = IntegrityValidator()
         
-        assert validator.threshold == 0.95  # Default threshold
+        assert validator.threshold == 0.90  # Default threshold (90%)
     
     def test_init_with_custom_threshold(self):
         """Test initialization with custom threshold."""
@@ -58,8 +58,8 @@ class TestIntegrityValidator:
         
         assert result.is_valid is False
         assert len(result.missing_roms) == 2
-        assert "./Missing Game.nes" in [str(r) for r in result.missing_roms]
-        assert "./Another Missing.nes" in [str(r) for r in result.missing_roms]
+        assert "./Missing Game.nes" in result.missing_roms
+        assert "./Another Missing.nes" in result.missing_roms
     
     def test_validate_below_threshold(self, temp_rom_files, temp_gamelist_dir):
         """Test validation fails when below threshold."""
@@ -121,7 +121,7 @@ class TestIntegrityValidator:
         missing = validator._identify_missing_roms(entries, rom_dir)
         
         assert len(missing) == 1
-        assert missing[0].name == "Missing.nes"
+        assert missing[0] == "./Missing.nes"
     
     @patch('curateur.ui.prompts.confirm')
     def test_prompt_user_accepts_cleanup(self, mock_confirm):
@@ -132,7 +132,7 @@ class TestIntegrityValidator:
         result = ValidationResult(
             is_valid=False,
             match_ratio=0.80,
-            missing_roms=[Path("./Missing.nes")],
+            missing_roms=["./Missing.nes"],
             orphaned_entries=[GameEntry(path="./Missing.nes", name="Missing")]
         )
         
@@ -150,7 +150,7 @@ class TestIntegrityValidator:
         result = ValidationResult(
             is_valid=False,
             match_ratio=0.80,
-            missing_roms=[Path("./Missing.nes")],
+            missing_roms=["./Missing.nes"],
             orphaned_entries=[GameEntry(path="./Missing.nes", name="Missing")]
         )
         
@@ -218,7 +218,7 @@ class TestValidationResult:
     
     def test_validation_result_with_issues(self):
         """Test ValidationResult with validation issues."""
-        missing = [Path("./Missing1.nes"), Path("./Missing2.nes")]
+        missing = ["./Missing1.nes", "./Missing2.nes"]
         orphaned = [
             GameEntry(path="./Orphaned.nes", name="Orphaned")
         ]

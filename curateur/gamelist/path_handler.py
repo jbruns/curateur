@@ -41,11 +41,14 @@ class PathHandler:
         Convert absolute ROM path to relative path for gamelist.xml.
         
         Args:
-            rom_path: Absolute path to ROM file/directory
+            rom_path: Absolute path to ROM file/directory (Path or str)
             
         Returns:
             Relative path string (e.g., "./Game.zip")
         """
+        # Convert to Path if string
+        rom_path = Path(rom_path)
+        
         try:
             # Get path relative to ROM directory
             rel_path = rom_path.relative_to(self.rom_directory)
@@ -176,3 +179,133 @@ class PathHandler:
             return os.path.splitext(name)[0]
         
         return name
+    
+    def to_relative_rom_path(self, rom_path: Path) -> str:
+        """
+        Alias for get_relative_rom_path for backwards compatibility.
+        
+        Args:
+            rom_path: Absolute path to ROM file/directory
+            
+        Returns:
+            Relative path string (e.g., "./Game.zip")
+        """
+        return self.get_relative_rom_path(rom_path)
+    
+    def to_absolute_rom_path(self, relative_path: str) -> Path:
+        """
+        Convert relative ROM path to absolute path.
+        
+        Args:
+            relative_path: Relative path from gamelist (e.g., "./Game.zip")
+            
+        Returns:
+            Absolute path to ROM file
+        """
+        return self.resolve_rom_path(relative_path)
+    
+    def to_relative_media_path(
+        self,
+        media_path: Path,
+        from_directory: Optional[Path] = None
+    ) -> str:
+        """
+        Alias for get_relative_media_path for backwards compatibility.
+        
+        Args:
+            media_path: Absolute path to media file
+            from_directory: Base directory for relative path
+            
+        Returns:
+            Relative path string
+        """
+        return self.get_relative_media_path(media_path, from_directory)
+    
+    def to_absolute_media_path(self, relative_path: str) -> Path:
+        """
+        Convert relative media path to absolute path.
+        
+        Args:
+            relative_path: Relative path from gamelist (e.g., "./covers/Game.png")
+            
+        Returns:
+            Absolute path to media file
+        """
+        # Remove leading ./
+        clean_path = relative_path.lstrip('./')
+        return self.media_directory / clean_path
+    
+    def get_media_basename(self, rom_path: Path) -> str:
+        """
+        Get basename for media file from ROM path.
+        
+        Handles:
+        - Standard ROMs: Remove extension
+        - M3U playlists: Use m3u filename without extension
+        - Disc subdirectories: Use parent directory name
+        
+        Args:
+            rom_path: Path to ROM file
+            
+        Returns:
+            Basename for media file naming
+        """
+        rom_path = Path(rom_path)
+        
+        # If it's a directory (disc subdirectory), use directory name
+        if rom_path.is_dir():
+            return rom_path.name
+        
+        # If it's an M3U file, use its name without extension
+        if rom_path.suffix.lower() == '.m3u':
+            return rom_path.stem
+        
+        # For disc files in subdirectories, use the parent directory name
+        parent_name = rom_path.parent.name
+        if 'disc' in parent_name.lower() or 'disk' in parent_name.lower():
+            return parent_name
+        
+        # Standard ROM: use filename without extension
+        return rom_path.stem
+    
+    def calculate_media_path_from_gamelist(
+        self,
+        media_path: Path,
+        rom_relative_path: str = None,
+        media_type: str = None
+    ) -> str:
+        """
+        Calculate relative path from gamelist directory to media file.
+        
+        Can be called two ways:
+        1. With media_path only - returns relative path to that media file
+        2. With rom_relative_path and media_type - calculates expected media path
+        
+        Args:
+            media_path: Absolute path to media file (or rom_relative_path if using mode 2)
+            rom_relative_path: (Optional) Relative ROM path from gamelist
+            media_type: (Optional) Media type ('covers', 'screenshots', etc.)
+            
+        Returns:
+            Relative path string from gamelist to media file
+        """
+        # Mode 2: Calculate expected media path from ROM path
+        if rom_relative_path is not None and media_type is not None:
+            # media_path is actually rom_relative_path in this case
+            rom_abs = self.to_absolute_rom_path(str(media_path))
+            basename = self.get_media_basename(rom_abs)
+            
+            # Determine file extension based on media type
+            if media_type == 'videos':
+                ext = '.mp4'
+            else:
+                ext = '.png'
+            
+            # Construct media path
+            media_abs = self.media_directory / media_type / f"{basename}{ext}"
+        else:
+            # Mode 1: Convert provided media path to relative
+            media_abs = Path(media_path)
+        
+        # Calculate relative path from gamelist to media
+        return self.get_relative_media_path(media_abs)
