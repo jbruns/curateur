@@ -5,18 +5,22 @@ Preserves user-editable fields while updating scraper-managed fields.
 Implements field categorization and merge strategies.
 """
 
-from typing import Dict, List, Optional, Set, NamedTuple
+from typing import List, Set
+from dataclasses import dataclass, replace
 import logging
+
+from .game_entry import GameEntry
 
 logger = logging.getLogger(__name__)
 
 
-class MergeResult(NamedTuple):
+@dataclass
+class MergeResult:
     """Result of metadata merge operation"""
-    merged_data: dict
-    preserved_fields: List[str]
-    updated_fields: List[str]
-    conflicts: List[str]
+    merged_entry: GameEntry
+    preserved_fields: Set[str]
+    updated_fields: Set[str]
+    conflicts: Set[str]
 
 
 class MetadataMerger:
@@ -24,125 +28,133 @@ class MetadataMerger:
     Merges API response data with existing gamelist metadata
     
     Field Categories:
-    - User-editable: favorite, playcount, lastplayed, hidden, custom fields
+    - User-editable: favorite, playcount, lastplayed, hidden, kidgame
     - Scraper-managed: name, desc, rating, releasedate, developer, publisher, 
-                       genre, players, media paths, hash
-    - Protected: id (ScreenScraper game ID)
+                       genre, players, media paths
+    - Provider: screenscraper_id
+    - Required: path
     
     Merge Strategy:
     1. Preserve all user-editable fields from existing entry
     2. Update scraper-managed fields from API response
-    3. Keep protected fields unchanged
-    4. Merge custom/unknown fields (prefer existing)
+    3. Keep provider fields unchanged
+    4. Preserve custom/unknown fields (in extra_fields)
     """
     
     # Field categorization
-    USER_EDITABLE_FIELDS = {
-        'favorite', 'playcount', 'lastplayed', 'hidden',
-        'kidgame', 'manual'  # ES-DE user-controllable fields
+    USER_FIELDS = {
+        'favorite', 'playcount', 'lastplayed', 'hidden', 'kidgame'
     }
     
-    SCRAPER_MANAGED_FIELDS = {
+    SCRAPED_FIELDS = {
         'name', 'desc', 'rating', 'releasedate', 'developer',
-        'publisher', 'genre', 'players', 'hash',
-        # Media paths
-        'image', 'thumbnail', 'marquee', 'video',
-        'fanart', 'boxart', 'boxback', 'titlescreen',
-        'cartridge', 'mix', 'manual'
+        'publisher', 'genre', 'players'
     }
     
-    PROTECTED_FIELDS = {
-        'id',  # ScreenScraper game ID
-        'source',  # Source scraper name
+    PROVIDER_FIELDS = {
+        'screenscraper_id'
     }
     
-    ALWAYS_KEEP_FIELDS = {
-        'path',  # ROM file path - never changes
+    REQUIRED_FIELDS = {
+        'path'
     }
     
-    def __init__(self, config: dict):
+    def __init__(self, merge_strategy: str = 'preserve_user'):
         """
         Initialize metadata merger
         
         Args:
-            config: Configuration dictionary
+            merge_strategy: Merge strategy ('preserve_user', 'update_all', etc.)
         """
-        self.config = config
-        self.merge_strategy = config.get('scraping', {}).get(
-            'merge_strategy', 'preserve_user_edits'
-        )
+        self.merge_strategy = merge_strategy
         logger.info(f"Metadata Merger initialized (strategy={self.merge_strategy})")
     
-    def merge_metadata(self, existing_entry: dict, api_data: dict) -> MergeResult:
+    def merge_entries(self, existing: GameEntry, scraped: GameEntry) -> MergeResult:
         """
-        Merge API data with existing gamelist entry
+        Merge scraped data with existing gamelist entry
         
         Args:
-            existing_entry: Existing metadata from gamelist.xml
-            api_data: New metadata from API response
+            existing: Existing GameEntry from gamelist.xml
+            scraped: Newly scraped GameEntry from API
         
         Returns:
-            MergeResult with merged data and change tracking
+            MergeResult with merged entry and change tracking
         """
-        merged = {}
-        preserved_fields = []
-        updated_fields = []
-        conflicts = []
+        preserved_fields = set()
+        updated_fields = set()
+        conflicts = set()
         
-        # Start with existing entry as base
-        all_fields = set(existing_entry.keys()) | set(api_data.keys())
+        # Build merged entry dict
+        merged_data = {}
         
-        for field in all_fields:
-            existing_value = existing_entry.get(field)
-            api_value = api_data.get(field)
-            
-            # Always keep fields
-            if field in self.ALWAYS_KEEP_FIELDS:
-                merged[field] = existing_value
-                preserved_fields.append(field)
+        # Path is always from existing (required field)
+        merged_data['path'] = existing.path
+        preserved_fields.add('path')
+        
+        # Process all fields
+        for field_name in dir(existing):
+            # Skip private/magic methods and non-field attributes
+            if field_name.startswith('_') or field_name in ('from_api_response',):
                 continue
             
-            # Protected fields (never update)
-            if field in self.PROTECTED_FIELDS:
-                if existing_value is not None:
-                    merged[field] = existing_value
-                    preserved_fields.append(field)
-                elif api_value is not None:
-                    merged[field] = api_value
-                    updated_fields.append(field)
+            # Skip methods
+            attr = getattr(existing, field_name, None)
+            if callable(attr):
                 continue
             
-            # User-editable fields (always preserve)
-            if field in self.USER_EDITABLE_FIELDS:
-                if existing_value is not None:
-                    merged[field] = existing_value
-                    preserved_fields.append(field)
-                elif api_value is not None:
-                    merged[field] = api_value
-                    updated_fields.append(field)
+            # Already handled path
+            if field_name == 'path':
                 continue
             
-            # Scraper-managed fields (update from API)
-            if field in self.SCRAPER_MANAGED_FIELDS:
-                if api_value is not None:
-                    # Check for conflicts (both have values but different)
-                    if existing_value is not None and existing_value != api_value:
-                        conflicts.append(field)
-                    merged[field] = api_value
-                    updated_fields.append(field)
+            existing_value = getattr(existing, field_name, None)
+            scraped_value = getattr(scraped, field_name, None)
+            
+            category = self._get_field_category(field_name)
+            
+            if category == 'user':
+                # Preserve user fields from existing
+                merged_data[field_name] = existing_value
+                if existing_value is not None or (field_name in self.USER_FIELDS and existing_value is not None):
+                    preserved_fields.add(field_name)
+            elif category == 'scraped':
+                # Update scraped fields from new data
+                if scraped_value is not None:
+                    if existing_value is not None and existing_value != scraped_value:
+                        conflicts.add(field_name)
+                    merged_data[field_name] = scraped_value
+                    updated_fields.add(field_name)
                 elif existing_value is not None:
-                    # Keep existing if no API value
-                    merged[field] = existing_value
-                    preserved_fields.append(field)
-                continue
-            
-            # Unknown/custom fields (preserve existing, use API as fallback)
-            if existing_value is not None:
-                merged[field] = existing_value
-                preserved_fields.append(field)
-            elif api_value is not None:
-                merged[field] = api_value
-                updated_fields.append(field)
+                    # Keep existing if no scraped value
+                    merged_data[field_name] = existing_value
+                    preserved_fields.add(field_name)
+            elif category == 'provider':
+                # Keep provider fields (don't overwrite)
+                if existing_value is not None:
+                    merged_data[field_name] = existing_value
+                    preserved_fields.add(field_name)
+                elif scraped_value is not None:
+                    merged_data[field_name] = scraped_value
+                    updated_fields.add(field_name)
+            else:
+                # Unknown fields - preserve existing
+                if existing_value is not None:
+                    merged_data[field_name] = existing_value
+                    preserved_fields.add(field_name)
+                elif scraped_value is not None:
+                    merged_data[field_name] = scraped_value
+                    updated_fields.add(field_name)
+        
+        # Handle extra_fields specially
+        if hasattr(existing, 'extra_fields') and existing.extra_fields:
+            merged_data['extra_fields'] = existing.extra_fields.copy()
+            preserved_fields.add('extra_fields')
+        elif hasattr(scraped, 'extra_fields') and scraped.extra_fields:
+            merged_data['extra_fields'] = scraped.extra_fields.copy()
+        else:
+            merged_data['extra_fields'] = {}
+        
+        # Create merged GameEntry
+        merged_entry = GameEntry(**merged_data)
         
         logger.debug(
             f"Merge complete: {len(preserved_fields)} preserved, "
@@ -150,115 +162,102 @@ class MetadataMerger:
         )
         
         return MergeResult(
-            merged_data=merged,
+            merged_entry=merged_entry,
             preserved_fields=preserved_fields,
             updated_fields=updated_fields,
             conflicts=conflicts
         )
+        
     
-    def is_user_edited(self, existing_entry: dict, original_scraped_entry: dict) -> bool:
-        """
-        Detect if user has edited any fields
-        
-        Args:
-            existing_entry: Current gamelist entry
-            original_scraped_entry: Original scraped entry (from last scrape)
-        
-        Returns:
-            bool: True if user-editable fields differ from original
-        """
-        for field in self.USER_EDITABLE_FIELDS:
-            existing_value = existing_entry.get(field)
-            original_value = original_scraped_entry.get(field)
-            
-            # Field added by user
-            if existing_value is not None and original_value is None:
-                return True
-            
-            # Field modified by user
-            if existing_value != original_value:
-                return True
-        
-        return False
-    
-    def merge_batch(self, existing_entries: Dict[str, dict],
-                   api_responses: Dict[str, dict]) -> Dict[str, MergeResult]:
+    def batch_merge(
+        self,
+        existing_list: List[GameEntry],
+        scraped_list: List[GameEntry]
+    ) -> List[MergeResult]:
         """
         Merge multiple entries in batch
         
         Args:
-            existing_entries: Dict mapping basename to existing entry
-            api_responses: Dict mapping basename to API response
+            existing_list: List of existing GameEntry objects
+            scraped_list: List of newly scraped GameEntry objects
         
         Returns:
-            Dict mapping basename to MergeResult
+            List of MergeResult objects
         """
-        results = {}
+        # Build lookup by path
+        existing_by_path = {entry.path: entry for entry in existing_list}
         
-        for basename in api_responses.keys():
-            existing = existing_entries.get(basename, {})
-            api_data = api_responses[basename]
-            
-            result = self.merge_metadata(existing, api_data)
-            results[basename] = result
+        results = []
+        for scraped in scraped_list:
+            existing = existing_by_path.get(scraped.path)
+            if existing:
+                result = self.merge_entries(existing, scraped)
+                results.append(result)
         
-        # Log summary
-        total_preserved = sum(len(r.preserved_fields) for r in results.values())
-        total_updated = sum(len(r.updated_fields) for r in results.values())
-        total_conflicts = sum(len(r.conflicts) for r in results.values())
-        
-        logger.info(
-            f"Batch merge: {len(results)} entries, "
-            f"{total_updated} fields updated, {total_preserved} preserved, "
-            f"{total_conflicts} conflicts"
-        )
+        logger.info(f"Batch merge: {len(results)} entries merged")
         
         return results
     
-    def get_field_category(self, field_name: str) -> str:
+    def _get_field_category(self, field_name: str) -> str:
         """
         Get category for a field name
         
-        Returns: 'user_editable' | 'scraper_managed' | 'protected' | 'custom'
+        Returns: 'user' | 'scraped' | 'provider' | 'required' | 'unknown'
         """
-        if field_name in self.USER_EDITABLE_FIELDS:
-            return 'user_editable'
-        elif field_name in self.SCRAPER_MANAGED_FIELDS:
-            return 'scraper_managed'
-        elif field_name in self.PROTECTED_FIELDS:
-            return 'protected'
+        if field_name in self.USER_FIELDS:
+            return 'user'
+        elif field_name in self.SCRAPED_FIELDS:
+            return 'scraped'
+        elif field_name in self.PROVIDER_FIELDS:
+            return 'provider'
+        elif field_name in self.REQUIRED_FIELDS:
+            return 'required'
         else:
-            return 'custom'
+            return 'unknown'
     
-    def should_update_field(self, field_name: str, has_existing_value: bool,
-                           has_api_value: bool) -> bool:
+    def _detect_user_edits(self, existing: GameEntry, scraped: GameEntry) -> Set[str]:
         """
-        Determine if a field should be updated based on merge policy
+        Detect which fields user has edited
         
         Args:
-            field_name: Name of field
-            has_existing_value: Whether existing entry has this field
-            has_api_value: Whether API response has this field
+            existing: Existing GameEntry
+            scraped: Newly scraped GameEntry
         
         Returns:
-            bool: True if field should be updated
+            Set of field names that appear to be user-edited
         """
-        category = self.get_field_category(field_name)
+        edited = set()
         
-        # User-editable: never update if exists
-        if category == 'user_editable' and has_existing_value:
-            return False
+        # User fields are always considered user-edited if they have values
+        for field in self.USER_FIELDS:
+            existing_value = getattr(existing, field, None)
+            if existing_value is not None:
+                # Check defaults
+                if field == 'favorite' and existing_value != False:
+                    edited.add(field)
+                elif field == 'playcount' and existing_value != 0:
+                    edited.add(field)
+                elif field == 'hidden' and existing_value != False:
+                    edited.add(field)
+                elif field == 'lastplayed' and existing_value:
+                    edited.add(field)
         
-        # Scraper-managed: update if API has value
-        if category == 'scraper_managed' and has_api_value:
-            return True
+        return edited
+    
+    def _determine_update_policy(self, field_name: str) -> str:
+        """
+        Determine update policy for a field
         
-        # Protected: never update if exists
-        if category == 'protected' and has_existing_value:
-            return False
+        Returns: 'preserve' | 'update'
+        """
+        category = self._get_field_category(field_name)
         
-        # Custom: update only if no existing value
-        if category == 'custom':
-            return has_api_value and not has_existing_value
-        
-        return False
+        if category == 'user' or category == 'provider':
+            return 'preserve'
+        elif category == 'scraped':
+            return 'update'
+        elif category == 'required':
+            return 'preserve'
+        else:
+            return 'preserve'  # Unknown fields preserved by default
+
