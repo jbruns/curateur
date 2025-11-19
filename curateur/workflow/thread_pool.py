@@ -88,6 +88,66 @@ class ThreadPoolManager:
                 f"Thread pools initialized: API={api_workers}, Download={download_workers}"
             )
     
+    def rescale_pools(self, api_provided_limits: Dict[str, Any]) -> bool:
+        """
+        Dynamically rescale thread pools based on updated API limits.
+        
+        This allows scaling up after the first API response reveals actual maxthreads.
+        The pools are recreated with new limits. Any in-flight work will complete
+        before the pools are shut down.
+        
+        Args:
+            api_provided_limits: dict with 'maxthreads' from API response
+        
+        Returns:
+            True if pools were rescaled, False if no change needed
+        """
+        new_max_threads = self._determine_max_threads(api_provided_limits)
+        
+        with self.lock:
+            if not self._initialized:
+                # Not yet initialized, just initialize with new limits
+                logger.info("Thread pools not yet initialized, initializing now")
+                self.initialize_pools(api_provided_limits)
+                return True
+            
+            if new_max_threads == self.max_threads:
+                # No change needed
+                logger.debug(f"Thread count unchanged at {self.max_threads}")
+                return False
+            
+            logger.info(
+                f"Rescaling thread pools: {self.max_threads} -> {new_max_threads} threads"
+            )
+            
+            # Shut down existing pools (wait for in-flight work)
+            if self.api_pool:
+                self.api_pool.shutdown(wait=True)
+            if self.download_pool:
+                self.download_pool.shutdown(wait=True)
+            
+            # Update max threads
+            self.max_threads = new_max_threads
+            
+            # Recreate pools with new limits
+            api_workers = max(1, self.max_threads // 2)
+            download_workers = self.max_threads
+            
+            self.api_pool = ThreadPoolExecutor(
+                max_workers=api_workers,
+                thread_name_prefix="api"
+            )
+            self.download_pool = ThreadPoolExecutor(
+                max_workers=download_workers,
+                thread_name_prefix="download"
+            )
+            
+            logger.info(
+                f"Thread pools rescaled: API={api_workers}, Download={download_workers}"
+            )
+            return True
+
+    
     def _determine_max_threads(self, api_limits: Optional[Dict[str, Any]]) -> int:
         """
         Determine max threads considering:

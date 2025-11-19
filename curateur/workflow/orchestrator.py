@@ -120,6 +120,9 @@ class WorkflowOrchestrator:
         
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
+        
+        # Track if we've scaled thread pools based on API limits
+        self._thread_pools_scaled = False
     
     def scrape_system(
         self,
@@ -411,6 +414,18 @@ class WorkflowOrchestrator:
                     if self.performance_monitor:
                         self.performance_monitor.record_api_call()
                     logger.debug(f"Hash lookup successful for {rom_info.filename}")
+                    
+                    # After first successful API call, check if we should scale thread pools
+                    if not self._thread_pools_scaled and self.thread_manager:
+                        user_limits = self.api_client.get_user_limits()
+                        if user_limits:
+                            logger.info(f"API limits received: {user_limits}")
+                            # Attempt to rescale pools based on actual API limits
+                            scaled = self.thread_manager.rescale_pools(user_limits)
+                            if scaled:
+                                logger.info("Thread pools dynamically scaled based on API limits")
+                            self._thread_pools_scaled = True
+                    
                 except Exception as e:
                     # Categorize error for selective retry
                     exception, category = categorize_error(e)
@@ -472,114 +487,78 @@ class WorkflowOrchestrator:
                     'error': str(exception)
                 }
         
-        # Work queue consumption loop
-        while not self.work_queue.is_empty():
-            work_item = self.work_queue.get_work(timeout=0.1)
-            if not work_item:
-                continue
+        # Work queue consumption - use parallel processing if threads available
+        if self.thread_manager and self.thread_manager.max_threads > 1:
+            # Parallel batch processing
+            logger.info(f"Using parallel processing with {self.thread_manager.max_threads} threads")
             
-            rom_count += 1
-            rom_info_dict = work_item.rom_info
+            # Process batches of work items
+            batch_size = self.thread_manager.max_threads * 2  # Keep threads fed
             
-            # Update UI if available
-            if self.console_ui:
-                self.console_ui.update_main({
-                    'rom_name': rom_info_dict['filename'],
-                    'rom_num': rom_count,
-                    'total_roms': len(rom_entries),
-                    'action': 'scraping',
-                    'details': 'Fetching metadata...'
-                })
+            while not self.work_queue.is_empty():
+                # Get batch of work items
+                batch = []
+                for _ in range(batch_size):
+                    work_item = self.work_queue.get_work(timeout=0.01)
+                    if work_item:
+                        batch.append(work_item)
+                    else:
+                        break
                 
-                # Update work queue stats in UI
-                queue_stats = self.work_queue.get_stats()
-                self.console_ui.update_work_queue_stats(
-                    pending=queue_stats['pending'],
-                    processed=queue_stats['processed'],
-                    failed=queue_stats['failed'],
-                    not_found=len(not_found_items),
-                    retry_count=sum(item['retry_count'] for item in self.work_queue.get_failed_items())
+                if not batch:
+                    break
+                
+                # Process batch in parallel using thread pool
+                for work_item, api_result in self.thread_manager.submit_api_batch(
+                    process_work_item, batch
+                ):
+                    rom_count += 1
+                    rom_info_dict = work_item.rom_info
+                    
+                    # Update UI
+                    self._update_ui_progress(
+                        rom_info_dict, rom_count, len(rom_entries),
+                        results, not_found_items
+                    )
+                    
+                    # Handle result
+                    self._handle_api_result(
+                        api_result, work_item, system, results, not_found_items,
+                        media_types, preferred_regions
+                    )
+        else:
+            # Sequential processing (single-threaded)
+            logger.info("Using sequential (single-threaded) processing")
+            
+            # Sequential work queue consumption loop
+            while not self.work_queue.is_empty():
+                work_item = self.work_queue.get_work(timeout=0.1)
+                if not work_item:
+                    continue
+                
+                    rom_count += 1
+                rom_info_dict = work_item.rom_info
+                
+                # Update UI
+                self._update_ui_progress(
+                    rom_info_dict, rom_count, len(rom_entries),
+                    results, not_found_items
                 )
-            
-            # Process the work item
-            try:
-                api_result = process_work_item(work_item)
                 
-                # Handle result based on category
-                if api_result['category'] == 'not_found':
-                    # 404 - track separately and mark processed
-                    not_found_items.append({
-                        'rom_info': api_result['rom_info'],
-                        'error': api_result['error']
-                    })
-                    self.work_queue.mark_processed(work_item)
-                    continue
-                
-                elif api_result['category'] == 'retryable':
-                    # Retry with higher priority
-                    self.work_queue.retry_failed(work_item, api_result['error'])
-                    continue
-                
-                elif api_result['category'] == 'success':
-                    game_info = api_result.get('game_info')
-                    rom_info = api_result['rom_info']
+                # Process the work item
+                try:
+                    api_result = process_work_item(work_item)
                     
-                    if not game_info:
-                        # No game info but not an error - mark as unmatched
-                        system_name = system.name
-                        if system_name not in self.unmatched_roms:
-                            self.unmatched_roms[system_name] = []
-                        self.unmatched_roms[system_name].append(rom_info.filename)
-                        
-                        result = ScrapingResult(
-                            rom_path=rom_info.path,
-                            success=False,
-                            error="No game info found from API"
-                        )
-                        results.append(result)
-                        self.work_queue.mark_processed(work_item)
-                        continue
-                    
-                    # Download media in parallel
-                    media_paths, media_count = self._download_media_parallel(
-                        system=system,
-                        rom_info=rom_info,
-                        game_info=game_info,
-                        media_types=media_types,
-                        preferred_regions=preferred_regions
+                    # Handle result using helper method
+                    self._handle_api_result(
+                        api_result, work_item, system, results, not_found_items,
+                        media_types, preferred_regions
                     )
-                    
-                    # Update performance monitor
-                    if self.performance_monitor:
-                        self.performance_monitor.record_rom_processed()
-                    
-                    result = ScrapingResult(
-                        rom_path=rom_info.path,
-                        success=True,
-                        api_id=str(game_info.get('id', '')),
-                        media_downloaded=media_count,
-                        game_info=game_info,
-                        media_paths=media_paths
-                    )
-                    results.append(result)
-                    self.work_queue.mark_processed(work_item)
                 
-                else:
-                    # Other categories - log and mark processed
-                    rom_info = api_result['rom_info']
-                    logger.warning(f"Non-retryable error for {rom_info.filename}: {api_result.get('error', 'unknown')}")
-                    result = ScrapingResult(
-                        rom_path=rom_info.path,
-                        success=False,
-                        error=api_result.get('error', 'Unknown error')
-                    )
-                    results.append(result)
-                    self.work_queue.mark_processed(work_item)
-            
-            except Exception as e:
-                # Fatal error - propagate
-                logger.error(f"Fatal error processing work item: {e}")
-                raise
+                except Exception as e:
+                    # Fatal error - propagate
+                    logger.error(f"Fatal error processing work item: {e}")
+                    raise
         
         return results, not_found_items
     
@@ -859,4 +838,127 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.error(f"Failed to write not-found summary: {e}")
             raise
+    
+    def _update_ui_progress(
+        self,
+        rom_info_dict: dict,
+        rom_count: int,
+        total_roms: int,
+        results: list,
+        not_found_items: list
+    ) -> None:
+        """Update UI with current progress"""
+        if not self.console_ui:
+            return
+        
+        self.console_ui.update_main({
+            'rom_name': rom_info_dict['filename'],
+            'rom_num': rom_count,
+            'total_roms': total_roms,
+            'action': 'scraping',
+            'details': 'Fetching metadata...'
+        })
+        
+        # Update work queue stats
+        queue_stats = self.work_queue.get_stats()
+        self.console_ui.update_work_queue_stats(
+            pending=queue_stats['pending'],
+            processed=queue_stats['processed'],
+            failed=queue_stats['failed'],
+            not_found=len(not_found_items),
+            retry_count=sum(item['retry_count'] for item in self.work_queue.get_failed_items())
+        )
+        
+        # Update footer with current stats
+        successful_count = sum(1 for r in results if r.success)
+        failed_count = sum(1 for r in results if r.error)
+        self.console_ui.update_footer(
+            stats={
+                'successful': successful_count,
+                'failed': failed_count,
+                'skipped': rom_count - successful_count - failed_count
+            },
+            api_quota={
+                'requests_today': queue_stats.get('processed', 0),
+                'max_requests_per_day': 10000
+            }
+        )
+    
+    def _handle_api_result(
+        self,
+        api_result: dict,
+        work_item: 'WorkItem',
+        system: 'SystemDefinition',
+        results: list,
+        not_found_items: list,
+        media_types: List[str],
+        preferred_regions: List[str]
+    ) -> None:
+        """Handle API result and update results/work queue"""
+        if api_result['category'] == 'not_found':
+            # 404 - track separately and mark processed
+            not_found_items.append({
+                'rom_info': api_result['rom_info'],
+                'error': api_result['error']
+            })
+            self.work_queue.mark_processed(work_item)
+        
+        elif api_result['category'] == 'retryable':
+            # Retry with higher priority
+            self.work_queue.retry_failed(work_item, api_result['error'])
+        
+        elif api_result['category'] == 'success':
+            game_info = api_result.get('game_info')
+            rom_info = api_result['rom_info']
+            
+            if not game_info:
+                # No game info - mark as unmatched
+                system_name = system.name
+                if system_name not in self.unmatched_roms:
+                    self.unmatched_roms[system_name] = []
+                self.unmatched_roms[system_name].append(rom_info.filename)
+                
+                result = ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=False,
+                    error="No game info found from API"
+                )
+                results.append(result)
+                self.work_queue.mark_processed(work_item)
+            else:
+                # Download media in parallel
+                media_paths, media_count = self._download_media_parallel(
+                    system=system,
+                    rom_info=rom_info,
+                    game_info=game_info,
+                    media_types=media_types,
+                    preferred_regions=preferred_regions
+                )
+                
+                # Update performance monitor
+                if self.performance_monitor:
+                    self.performance_monitor.record_rom_processed()
+                
+                result = ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=True,
+                    api_id=str(game_info.get('id', '')),
+                    media_downloaded=media_count,
+                    game_info=game_info,
+                    media_paths=media_paths
+                )
+                results.append(result)
+                self.work_queue.mark_processed(work_item)
+        
+        else:
+            # Other categories - log and mark processed
+            rom_info = api_result['rom_info']
+            logger.warning(f"Non-retryable error for {rom_info.filename}: {api_result.get('error', 'unknown')}")
+            result = ScrapingResult(
+                rom_path=rom_info.path,
+                success=False,
+                error=api_result.get('error', 'Unknown error')
+            )
+            results.append(result)
+            self.work_queue.mark_processed(work_item)
 

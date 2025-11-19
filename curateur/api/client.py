@@ -75,6 +75,9 @@ class ScreenScraperClient:
         
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
+        
+        # Store user limits from API (maxthreads, etc.)
+        self._user_limits: Optional[Dict[str, Any]] = None
     
     def _build_redacted_url(self, url: str, params: Dict[str, Any]) -> str:
         """Build URL with credentials redacted for logging."""
@@ -245,9 +248,12 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Update rate limits from first response (already handled by throttle_manager initialization)
+        # Extract and store user limits from first response
         if not self._rate_limits_initialized:
+            self._user_limits = parse_user_info(root)
             self._rate_limits_initialized = True
+            if self._user_limits:
+                logger.info(f"API user limits detected: {self._user_limits}")
         
         # Parse game info
         try:
@@ -423,3 +429,27 @@ class ScreenScraperClient:
             endpoint.value: self.throttle_manager.get_stats(endpoint.value)
             for endpoint in APIEndpoint
         }
+    
+    def get_user_limits(self) -> Optional[Dict[str, Any]]:
+        """
+        Get API-provided user limits (maxthreads, maxrequestspermin, etc.).
+        
+        This information is only available after the first successful API call.
+        
+        Returns:
+            Dictionary with user limits from API, or None if not yet initialized
+            Expected keys: maxthreads, maxrequestspermin, maxrequestsperday, requeststoday
+        """
+        return self._user_limits
+    
+    def get_user_limits(self) -> Optional[Dict[str, Any]]:
+        """
+        Get API-provided user limits (maxthreads, maxrequestspermin, etc.).
+        
+        This information is only available after the first successful API call.
+        
+        Returns:
+            Dictionary with user limits from API, or None if not yet initialized
+            Expected keys: maxthreads, maxrequestspermin, maxrequestsperday, requeststoday
+        """
+        return self._user_limits

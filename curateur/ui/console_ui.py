@@ -7,6 +7,7 @@ Provides modern terminal interface with split panels, live updates, and progress
 import logging
 from typing import Optional, Dict, Any
 
+from curateur import __version__
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -98,9 +99,39 @@ class ConsoleUI:
         )
         return layout
     
+    def _initialize_panels(self) -> None:
+        """Initialize all panels with default content"""
+        # Initialize header
+        header_text = Text(f"curateur v{__version__}", style="bold magenta")
+        header_text.append(" | ", style="dim")
+        header_text.append("Initializing...", style="dim")
+        self.layout["header"].update(
+            Panel(header_text, border_style="cyan")
+        )
+        
+        # Initialize main
+        self.layout["main"].update(
+            Panel(Text("Ready to begin processing", style="dim"), 
+                  title="Current Operation", border_style="green")
+        )
+        
+        # Initialize work queue stats
+        self.layout["queue"].update(
+            Panel(Text("Work Queue: Ready", style="dim"), border_style="yellow")
+        )
+        
+        # Initialize footer with default stats
+        self.update_footer(
+            stats={'successful': 0, 'failed': 0, 'skipped': 0},
+            api_quota={'requests_today': 0, 'max_requests_per_day': 0}
+        )
+    
     def start(self) -> None:
         """Start live display"""
         if self.live is None:
+            # Initialize all panels with default content
+            self._initialize_panels()
+            
             self.live = Live(
                 self.layout,
                 console=self.console,
@@ -128,10 +159,14 @@ class ConsoleUI:
         """
         self.current_system = system_name
         
+        # Build header with version prefix
+        header_text = Text(f"curateur v{__version__}", style="bold magenta")
+        header_text.append(" | ", style="dim")
+        
         progress_text = f"System: {system_name.upper()} ({system_num}/{total_systems})"
         percentage = (system_num - 1) / total_systems * 100 if total_systems > 0 else 0
         
-        header_text = Text(progress_text, style="bold cyan")
+        header_text.append(progress_text, style="bold cyan")
         header_text.append(f" — {percentage:.0f}% complete", style="dim")
         
         self.layout["header"].update(
