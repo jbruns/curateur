@@ -174,7 +174,7 @@ class ScreenScraperClient:
             Various API errors
         """
         # Wait for rate limit
-        self.rate_limiter.wait_if_needed()
+        self.throttle_manager.wait_if_needed(APIEndpoint.JEU_INFOS.value)
         
         # Build parameters
         params = {

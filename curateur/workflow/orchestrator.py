@@ -289,34 +289,43 @@ class WorkflowOrchestrator:
             
             # Step 3: Download media
             media_downloader = MediaDownloader(
-                media_root=self.media_directory / system.name,
-                preferred_regions=preferred_regions
+                media_root=self.media_directory,
+                preferred_regions=preferred_regions,
+                enabled_media_types=media_types
             )
             
             media_paths = {}
             media_count = 0
             
-            for media_type in media_types:
-                media_data = game_info.get('media', {}).get(media_type, [])
-                
-                if media_data:
-                    try:
-                        # Get first available media URL
-                        media_url = media_data[0].get('url') if isinstance(media_data, list) else media_data.get('url')
+            try:
+                # Get media dict from game_info and flatten to list
+                media_dict = game_info.get('media', {})
+                if media_dict:
+                    # Convert dict of lists to flat list
+                    media_list = []
+                    for media_type, media_items in media_dict.items():
+                        media_list.extend(media_items)
+                    
+                    if media_list:
+                        download_results = media_downloader.download_media_for_game(
+                            media_list=media_list,
+                            rom_path=str(rom_info.path),
+                            system=system.name
+                        )
                         
-                        if media_url:
-                            media_path = media_downloader.download_media(
-                                media_type=media_type,
-                                media_url=media_url,
-                                game_name=game_info.get('name', rom_info.basename)
-                            )
-                            
-                            if media_path:
-                                media_paths[media_type] = str(media_path)
+                        # Process results
+                        for result in download_results:
+                            if result.success and result.file_path:
+                                media_paths[result.media_type] = result.file_path
                                 media_count += 1
-                    except Exception:
-                        # Log but don't fail the entire ROM for media errors
-                        pass
+                            elif not result.success:
+                                # Log media download failures
+                                logger.warning(
+                                    f"Failed to download {result.media_type} for {rom_info.filename}: {result.error}"
+                                )
+            except Exception:
+                # Log but don't fail the entire ROM for media errors
+                pass
             
             return ScrapingResult(
                 rom_path=rom_path,
@@ -369,7 +378,8 @@ class WorkflowOrchestrator:
                 'file_size': rom_info.file_size,
                 'crc32': rom_info.crc32,
                 'query_filename': rom_info.query_filename,
-                'basename': rom_info.basename
+                'basename': rom_info.basename,
+                'rom_type': rom_info.rom_type.value  # Serialize enum as string
             }
             self.work_queue.add_work(rom_info_dict, 'full_scrape', Priority.NORMAL)
         
@@ -379,9 +389,14 @@ class WorkflowOrchestrator:
             rom_info_dict = work_item.rom_info
             
             # Reconstruct ROMInfo from dict
+            from ..scanner.rom_types import ROMType
             rom_info = ROMInfo(
                 path=Path(rom_info_dict['path']),
+                filename=rom_info_dict['filename'],
+                basename=rom_info_dict['basename'],
+                rom_type=ROMType(rom_info_dict['rom_type']),  # Deserialize enum
                 system=rom_info_dict['system'],
+                query_filename=rom_info_dict['query_filename'],
                 file_size=rom_info_dict['file_size'],
                 crc32=rom_info_dict.get('crc32')
             )
@@ -577,7 +592,7 @@ class WorkflowOrchestrator:
         preferred_regions: List[str]
     ) -> Tuple[dict, int]:
         """
-        Download media files in parallel using ThreadPoolManager.
+        Download media files using MediaDownloader.
         
         Args:
             system: System definition
@@ -590,56 +605,47 @@ class WorkflowOrchestrator:
             Tuple of (media_paths dict, media_count)
         """
         media_downloader = MediaDownloader(
-            media_root=self.media_directory / system.name,
-            preferred_regions=preferred_regions
+            media_root=self.media_directory,
+            preferred_regions=preferred_regions,
+            enabled_media_types=media_types
         )
         
-        # Collect media to download
-        media_batch = []
-        for media_type in media_types:
-            media_data = game_info.get('media', {}).get(media_type, [])
-            
-            if media_data:
-                media_url = media_data[0].get('url') if isinstance(media_data, list) else media_data.get('url')
-                
-                if media_url:
-                    media_batch.append({
-                        'media_type': media_type,
-                        'media_url': media_url,
-                        'game_name': game_info.get('name', rom_info.basename)
-                    })
-        
-        if not media_batch:
-            return {}, 0
-        
-        # Define download function for parallel execution
-        def download_single_media(media_item: dict) -> Optional[Path]:
-            """Wrapper for parallel media downloads"""
-            try:
-                media_path = media_downloader.download_media(
-                    media_type=media_item['media_type'],
-                    media_url=media_item['media_url'],
-                    game_name=media_item['game_name']
-                )
-                
-                if media_path and self.performance_monitor:
-                    self.performance_monitor.record_download()
-                
-                return media_path
-            except Exception as e:
-                logger.debug(f"Media download failed: {e}")
-                return None
-        
-        # Download media in parallel
         media_paths = {}
         media_count = 0
         
-        for media_item, download_result in self.thread_manager.submit_download_batch(
-            download_single_media, media_batch
-        ):
-            if 'error' not in download_result and download_result:
-                media_paths[media_item['media_type']] = str(download_result)
-                media_count += 1
+        try:
+            # Get media dict from game_info and flatten to list
+            media_dict = game_info.get('media', {})
+            if media_dict:
+                # Convert dict of lists to flat list
+                # media_dict format: {'box-2D': [{...}, {...}], 'ss': [{...}]}
+                # Convert to: [{...}, {...}, {...}]
+                media_list = []
+                for media_type, media_items in media_dict.items():
+                    media_list.extend(media_items)
+                
+                if media_list:
+                    download_results = media_downloader.download_media_for_game(
+                        media_list=media_list,
+                        rom_path=str(rom_info.path),
+                        system=system.name
+                    )
+                    
+                    # Process results
+                    for result in download_results:
+                        if result.success and result.file_path:
+                            media_paths[result.media_type] = result.file_path
+                            media_count += 1
+                            
+                            if self.performance_monitor:
+                                self.performance_monitor.record_download()
+                        elif not result.success:
+                            # Log media download failures
+                            logger.warning(
+                                f"Failed to download {result.media_type} for {rom_info.filename}: {result.error}"
+                            )
+        except Exception as e:
+            logger.debug(f"Media download failed: {e}")
         
         return media_paths, media_count
     

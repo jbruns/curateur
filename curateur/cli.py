@@ -365,6 +365,15 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     
     # Process each system
     try:
+        # Convert ES-DE directory names to ScreenScraper media types
+        from curateur.media.media_types import convert_directory_names_to_media_types
+        configured_media = config['scraping'].get('media_types', ['covers', 'screenshots'])
+        media_types_to_scrape = convert_directory_names_to_media_types(configured_media)
+        
+        # Fallback to defaults if no valid media types
+        if not media_types_to_scrape:
+            media_types_to_scrape = ['box-2D', 'ss']
+        
         for system in systems:
             try:
                 # Update UI header
@@ -377,7 +386,7 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 
                 result = orchestrator.scrape_system(
                     system=system,
-                    media_types=config['scraping'].get('media_types', ['box-2D', 'ss']),
+                    media_types=media_types_to_scrape,
                     preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
                     progress_tracker=progress
                 )

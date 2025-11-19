@@ -180,12 +180,17 @@ class MediaDownloader:
             file_format
         )
         
+        # Skip image validation for non-image types (PDFs, videos)
+        validate = media_type not in ['manuel', 'video']
+        
         # Download and validate
-        success, error = self.downloader.download(url, output_path, validate=True)
+        success, error = self.downloader.download(url, output_path, validate=validate)
         
         if success:
-            # Get dimensions
-            dimensions = self.downloader.get_image_dimensions(output_path)
+            # Get dimensions (only for images)
+            dimensions = None
+            if media_type not in ['manuel', 'video']:
+                dimensions = self.downloader.get_image_dimensions(output_path)
             
             return DownloadResult(
                 media_type=media_type,

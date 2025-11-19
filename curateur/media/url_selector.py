@@ -35,11 +35,12 @@ class MediaURLSelector:
         Args:
             preferred_regions: Region priority list (e.g., ['us', 'wor', 'eu', 'jp'])
             enabled_media_types: Media types to download (e.g., ['box-2D', 'ss'])
-                                If None, uses all supported MVP types
+                                If None, uses all supported media types
         """
         self.preferred_regions = preferred_regions or ['us', 'wor', 'eu', 'jp']
         self.enabled_media_types = enabled_media_types or [
-            'box-2D', 'ss', 'sstitle', 'screenmarquee'
+            'box-2D', 'ss', 'sstitle', 'screenmarquee', 'box-3D',
+            'box-2D-back', 'fanart', 'manuel', 'support-2D', 'video', 'mixrbv2'
         ]
     
     def select_media_urls(
