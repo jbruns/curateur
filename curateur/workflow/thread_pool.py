@@ -236,6 +236,69 @@ class ThreadPoolManager:
                 logger.error(f"API call failed for {rom}: {e}")
                 yield (rom, {'error': str(e)})
     
+    def submit_rom_batch(
+        self,
+        rom_processor: Callable,
+        rom_batch: list,
+        operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
+    ) -> Iterator[Tuple[Any, Any]]:
+        """
+        Submit batch of ROMs for end-to-end processing (hash -> API -> download -> verify)
+        
+        Each ROM is processed completely by a single thread. The operation_callback
+        is invoked for each processing stage to update UI.
+        
+        Args:
+            rom_processor: Function to call for each ROM (signature: func(rom, callback) -> result)
+            rom_batch: List of ROM info dicts
+            operation_callback: Optional callback for operation updates
+                                Signature: callback(thread_name, rom_name, operation, details, progress_pct)
+        
+        Yields:
+            Tuple of (rom, result) as they complete
+            If error occurs, result will be dict with 'error' key
+        
+        Example:
+            def process_rom(rom, callback):
+                # callback will be called at each stage: hashing, API, downloading, verifying
+                return orchestrator.scrape_rom(rom, callback)
+            
+            for rom, result in manager.submit_rom_batch(process_rom, roms, ui_callback):
+                if 'error' in result:
+                    logger.error(f"Failed: {rom['filename']}")
+                else:
+                    logger.info(f"Completed: {rom['filename']}")
+        """
+        if not self._initialized:
+            self.initialize_pools()
+        
+        if not self.api_pool:
+            # Fallback to sequential processing
+            logger.warning("API pool not initialized, processing ROMs sequentially")
+            for rom in rom_batch:
+                try:
+                    result = rom_processor(rom, operation_callback)
+                    yield (rom, result)
+                except Exception as e:
+                    yield (rom, {'error': str(e)})
+            return
+        
+        # Submit all tasks
+        futures = {}
+        for rom in rom_batch:
+            future = self.api_pool.submit(rom_processor, rom, operation_callback)
+            futures[future] = rom
+        
+        # Yield results as they complete
+        for future in as_completed(futures):
+            rom = futures[future]
+            try:
+                result = future.result()
+                yield (rom, result)
+            except Exception as e:
+                logger.error(f"ROM processing failed for {rom}: {e}")
+                yield (rom, {'error': str(e)})
+    
     def submit_download_batch(
         self,
         download_func: Callable,

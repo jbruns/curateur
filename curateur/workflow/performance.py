@@ -7,8 +7,9 @@ Tracks scraping performance and calculates ETA.
 import logging
 import time
 import psutil
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Deque
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ class PerformanceMetrics:
     # Derived
     percent_complete: float = 0.0
     eta_seconds: float = 0.0
+    
+    # Averages (new for UI)
+    avg_api_time: float = 0.0  # Average API call duration in seconds
+    avg_rom_time: float = 0.0  # Average total ROM processing time in seconds
     
 
 class PerformanceMonitor:
@@ -82,18 +87,69 @@ class PerformanceMonitor:
         
         # Process handle for resource monitoring
         self.process = psutil.Process()
+        
+        # Rolling averages with outlier exclusion
+        self.api_times: Deque[float] = deque(maxlen=50)  # Last 50 API call durations
+        self.rom_times: Deque[float] = deque(maxlen=50)  # Last 50 total ROM processing times
+        
+        # ETA caching to avoid jitter
+        self.eta_cache: Optional[float] = None
+        self.eta_last_calculated_at: int = 0  # ROM count when ETA was last calculated
+        self.eta_recalc_interval: int = 10  # Recalculate ETA every N ROMs
     
     def record_rom_processed(self) -> None:
         """Record a ROM as processed"""
         self.roms_processed += 1
     
-    def record_api_call(self) -> None:
-        """Record an API call"""
+    def record_api_call(self, duration: Optional[float] = None) -> None:
+        """
+        Record an API call
+        
+        Args:
+            duration: Optional API call duration in seconds for averaging
+        """
         self.api_calls += 1
+        if duration is not None and duration > 0:
+            self.api_times.append(duration)
+    
+    def record_rom_processing(self, duration: Optional[float] = None) -> None:
+        """
+        Record a complete ROM processing operation
+        
+        Args:
+            duration: Optional total ROM processing time in seconds for averaging
+        """
+        self.roms_processed += 1
+        if duration is not None and duration > 0:
+            self.rom_times.append(duration)
     
     def record_download(self) -> None:
         """Record a media download"""
         self.downloads += 1
+    
+    def _calculate_average_with_outlier_exclusion(self, values: Deque[float]) -> float:
+        """
+        Calculate average excluding top and bottom 10% outliers
+        
+        Args:
+            values: Deque of timing values
+            
+        Returns:
+            Average of middle 80%, or 0.0 if insufficient data
+        """
+        if len(values) < 5:  # Need at least 5 samples for meaningful outlier exclusion
+            return sum(values) / len(values) if values else 0.0
+        
+        # Sort values to identify outliers
+        sorted_values = sorted(values)
+        
+        # Calculate how many to exclude from each end (10%)
+        exclude_count = max(1, len(sorted_values) // 10)
+        
+        # Take middle 80%
+        middle_values = sorted_values[exclude_count:-exclude_count]
+        
+        return sum(middle_values) / len(middle_values) if middle_values else 0.0
     
     def get_metrics(self) -> PerformanceMetrics:
         """
@@ -117,13 +173,29 @@ class PerformanceMonitor:
             else 0.0
         )
         
-        # Calculate ETA
+        # Calculate rolling averages with outlier exclusion
+        avg_api_time = self._calculate_average_with_outlier_exclusion(self.api_times)
+        avg_rom_time = self._calculate_average_with_outlier_exclusion(self.rom_times)
+        
+        # Calculate ETA with caching to reduce jitter
         remaining_roms = self.total_roms - self.roms_processed
-        eta = (
-            remaining_roms / roms_per_sec
-            if roms_per_sec > 0 and remaining_roms > 0
-            else 0.0
-        )
+        
+        # Recalculate ETA every N ROMs
+        if (
+            self.eta_cache is None
+            or self.roms_processed - self.eta_last_calculated_at >= self.eta_recalc_interval
+        ):
+            if avg_rom_time > 0 and remaining_roms > 0:
+                self.eta_cache = remaining_roms * avg_rom_time
+            elif roms_per_sec > 0 and remaining_roms > 0:
+                # Fallback to simple rate-based calculation if no timing samples
+                self.eta_cache = remaining_roms / roms_per_sec
+            else:
+                self.eta_cache = 0.0
+            
+            self.eta_last_calculated_at = self.roms_processed
+        
+        eta = self.eta_cache if self.eta_cache is not None else 0.0
         
         # Get resource usage
         memory_mb = self.process.memory_info().rss / 1024 / 1024
@@ -142,7 +214,9 @@ class PerformanceMonitor:
             memory_mb=memory_mb,
             cpu_percent=cpu_percent,
             percent_complete=percent,
-            eta_seconds=eta
+            eta_seconds=eta,
+            avg_api_time=avg_api_time,
+            avg_rom_time=avg_rom_time
         )
     
     def log_metrics(self) -> None:

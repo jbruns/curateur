@@ -30,7 +30,14 @@ class ROMInfo:
     # Identification data for API queries
     query_filename: str             # Filename to send to API
     file_size: int                  # File size in bytes
-    crc32: Optional[str] = None     # CRC32 hash (uppercase hex, or None if skipped)
+    hash_type: str = "crc32"        # Hash algorithm used (default: crc32)
+    hash_value: Optional[str] = None  # Hash value (uppercase hex, or None if skipped)
+    
+    # Deprecated: kept for backward compatibility
+    @property
+    def crc32(self) -> Optional[str]:
+        """Backward compatibility: use hash_value instead."""
+        return self.hash_value if self.hash_type == "crc32" else None
     
     # M3U-specific data
     disc_files: Optional[List[Path]] = None  # List of disc files in M3U

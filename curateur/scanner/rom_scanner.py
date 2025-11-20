@@ -163,7 +163,8 @@ def _process_standard_rom(
         system=system.name,
         query_filename=rom_file.name,
         file_size=file_size,
-        crc32=crc32
+        hash_type="crc32",
+        hash_value=crc32
     )
 
 
@@ -196,7 +197,8 @@ def _process_m3u_file(
         system=system.name,
         query_filename=disc1_file.name,
         file_size=file_size,
-        crc32=crc32,
+        hash_type="crc32",
+        hash_value=crc32,
         disc_files=disc_files
     )
 
@@ -229,7 +231,8 @@ def _process_disc_subdirectory(
         system=system.name,
         query_filename=contained_file.name,
         file_size=file_size,
-        crc32=crc32,
+        hash_type="crc32",
+        hash_value=crc32,
         contained_file=contained_file
     )
 

@@ -113,7 +113,7 @@ class ScreenScraperClient:
                 systemeid=systemeid,
                 romnom=rom_info.query_filename,
                 romtaille=rom_info.file_size,
-                crc=rom_info.crc32
+                crc=rom_info.hash_value
             )
         
         # Execute with retry

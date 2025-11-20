@@ -138,9 +138,9 @@ class ImageDownloader:
         response = self.session.get(url, timeout=self.timeout)
         response.raise_for_status()
         
-        # Check content type (allow images, PDFs, and videos)
+        # Check content type (allow images, PDFs, videos, and generic downloads)
         content_type = response.headers.get('Content-Type', '')
-        allowed_types = ['image/', 'application/pdf', 'video/']
+        allowed_types = ['image/', 'application/pdf', 'video/', 'application/force-download', 'application/octet-stream']
         if not any(content_type.startswith(t) for t in allowed_types):
             raise DownloadError(f"Invalid content type: {content_type}")
         

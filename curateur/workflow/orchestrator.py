@@ -10,8 +10,10 @@ Coordinates the complete scraping workflow:
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Callable
 from dataclasses import dataclass
+import threading
+import time
 
 from ..config.es_systems import SystemDefinition
 from ..scanner.rom_scanner import scan_system
@@ -233,7 +235,8 @@ class WorkflowOrchestrator:
         system: SystemDefinition,
         rom_info: ROMInfo,
         media_types: List[str],
-        preferred_regions: List[str]
+        preferred_regions: List[str],
+        operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
     ) -> ScrapingResult:
         """
         Scrape a single ROM.
@@ -243,13 +246,26 @@ class WorkflowOrchestrator:
             rom_info: ROM information from scanner
             media_types: Media types to download
             preferred_regions: Region priority list
+            operation_callback: Optional callback for UI updates
+                                Signature: callback(thread_name, rom_name, operation, details, progress_pct)
             
         Returns:
             ScrapingResult
         """
         rom_path = rom_info.path
+        rom_name = rom_info.filename
+        thread_name = threading.current_thread().name
+        
+        # Helper to emit events
+        def emit(operation: str, details: str, progress: Optional[float] = None):
+            if operation_callback:
+                operation_callback(thread_name, rom_name, operation, details, progress)
         
         try:
+            # Step 1: Hashing (already done in scanner, but emit event for consistency)
+            if rom_info.hash_value:
+                emit("Hashing ROM", f"{rom_info.hash_type.upper()}: {rom_info.hash_value[:8]}...")
+            
             # Step 2: Query API (hash-based lookup)
             if self.dry_run:
                 return ScrapingResult(
@@ -259,23 +275,43 @@ class WorkflowOrchestrator:
                 )
             
             game_info = None
+            api_start = time.time()
             
             # Try hash-based lookup first
+            emit("Fetching metadata", "ScreenScraper API...")
+            
             try:
                 game_info = self.api_client.query_game(rom_info)
+                api_duration = time.time() - api_start
+                
+                # Record API timing
+                if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                    self.performance_monitor.record_api_call(api_duration)
+                
                 logger.debug(f"Hash lookup successful for {rom_info.filename}")
+                emit("Metadata found", f"Game ID: {game_info.get('id', 'N/A')}")
+                
             except SkippableAPIError as e:
                 logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
                 
                 # Try search fallback if enabled
                 if self.enable_search_fallback:
+                    emit("Search fallback", "Trying text search...")
                     logger.info(f"Attempting search fallback for {rom_info.filename}")
                     game_info = self._search_fallback(rom_info, preferred_regions)
                     
                     if game_info:
+                        api_duration = time.time() - api_start
+                        
+                        # Record API timing
+                        if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                            self.performance_monitor.record_api_call(api_duration)
+                        
                         logger.info(f"Search fallback successful for {rom_info.filename}")
+                        emit("Metadata found", f"Game ID: {game_info.get('id', 'N/A')}")
                     else:
                         logger.info(f"Search fallback found no matches for {rom_info.filename}")
+                        emit("No matches", "Game not found in database")
             
             if not game_info:
                 # Track as unmatched
@@ -310,15 +346,26 @@ class WorkflowOrchestrator:
                         media_list.extend(media_items)
                     
                     if media_list:
+                        # Group media by type for progress tracking
+                        media_by_type = {}
+                        for media_item in media_list:
+                            media_type = media_item.get('type', 'unknown')
+                            if media_type not in media_by_type:
+                                media_by_type[media_type] = []
+                            media_by_type[media_type].append(media_item)
+                        
                         download_results = media_downloader.download_media_for_game(
                             media_list=media_list,
                             rom_path=str(rom_info.path),
                             system=system.name
                         )
                         
-                        # Process results
+                        # Process results and emit per-media-type events
                         for result in download_results:
+                            media_type_display = result.media_type.replace('_', ' ').title()
+                            
                             if result.success and result.file_path:
+                                emit("Verifying media", f"{media_type_display}")
                                 media_paths[result.media_type] = result.file_path
                                 media_count += 1
                             elif not result.success:
@@ -326,9 +373,14 @@ class WorkflowOrchestrator:
                                 logger.warning(
                                     f"Failed to download {result.media_type} for {rom_info.filename}: {result.error}"
                                 )
-            except Exception:
+                                emit("Download failed", f"{media_type_display}: {result.error[:30]}")
+            except Exception as e:
                 # Log but don't fail the entire ROM for media errors
-                pass
+                logger.warning(f"Media download error for {rom_info.filename}: {e}")
+                emit("Media error", str(e)[:40])
+            
+            # Final status
+            emit("Complete", f"{media_count} media downloaded")
             
             return ScrapingResult(
                 rom_path=rom_path,
@@ -346,6 +398,116 @@ class WorkflowOrchestrator:
                 success=False,
                 error=str(e)
             )
+    
+    def _create_rom_processor(
+        self,
+        system: SystemDefinition,
+        media_types: List[str],
+        preferred_regions: List[str]
+    ) -> Callable:
+        """
+        Create a ROM processor function for use with ThreadPoolManager.submit_rom_batch
+        
+        Args:
+            system: System definition
+            media_types: Media types to download
+            preferred_regions: Region preference list
+            
+        Returns:
+            Callable that processes a single ROM with optional callback
+        """
+        def process_rom(
+            rom_info: ROMInfo,
+            operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
+        ) -> ScrapingResult:
+            """
+            Process a single ROM end-to-end
+            
+            Args:
+                rom_info: ROM information
+                operation_callback: Optional UI callback for progress updates
+                
+            Returns:
+                ScrapingResult
+            """
+            rom_start_time = time.time()
+            
+            try:
+                # Call the existing _scrape_rom method with callback
+                result = self._scrape_rom(
+                    system=system,
+                    rom_info=rom_info,
+                    media_types=media_types,
+                    preferred_regions=preferred_regions,
+                    operation_callback=operation_callback
+                )
+                
+                # Record total ROM processing time for performance metrics
+                rom_duration = time.time() - rom_start_time
+                if self.performance_monitor:
+                    self.performance_monitor.record_rom_processing(rom_duration)
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"ROM processor error for {rom_info.filename}: {e}")
+                return ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=False,
+                    error=str(e)
+                )
+        
+        return process_rom
+    
+    def _create_ui_callback(self) -> Optional[Callable]:
+        """
+        Create a UI callback for thread operation updates
+        
+        Returns:
+            Callback function or None if no ConsoleUI
+        """
+        if not self.console_ui:
+            return None
+        
+        def ui_callback(
+            thread_name: str,
+            rom_name: str,
+            operation: str,
+            details: str,
+            progress_pct: Optional[float] = None
+        ) -> None:
+            """
+            Bridge operation events to ConsoleUI
+            
+            Args:
+                thread_name: Name of the thread (e.g., "api-1")
+                rom_name: Name of the ROM being processed
+                operation: Operation description (e.g., "Hashing ROM", "Fetching metadata")
+                details: Additional details
+                progress_pct: Optional progress percentage (0.0-100.0)
+            """
+            # Get or assign thread ID
+            thread_id = self.console_ui._get_or_assign_thread_id(thread_name)
+            
+            # Update thread operation
+            self.console_ui.update_thread_operation(
+                thread_id=thread_id,
+                rom_name=rom_name,
+                operation=operation,
+                details=details,
+                progress_pct=progress_pct
+            )
+            
+            # Add to history (with timestamp auto-generated)
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            self.console_ui.add_thread_history(
+                thread_id=thread_id,
+                message=f"{operation}: {details}",
+                timestamp=timestamp
+            )
+        
+        return ui_callback
     
     def _scrape_roms_parallel(
         self,
@@ -372,6 +534,13 @@ class WorkflowOrchestrator:
         not_found_items = []  # Track 404 errors separately
         rom_count = 0
         
+        # Initialize idle threads in UI if available
+        if self.console_ui and self.thread_manager and self.thread_manager.is_initialized():
+            max_threads = self.thread_manager.max_threads
+            for i in range(1, max_threads + 1):
+                thread_id = f"T{i}"
+                self.console_ui.clear_thread_operation(thread_id)
+        
         # Populate work queue with all ROM entries
         for rom_info in rom_entries:
             rom_info_dict = {
@@ -379,7 +548,9 @@ class WorkflowOrchestrator:
                 'path': str(rom_info.path),
                 'system': rom_info.system,
                 'file_size': rom_info.file_size,
-                'crc32': rom_info.crc32,
+                'hash_type': rom_info.hash_type,
+                'hash_value': rom_info.hash_value,
+                'query_filename': rom_info.query_filename,
                 'query_filename': rom_info.query_filename,
                 'basename': rom_info.basename,
                 'rom_type': rom_info.rom_type.value  # Serialize enum as string
@@ -401,7 +572,8 @@ class WorkflowOrchestrator:
                 system=rom_info_dict['system'],
                 query_filename=rom_info_dict['query_filename'],
                 file_size=rom_info_dict['file_size'],
-                crc32=rom_info_dict.get('crc32')
+                hash_type=rom_info_dict.get('hash_type', 'crc32'),
+                hash_value=rom_info_dict.get('hash_value')
             )
             
             try:
@@ -489,43 +661,78 @@ class WorkflowOrchestrator:
         
         # Work queue consumption - use parallel processing if threads available
         if self.thread_manager and self.thread_manager.max_threads > 1:
-            # Parallel batch processing
+            # Parallel batch processing with per-thread UI updates
             logger.info(f"Using parallel processing with {self.thread_manager.max_threads} threads")
+            
+            # Create UI callback and ROM processor
+            ui_callback = self._create_ui_callback()
+            rom_processor = self._create_rom_processor(system, media_types, preferred_regions)
             
             # Process batches of work items
             batch_size = self.thread_manager.max_threads * 2  # Keep threads fed
             
             while not self.work_queue.is_empty():
-                # Get batch of work items
+                # Get batch of work items and extract ROMInfo objects
                 batch = []
+                work_items = []
                 for _ in range(batch_size):
                     work_item = self.work_queue.get_work(timeout=0.01)
                     if work_item:
-                        batch.append(work_item)
+                        work_items.append(work_item)
+                        # Reconstruct ROMInfo from work item
+                        rom_info_dict = work_item.rom_info
+                        from ..scanner.rom_types import ROMType
+                        rom_info = ROMInfo(
+                            path=Path(rom_info_dict['path']),
+                            filename=rom_info_dict['filename'],
+                            basename=rom_info_dict['basename'],
+                            rom_type=ROMType(rom_info_dict['rom_type']),
+                            system=rom_info_dict['system'],
+                            query_filename=rom_info_dict['query_filename'],
+                            file_size=rom_info_dict['file_size'],
+                            hash_type=rom_info_dict.get('hash_type', 'crc32'),
+                            hash_value=rom_info_dict.get('hash_value')
+                        )
+                        batch.append(rom_info)
                     else:
                         break
                 
                 if not batch:
                     break
                 
-                # Process batch in parallel using thread pool
-                for work_item, api_result in self.thread_manager.submit_api_batch(
-                    process_work_item, batch
+                # Process batch with end-to-end ROM processing per thread
+                for rom_info, result in self.thread_manager.submit_rom_batch(
+                    rom_processor, batch, ui_callback
                 ):
                     rom_count += 1
-                    rom_info_dict = work_item.rom_info
                     
-                    # Update UI
+                    # Convert ROMInfo to dict for compatibility
+                    rom_info_dict = {
+                        'filename': rom_info.filename,
+                        'path': str(rom_info.path)
+                    }
+                    
+                    # Update UI (footer and queue stats only - threads update themselves)
                     self._update_ui_progress(
                         rom_info_dict, rom_count, len(rom_entries),
                         results, not_found_items
                     )
                     
-                    # Handle result
-                    self._handle_api_result(
-                        api_result, work_item, system, results, not_found_items,
-                        media_types, preferred_regions
-                    )
+                    # Store result
+                    results.append(result)
+                    
+                    # Track not found items
+                    if not result.success and result.error == "No game info found from API":
+                        not_found_items.append({
+                            'filename': rom_info.filename,
+                            'path': str(rom_info.path)
+                        })
+                    
+                    # Mark work item as processed (find matching work item)
+                    for work_item in work_items:
+                        if work_item.rom_info['filename'] == rom_info.filename:
+                            self.work_queue.mark_processed(work_item.item_id)
+                            break
         else:
             # Sequential processing (single-threaded)
             logger.info("Using sequential (single-threaded) processing")
@@ -851,14 +1058,6 @@ class WorkflowOrchestrator:
         if not self.console_ui:
             return
         
-        self.console_ui.update_main({
-            'rom_name': rom_info_dict['filename'],
-            'rom_num': rom_count,
-            'total_roms': total_roms,
-            'action': 'scraping',
-            'details': 'Fetching metadata...'
-        })
-        
         # Update work queue stats
         queue_stats = self.work_queue.get_stats()
         self.console_ui.update_work_queue_stats(
@@ -869,19 +1068,47 @@ class WorkflowOrchestrator:
             retry_count=sum(item['retry_count'] for item in self.work_queue.get_failed_items())
         )
         
-        # Update footer with current stats
+        # Update footer with current stats and performance metrics
         successful_count = sum(1 for r in results if r.success)
         failed_count = sum(1 for r in results if r.error)
+        
+        # Get performance metrics if available
+        performance_metrics = None
+        if self.performance_monitor:
+            metrics = self.performance_monitor.get_metrics()
+            performance_metrics = {
+                'avg_api_time': metrics.avg_api_time * 1000,  # Convert to milliseconds
+                'avg_rom_time': metrics.avg_rom_time,  # Keep in seconds
+                'eta_seconds': metrics.eta_seconds
+            }
+        
+        # Get thread stats if available
+        thread_stats = None
+        if self.thread_manager and self.thread_manager.is_initialized():
+            stats = self.thread_manager.get_stats()
+            # Count active threads from console UI if available
+            active_count = stats.get('max_threads', 1)
+            if self.console_ui:
+                # Count threads that are not idle
+                active_count = sum(1 for tid, state in self.console_ui.thread_operations.items()
+                                 if state.get('operation') != 'Idle')
+            thread_stats = {
+                'active_threads': active_count,
+                'max_threads': stats.get('max_threads', 1)
+            }
+        
         self.console_ui.update_footer(
             stats={
                 'successful': successful_count,
                 'failed': failed_count,
-                'skipped': rom_count - successful_count - failed_count
+                'skipped': total_roms - successful_count - failed_count
             },
             api_quota={
                 'requests_today': queue_stats.get('processed', 0),
                 'max_requests_per_day': 10000
-            }
+            },
+            thread_stats=thread_stats,
+            performance_metrics=performance_metrics
         )
     
     def _handle_api_result(
