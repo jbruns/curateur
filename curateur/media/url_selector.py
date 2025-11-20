@@ -115,14 +115,23 @@ class MediaURLSelector:
             
         Returns:
             List of region codes with available media
+            For media types without regions (video, fanart), returns [None] if media exists
         """
         regions = []
+        has_regionless_media = False
         
         for media in media_list:
             if media.get('type') == media_type:
                 region = media.get('region')
                 if region and region not in regions:
                     regions.append(region)
+                elif not region:
+                    # Track that we found media without a region attribute
+                    has_regionless_media = True
+        
+        # For media types without regions, return [None] to indicate media exists
+        if not regions and has_regionless_media:
+            return [None]
         
         return regions
     
