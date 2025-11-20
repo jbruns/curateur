@@ -18,8 +18,9 @@ class ThreadPoolManager:
     
     Features:
     - Respects API-provided maxthreads limit
-    - Separate pools for API and downloads
+    - Single unified worker pool (each worker processes one ROM end-to-end)
     - Dynamic pool sizing based on API quota
+    - Active work tracking for UI display
     - Graceful degradation to single-threaded
     
     Example:
@@ -28,13 +29,9 @@ class ThreadPoolManager:
         # Initialize based on API limits
         manager.initialize_pools({'maxthreads': 4})
         
-        # Submit API batch
-        for rom, result in manager.submit_api_batch(scrape_func, rom_list):
-            process_result(rom, result)
-        
-        # Submit download batch
-        for media, result in manager.submit_download_batch(download_func, media_list):
-            handle_download(media, result)
+        # Submit ROM batch (each worker does full ROM processing)
+        for rom, result in manager.submit_rom_batch(process_func, rom_list, ui_callback):
+            handle_result(rom, result)
         
         # Clean shutdown
         manager.shutdown()
@@ -48,66 +45,67 @@ class ThreadPoolManager:
             config: Configuration dictionary
         """
         self.config = config
-        self.api_pool: Optional[ThreadPoolExecutor] = None
-        self.download_pool: Optional[ThreadPoolExecutor] = None
+        self.worker_pool: Optional[ThreadPoolExecutor] = None
         self.max_threads = 1  # Conservative default
         self.lock = threading.Lock()
         self._initialized = False
+        
+        # Work tracking for UI display
+        self._active_work_count = 0
+        self._shutdown_flag = False
+        
+        # Pending rescale tracking
+        self._pending_rescale = False
+        self._pending_max_threads = 1
     
     def initialize_pools(self, api_provided_limits: Optional[Dict[str, Any]] = None) -> None:
         """
-        Initialize thread pools based on API limits
+        Initialize thread pool based on API limits
         
         Args:
             api_provided_limits: dict with 'maxthreads' from API response
         """
         with self.lock:
             if self._initialized:
-                logger.debug("Thread pools already initialized")
+                logger.debug("Thread pool already initialized")
                 return
             
-            # Determine max threads
+            # Determine max threads (respects ScreenScraper's maxthreads limit)
             self.max_threads = self._determine_max_threads(api_provided_limits)
             
-            # Create pools (API uses fewer threads than downloads)
-            api_workers = max(1, self.max_threads // 2)
-            download_workers = self.max_threads
-            
-            self.api_pool = ThreadPoolExecutor(
-                max_workers=api_workers,
-                thread_name_prefix="api"
-            )
-            self.download_pool = ThreadPoolExecutor(
-                max_workers=download_workers,
-                thread_name_prefix="download"
+            # Create single unified worker pool
+            # Each worker handles one ROM end-to-end (metadata + media downloads)
+            self.worker_pool = ThreadPoolExecutor(
+                max_workers=self.max_threads,
+                thread_name_prefix="worker"
             )
             
             self._initialized = True
             
             logger.info(
-                f"Thread pools initialized: API={api_workers}, Download={download_workers}"
+                f"Thread pool initialized: {self.max_threads} workers (ScreenScraper limit)"
             )
     
     def rescale_pools(self, api_provided_limits: Dict[str, Any]) -> bool:
         """
-        Dynamically rescale thread pools based on updated API limits.
+        Dynamically rescale thread pool based on updated API limits.
         
         This allows scaling up after the first API response reveals actual maxthreads.
-        The pools are recreated with new limits. Any in-flight work will complete
-        before the pools are shut down.
+        The pool is recreated with new limits. Any in-flight work will complete
+        before the pool is shut down.
         
         Args:
             api_provided_limits: dict with 'maxthreads' from API response
         
         Returns:
-            True if pools were rescaled, False if no change needed
+            True if pool was rescaled, False if no change needed
         """
         new_max_threads = self._determine_max_threads(api_provided_limits)
         
         with self.lock:
             if not self._initialized:
                 # Not yet initialized, just initialize with new limits
-                logger.info("Thread pools not yet initialized, initializing now")
+                logger.info(f"Thread pool not yet initialized, initializing with {new_max_threads} threads")
                 self.initialize_pools(api_provided_limits)
                 return True
             
@@ -116,38 +114,85 @@ class ThreadPoolManager:
                 logger.debug(f"Thread count unchanged at {self.max_threads}")
                 return False
             
+            # Check if we're being called from within a worker thread
+            current_thread = threading.current_thread()
+            if current_thread.name.startswith('worker'):
+                # Cannot rescale from within a worker thread - defer it
+                logger.info(
+                    f"Deferring thread pool rescale: {self.max_threads} -> {new_max_threads} workers "
+                    f"(called from worker thread {current_thread.name})"
+                )
+                self._pending_rescale = True
+                self._pending_max_threads = new_max_threads
+                return False  # Not rescaled yet, but will be
+            
+            # Safe to rescale from main thread
             logger.info(
-                f"Rescaling thread pools: {self.max_threads} -> {new_max_threads} threads"
+                f"Rescaling thread pool: {self.max_threads} -> {new_max_threads} workers"
             )
             
-            # Shut down existing pools (wait for in-flight work)
-            if self.api_pool:
-                self.api_pool.shutdown(wait=True)
-            if self.download_pool:
-                self.download_pool.shutdown(wait=True)
+            # Shut down existing pool (wait for in-flight work)
+            if self.worker_pool:
+                self.worker_pool.shutdown(wait=True)
             
             # Update max threads
             self.max_threads = new_max_threads
             
-            # Recreate pools with new limits
-            api_workers = max(1, self.max_threads // 2)
-            download_workers = self.max_threads
+            # Recreate pool with new limit
+            self.worker_pool = ThreadPoolExecutor(
+                max_workers=self.max_threads,
+                thread_name_prefix="worker"
+            )
             
-            self.api_pool = ThreadPoolExecutor(
-                max_workers=api_workers,
-                thread_name_prefix="api"
-            )
-            self.download_pool = ThreadPoolExecutor(
-                max_workers=download_workers,
-                thread_name_prefix="download"
-            )
+            # Reset active work count after rescale
+            self._active_work_count = 0
             
             logger.info(
-                f"Thread pools rescaled: API={api_workers}, Download={download_workers}"
+                f"Thread pool rescaled: {self.max_threads} workers"
+            )
+            return True
+    
+    def apply_pending_rescale(self) -> bool:
+        """
+        Apply a pending rescale that was deferred from a worker thread.
+        Should be called from the main thread between batches.
+        
+        Returns:
+            True if rescale was applied, False if no pending rescale
+        """
+        with self.lock:
+            if not self._pending_rescale:
+                return False
+            
+            new_max_threads = self._pending_max_threads
+            logger.info(
+                f"Applying deferred thread pool rescale: {self.max_threads} -> {new_max_threads} workers"
+            )
+            
+            # Shut down existing pool (safe - we're not in a worker thread)
+            if self.worker_pool:
+                self.worker_pool.shutdown(wait=True)
+            
+            # Update max threads
+            self.max_threads = new_max_threads
+            
+            # Recreate pool with new limit
+            self.worker_pool = ThreadPoolExecutor(
+                max_workers=self.max_threads,
+                thread_name_prefix="worker"
+            )
+            
+            # Reset active work count after rescale
+            self._active_work_count = 0
+            
+            # Clear pending flag
+            self._pending_rescale = False
+            
+            logger.info(
+                f"Thread pool rescaled: {self.max_threads} workers"
             )
             return True
 
-    
     def _determine_max_threads(self, api_limits: Optional[Dict[str, Any]]) -> int:
         """
         Determine max threads considering:
@@ -167,74 +212,23 @@ class ThreadPoolManager:
         
         if override.is_enabled():
             limits = override.get_effective_limits(api_limits)
+            logger.info(f"Using override maxthreads: {limits.max_threads}")
             return limits.max_threads
         
         # Use API-provided limit
         if api_limits and 'maxthreads' in api_limits:
-            return int(api_limits['maxthreads'])
+            threads = int(api_limits['maxthreads'])
+            logger.info(f"Using API-provided maxthreads: {threads}")
+            return threads
         
         # Fall back to config or default
         config_threads = self.config.get('scraping', {}).get('max_threads', 0)
         if config_threads > 0:
+            logger.info(f"Using config maxthreads: {config_threads}")
             return config_threads
         
+        logger.info("Using default maxthreads: 1")
         return 1  # Conservative default
-    
-    def submit_api_batch(
-        self,
-        api_func: Callable,
-        rom_batch: list
-    ) -> Iterator[Tuple[Any, Any]]:
-        """
-        Submit batch of API requests
-        
-        Args:
-            api_func: Function to call for each ROM (signature: func(rom) -> result)
-            rom_batch: List of ROM info dicts
-        
-        Yields:
-            Tuple of (rom, result) as they complete
-            If error occurs, result will be dict with 'error' key
-        
-        Example:
-            def scrape_rom(rom):
-                return api_client.get_game_info(rom)
-            
-            for rom, result in manager.submit_api_batch(scrape_rom, roms):
-                if 'error' in result:
-                    logger.error(f"Failed: {rom['filename']} - {result['error']}")
-                else:
-                    process_result(rom, result)
-        """
-        if not self._initialized:
-            self.initialize_pools()
-        
-        if not self.api_pool:
-            # Fallback to sequential processing
-            logger.warning("API pool not initialized, processing sequentially")
-            for rom in rom_batch:
-                try:
-                    result = api_func(rom)
-                    yield (rom, result)
-                except Exception as e:
-                    yield (rom, {'error': str(e)})
-            return
-        
-        # Submit all tasks
-        futures = {}
-        for rom in rom_batch:
-            future = self.api_pool.submit(api_func, rom)
-            futures[future] = rom
-        
-        # Yield results as they complete
-        for future in as_completed(futures):
-            rom = futures[future]
-            try:
-                result = future.result()
-                yield (rom, result)
-            except Exception as e:
-                logger.error(f"API call failed for {rom}: {e}")
-                yield (rom, {'error': str(e)})
     
     def submit_rom_batch(
         self,
@@ -245,7 +239,7 @@ class ThreadPoolManager:
         """
         Submit batch of ROMs for end-to-end processing (hash -> API -> download -> verify)
         
-        Each ROM is processed completely by a single thread. The operation_callback
+        Each ROM is processed completely by a single worker thread. The operation_callback
         is invoked for each processing stage to update UI.
         
         Args:
@@ -272,9 +266,9 @@ class ThreadPoolManager:
         if not self._initialized:
             self.initialize_pools()
         
-        if not self.api_pool:
+        if not self.worker_pool:
             # Fallback to sequential processing
-            logger.warning("API pool not initialized, processing ROMs sequentially")
+            logger.warning("Worker pool not initialized, processing ROMs sequentially")
             for rom in rom_batch:
                 try:
                     result = rom_processor(rom, operation_callback)
@@ -283,13 +277,18 @@ class ThreadPoolManager:
                     yield (rom, {'error': str(e)})
             return
         
-        # Submit all tasks
+        # Submit all tasks with work tracking
         futures = {}
         for rom in rom_batch:
-            future = self.api_pool.submit(rom_processor, rom, operation_callback)
+            future = self.worker_pool.submit(rom_processor, rom, operation_callback)
             futures[future] = rom
         
-        # Yield results as they complete
+        # Update active count to total submitted futures
+        with self.lock:
+            self._active_work_count = len(futures)
+        
+        # Yield results as they complete and track remaining work
+        completed = 0
         for future in as_completed(futures):
             rom = futures[future]
             try:
@@ -298,97 +297,48 @@ class ThreadPoolManager:
             except Exception as e:
                 logger.error(f"ROM processing failed for {rom}: {e}")
                 yield (rom, {'error': str(e)})
-    
-    def submit_download_batch(
-        self,
-        download_func: Callable,
-        media_batch: list
-    ) -> Iterator[Tuple[Any, Any]]:
-        """
-        Submit batch of media downloads
-        
-        Args:
-            download_func: Function to call for each media (signature: func(media) -> result)
-            media_batch: List of media info dicts
-        
-        Yields:
-            Tuple of (media, result) as they complete
-            If error occurs, result will be dict with 'error' key
-        
-        Example:
-            def download_media(media):
-                return downloader.download(media['url'], media['path'])
-            
-            for media, result in manager.submit_download_batch(download_media, media_list):
-                if 'error' in result:
-                    logger.error(f"Download failed: {media['type']} - {result['error']}")
-                else:
-                    verify_media(media, result)
-        """
-        if not self._initialized:
-            self.initialize_pools()
-        
-        if not self.download_pool:
-            # Fallback to sequential processing
-            logger.warning("Download pool not initialized, processing sequentially")
-            for media in media_batch:
-                try:
-                    result = download_func(media)
-                    yield (media, result)
-                except Exception as e:
-                    yield (media, {'error': str(e)})
-            return
-        
-        # Submit all tasks
-        futures = {}
-        for media in media_batch:
-            future = self.download_pool.submit(download_func, media)
-            futures[future] = media
-        
-        # Yield results as they complete
-        for future in as_completed(futures):
-            media = futures[future]
-            try:
-                result = future.result()
-                yield (media, result)
-            except Exception as e:
-                logger.error(f"Download failed for {media}: {e}")
-                yield (media, {'error': str(e)})
+            finally:
+                # Update counter to reflect remaining work
+                completed += 1
+                with self.lock:
+                    if self._shutdown_flag:
+                        self._active_work_count = 0
+                    else:
+                        self._active_work_count = len(futures) - completed
     
     def shutdown(self, wait: bool = True) -> None:
         """
-        Gracefully shutdown all pools
+        Gracefully shutdown worker pool
         
         Args:
             wait: If True, wait for running tasks to complete
         """
         with self.lock:
-            if self.api_pool:
-                logger.debug("Shutting down API pool...")
-                self.api_pool.shutdown(wait=wait)
-                self.api_pool = None
+            # Set shutdown flag to immediately zero active work counter
+            self._shutdown_flag = True
+            self._active_work_count = 0
             
-            if self.download_pool:
-                logger.debug("Shutting down download pool...")
-                self.download_pool.shutdown(wait=wait)
-                self.download_pool = None
+            if self.worker_pool:
+                logger.debug("Shutting down worker pool...")
+                self.worker_pool.shutdown(wait=wait)
+                self.worker_pool = None
             
             self._initialized = False
-            logger.info("Thread pools shut down")
+            logger.info("Thread pool shut down")
     
     def get_stats(self) -> dict:
         """
         Get thread pool statistics
         
         Returns:
-            Dictionary with pool statistics
+            Dictionary with pool statistics including active workers
         """
-        return {
-            'max_threads': self.max_threads,
-            'api_pool_initialized': self.api_pool is not None,
-            'download_pool_initialized': self.download_pool is not None,
-            'initialized': self._initialized
-        }
+        with self.lock:
+            return {
+                'active_threads': self._active_work_count,
+                'max_threads': self.max_threads,
+                'initialized': self._initialized
+            }
     
     def is_initialized(self) -> bool:
         """

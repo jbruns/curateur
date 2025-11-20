@@ -206,7 +206,12 @@ def retry_with_backoff(
                 if attempt < max_attempts:
                     print(f"  ⚠ {context}: {exception}")
                     print(f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})...")
-                    time.sleep(delay)
+                    # Sleep in small chunks to keep UI responsive
+                    remaining = delay
+                    while remaining > 0:
+                        chunk = min(remaining, 0.1)  # 100ms chunks
+                        time.sleep(chunk)
+                        remaining -= chunk
                     delay *= backoff_factor
                 else:
                     print(f"  ✗ {context}: Failed after {max_attempts} attempts")

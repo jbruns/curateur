@@ -103,7 +103,12 @@ class ThrottleManager:
                         f"Rate limit backoff for {endpoint}: "
                         f"waiting {wait_time:.1f}s"
                     )
-                    time.sleep(wait_time)
+                    # Sleep in small chunks to keep UI responsive
+                    remaining = wait_time
+                    while remaining > 0:
+                        chunk = min(remaining, 0.1)  # 100ms chunks
+                        time.sleep(chunk)
+                        remaining -= chunk
                     return wait_time
                 else:
                     # Backoff period ended
@@ -130,7 +135,12 @@ class ThrottleManager:
                         f"Rate limit throttle for {endpoint}: "
                         f"waiting {wait_time:.1f}s"
                     )
-                    time.sleep(wait_time)
+                    # Sleep in small chunks to keep UI responsive
+                    remaining = wait_time
+                    while remaining > 0:
+                        chunk = min(remaining, 0.1)  # 100ms chunks
+                        time.sleep(chunk)
+                        remaining -= chunk
                     
                     # Clean expired call
                     history.popleft()

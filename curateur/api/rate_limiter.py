@@ -49,7 +49,12 @@ class RateLimiter:
             
             if wait_time > 0:
                 print(f"  ⏳ Rate limit reached, waiting {wait_time:.1f}s...")
-                time.sleep(wait_time)
+                # Sleep in small chunks to keep UI responsive
+                remaining = wait_time
+                while remaining > 0:
+                    chunk = min(remaining, 0.1)  # 100ms chunks
+                    time.sleep(chunk)
+                    remaining -= chunk
                 self.request_count = 0
                 self.minute_start = time.time()
         
@@ -59,7 +64,12 @@ class RateLimiter:
         
         if time_since_last < min_delay:
             sleep_time = min_delay - time_since_last
-            time.sleep(sleep_time)
+            # Sleep in small chunks to keep UI responsive
+            remaining = sleep_time
+            while remaining > 0:
+                chunk = min(remaining, 0.1)  # 100ms chunks
+                time.sleep(chunk)
+                remaining -= chunk
         
         self.last_request_time = time.time()
         self.request_count += 1

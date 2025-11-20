@@ -2,6 +2,7 @@
 
 import logging
 import requests
+import threading
 import time
 from enum import Enum
 from typing import Dict, Any, Optional
@@ -76,8 +77,10 @@ class ScreenScraperClient:
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
         
-        # Store user limits from API (maxthreads, etc.)
+        # Store user limits from API (maxthreads, etc.) with thread-safe access
         self._user_limits: Optional[Dict[str, Any]] = None
+        self._user_limits_lock = threading.Lock()
+        self._user_limits_lock = threading.Lock()
     
     def _build_redacted_url(self, url: str, params: Dict[str, Any]) -> str:
         """Build URL with credentials redacted for logging."""
@@ -248,12 +251,22 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Extract and store user limits from first response
-        if not self._rate_limits_initialized:
-            self._user_limits = parse_user_info(root)
-            self._rate_limits_initialized = True
-            if self._user_limits:
-                logger.info(f"API user limits detected: {self._user_limits}")
+        # Extract and store user limits from response (thread-safe with monotonic updates)
+        new_user_info = parse_user_info(root)
+        if new_user_info:
+            with self._user_limits_lock:
+                # First time initialization
+                if self._user_limits is None:
+                    self._user_limits = new_user_info
+                    self._rate_limits_initialized = True
+                    logger.info(f"API user limits detected: {self._user_limits}")
+                # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
+                elif 'requeststoday' in new_user_info:
+                    new_requests = new_user_info.get('requeststoday', 0)
+                    old_requests = self._user_limits.get('requeststoday', 0)
+                    if new_requests > old_requests:
+                        self._user_limits = new_user_info
+                        logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
         
         # Parse game info
         try:
@@ -405,9 +418,22 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Update rate limits from first response (already handled by throttle_manager initialization)
-        if not self._rate_limits_initialized:
-            self._rate_limits_initialized = True
+        # Extract and store user limits from response (thread-safe with monotonic updates)
+        new_user_info = parse_user_info(root)
+        if new_user_info:
+            with self._user_limits_lock:
+                # First time initialization
+                if self._user_limits is None:
+                    self._user_limits = new_user_info
+                    self._rate_limits_initialized = True
+                    logger.info(f"API user limits detected: {self._user_limits}")
+                # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
+                elif 'requeststoday' in new_user_info:
+                    new_requests = new_user_info.get('requeststoday', 0)
+                    old_requests = self._user_limits.get('requeststoday', 0)
+                    if new_requests > old_requests:
+                        self._user_limits = new_user_info
+                        logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
         
         # Parse search results
         try:

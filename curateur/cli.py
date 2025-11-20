@@ -5,6 +5,7 @@ import logging
 import argparse
 from pathlib import Path
 from typing import Optional
+from rich.logging import RichHandler
 
 logger = logging.getLogger(__name__)
 
@@ -127,11 +128,17 @@ def _setup_logging(config: dict) -> None:
     # Configure root logger
     handlers = []
     
-    # Console handler
+    # Console handler - use RichHandler to integrate with Rich UI
     if logging_config.get('console', True):
-        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler = RichHandler(
+            show_time=False,  # Rich UI handles time display
+            show_path=False,  # Cleaner output
+            markup=True,
+            rich_tracebacks=True,
+            tracebacks_show_locals=False
+        )
         console_handler.setLevel(level)
-        formatter = logging.Formatter('%(levelname)s: %(message)s')
+        formatter = logging.Formatter('%(message)s')  # Simplified for Rich
         console_handler.setFormatter(formatter)
         handlers.append(console_handler)
     

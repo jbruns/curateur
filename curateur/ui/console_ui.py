@@ -147,7 +147,7 @@ class ConsoleUI:
             self.live = Live(
                 self.layout,
                 console=self.console,
-                refresh_per_second=4,
+                refresh_per_second=30,
                 screen=False
             )
             self.live.start()
@@ -172,6 +172,7 @@ class ConsoleUI:
         """
         if thread_name not in self.thread_id_map:
             self.thread_id_map[thread_name] = self.next_thread_id
+            logger.debug(f"Assigned thread_id={self.next_thread_id} to thread_name='{thread_name}'")
             self.next_thread_id += 1
             
             # Initialize thread state
@@ -242,16 +243,17 @@ class ConsoleUI:
             details: Operation details text
             progress_pct: Optional progress percentage (0-100) for downloads
         """
-        # Check 100ms throttling
+        # Check 10ms throttling (100 updates/sec max per thread)
         now = time.time()
         if thread_id in self.last_ui_update:
-            if now - self.last_ui_update[thread_id] < 0.1:
+            if now - self.last_ui_update[thread_id] < 0.01:
                 return  # Skip this update
         
         self.last_ui_update[thread_id] = now
         
         # Initialize if needed
         if thread_id not in self.thread_operations:
+            logger.debug(f"Initializing thread display for thread_id={thread_id}")
             self.thread_operations[thread_id] = {
                 'rom_name': '<idle>',
                 'operation': 'idle',
@@ -480,25 +482,30 @@ class ConsoleUI:
         requests_today = api_quota.get('requests_today', 0)
         max_requests = api_quota.get('max_requests_per_day', 0)
         
-        if max_requests > 0:
+        if max_requests > 0 and requests_today >= 0:
             quota_pct = (requests_today / max_requests) * 100
             quota_style = "red" if quota_pct > 90 else "yellow" if quota_pct > 75 else "green"
             quota_text = f"{requests_today}/{max_requests} ({quota_pct:.1f}%)"
-        else:
+        elif requests_today > 0:
+            # Have requests but no max (shouldn't happen with API data)
             quota_style = "dim"
             quota_text = f"{requests_today}"
+        else:
+            # No data yet
+            quota_style = "dim"
+            quota_text = "N/A"
         
         footer_table.add_row(
             "API Quota:", Text(quota_text, style=quota_style),
             "", ""
         )
         
-        # Thread pool stats
-        if thread_stats:
+        # ScreenScraper thread stats
+        if thread_stats and thread_stats.get('max_threads', 0) > 0:
             active_threads = thread_stats.get('active_threads', 0)
             max_threads = thread_stats.get('max_threads', 0)
             footer_table.add_row(
-                "Thread Pool:", Text(f"{active_threads}/{max_threads} workers", style="cyan"),
+                "ScreenScraper:", Text(f"{active_threads} active / {max_threads} max threads", style="cyan"),
                 "", ""
             )
         
@@ -506,9 +513,21 @@ class ConsoleUI:
         if performance_metrics:
             avg_api_time = performance_metrics.get('avg_api_time', 0)
             avg_rom_time = performance_metrics.get('avg_rom_time', 0)
+            
+            # Show N/A if no data collected yet (values will be 0 initially)
+            if avg_api_time > 0:
+                api_time_text = f"{avg_api_time:.0f}ms"
+            else:
+                api_time_text = "N/A"
+            
+            if avg_rom_time > 0:
+                rom_time_text = f"{avg_rom_time:.1f}s"
+            else:
+                rom_time_text = "N/A"
+            
             footer_table.add_row(
-                "Avg API Response:", Text(f"{avg_api_time:.0f}ms", style="yellow"),
-                "Avg ROM Time:", Text(f"{avg_rom_time:.1f}s", style="cyan")
+                "Avg API Response:", Text(api_time_text, style="yellow"),
+                "Avg ROM Time:", Text(rom_time_text, style="cyan")
             )
             
             # ETA

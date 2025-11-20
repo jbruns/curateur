@@ -111,6 +111,7 @@ class PerformanceMonitor:
         self.api_calls += 1
         if duration is not None and duration > 0:
             self.api_times.append(duration)
+            logger.debug(f"Recorded API call duration: {duration:.3f}s ({len(self.api_times)} samples)")
     
     def record_rom_processing(self, duration: Optional[float] = None) -> None:
         """
@@ -122,6 +123,7 @@ class PerformanceMonitor:
         self.roms_processed += 1
         if duration is not None and duration > 0:
             self.rom_times.append(duration)
+            logger.debug(f"Recorded ROM processing duration: {duration:.3f}s ({len(self.rom_times)} samples)")
     
     def record_download(self) -> None:
         """Record a media download"""
@@ -176,6 +178,8 @@ class PerformanceMonitor:
         # Calculate rolling averages with outlier exclusion
         avg_api_time = self._calculate_average_with_outlier_exclusion(self.api_times)
         avg_rom_time = self._calculate_average_with_outlier_exclusion(self.rom_times)
+        
+        logger.debug(f"Performance metrics: API samples={len(self.api_times)}, avg={avg_api_time:.3f}s; ROM samples={len(self.rom_times)}, avg={avg_rom_time:.3f}s")
         
         # Calculate ETA with caching to reduce jitter
         remaining_roms = self.total_roms - self.roms_processed

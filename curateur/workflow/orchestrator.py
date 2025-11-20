@@ -291,6 +291,20 @@ class WorkflowOrchestrator:
                 logger.debug(f"Hash lookup successful for {rom_info.filename}")
                 emit("Metadata found", f"Game ID: {game_info.get('id', 'N/A')}")
                 
+                # After first successful API call, check if we should scale thread pools
+                if not self._thread_pools_scaled and self.thread_manager:
+                    user_limits = self.api_client.get_user_limits()
+                    if user_limits:
+                        logger.info(f"API limits received for rescaling: {user_limits}")
+                        
+                        # Attempt to rescale pools based on actual API limits
+                        scaled = self.thread_manager.rescale_pools(user_limits)
+                        if scaled:
+                            logger.info("Thread pools dynamically scaled based on API limits")
+                        else:
+                            logger.info("Thread pool rescale not needed (already at correct size)")
+                        self._thread_pools_scaled = True
+                
             except SkippableAPIError as e:
                 logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
                 
@@ -498,9 +512,8 @@ class WorkflowOrchestrator:
                 progress_pct=progress_pct
             )
             
-            # Add to history (with timestamp auto-generated)
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            # Add to history (with timestamp as Unix timestamp float)
+            timestamp = time.time()
             self.console_ui.add_thread_history(
                 thread_id=thread_id,
                 message=f"{operation}: {details}",
@@ -538,8 +551,7 @@ class WorkflowOrchestrator:
         if self.console_ui and self.thread_manager and self.thread_manager.is_initialized():
             max_threads = self.thread_manager.max_threads
             for i in range(1, max_threads + 1):
-                thread_id = f"T{i}"
-                self.console_ui.clear_thread_operation(thread_id)
+                self.console_ui.clear_thread_operation(i)  # Pass integer, not string
         
         # Populate work queue with all ROM entries
         for rom_info in rom_entries:
@@ -592,6 +604,21 @@ class WorkflowOrchestrator:
                         user_limits = self.api_client.get_user_limits()
                         if user_limits:
                             logger.info(f"API limits received: {user_limits}")
+                            
+                            # Immediately update footer with fresh API limits
+                            if self.console_ui:
+                                self.console_ui.update_footer(
+                                    stats={'successful': 0, 'failed': 0, 'skipped': 0},
+                                    api_quota={
+                                        'requests_today': user_limits.get('requeststoday', 0),
+                                        'max_requests_per_day': user_limits.get('maxrequestsperday', 0)
+                                    },
+                                    thread_stats={
+                                        'active_threads': 0,
+                                        'max_threads': user_limits.get('maxthreads', 1)
+                                    }
+                                )
+                            
                             # Attempt to rescale pools based on actual API limits
                             scaled = self.thread_manager.rescale_pools(user_limits)
                             if scaled:
@@ -659,19 +686,24 @@ class WorkflowOrchestrator:
                     'error': str(exception)
                 }
         
-        # Work queue consumption - use parallel processing if threads available
-        if self.thread_manager and self.thread_manager.max_threads > 1:
+        # Work queue consumption - always use parallel processing (thread pool)
+        # Even with max_threads=1, this allows dynamic rescaling after first API response
+        if self.thread_manager:
             # Parallel batch processing with per-thread UI updates
-            logger.info(f"Using parallel processing with {self.thread_manager.max_threads} threads")
+            logger.info(f"Using thread pool with {self.thread_manager.max_threads} worker(s)")
             
             # Create UI callback and ROM processor
             ui_callback = self._create_ui_callback()
             rom_processor = self._create_rom_processor(system, media_types, preferred_regions)
             
-            # Process batches of work items
-            batch_size = self.thread_manager.max_threads * 2  # Keep threads fed
-            
             while not self.work_queue.is_empty():
+                # Apply any pending rescale from previous batch
+                if self.thread_manager.apply_pending_rescale():
+                    logger.info(f"Thread pool rescaled, new max: {self.thread_manager.max_threads}")
+                
+                # Recalculate batch size to adapt to dynamic thread pool rescaling
+                batch_size = self.thread_manager.max_threads * 2  # Keep threads fed
+                
                 # Get batch of work items and extract ROMInfo objects
                 batch = []
                 work_items = []
@@ -713,9 +745,11 @@ class WorkflowOrchestrator:
                     }
                     
                     # Update UI (footer and queue stats only - threads update themselves)
+                    # Count skipped ROMs (those with neither success nor error)
+                    skipped = sum(1 for r in results if not r.success and not r.error)
                     self._update_ui_progress(
                         rom_info_dict, rom_count, len(rom_entries),
-                        results, not_found_items
+                        results, not_found_items, skipped
                     )
                     
                     # Store result
@@ -731,11 +765,12 @@ class WorkflowOrchestrator:
                     # Mark work item as processed (find matching work item)
                     for work_item in work_items:
                         if work_item.rom_info['filename'] == rom_info.filename:
-                            self.work_queue.mark_processed(work_item.item_id)
+                            self.work_queue.mark_processed(work_item)
                             break
         else:
-            # Sequential processing (single-threaded)
-            logger.info("Using sequential (single-threaded) processing")
+            # Fallback: Direct sequential processing (when thread_manager is None)
+            # This should rarely/never happen in normal operation
+            logger.warning("No thread manager available - using direct sequential processing")
             
             # Sequential work queue consumption loop
             while not self.work_queue.is_empty():
@@ -1052,7 +1087,8 @@ class WorkflowOrchestrator:
         rom_count: int,
         total_roms: int,
         results: list,
-        not_found_items: list
+        not_found_items: list,
+        skipped_count: int = 0
     ) -> None:
         """Update UI with current progress"""
         if not self.console_ui:
@@ -1086,27 +1122,25 @@ class WorkflowOrchestrator:
         thread_stats = None
         if self.thread_manager and self.thread_manager.is_initialized():
             stats = self.thread_manager.get_stats()
-            # Count active threads from console UI if available
-            active_count = stats.get('max_threads', 1)
-            if self.console_ui:
-                # Count threads that are not idle
-                active_count = sum(1 for tid, state in self.console_ui.thread_operations.items()
-                                 if state.get('operation') != 'Idle')
             thread_stats = {
-                'active_threads': active_count,
+                'active_threads': stats.get('active_threads', 0),
                 'max_threads': stats.get('max_threads', 1)
             }
+        
+        # Get real API quota from user limits
+        user_limits = self.api_client.get_user_limits() or {}
+        api_quota = {
+            'requests_today': user_limits.get('requeststoday', 0),
+            'max_requests_per_day': user_limits.get('maxrequestsperday', 0)
+        }
         
         self.console_ui.update_footer(
             stats={
                 'successful': successful_count,
                 'failed': failed_count,
-                'skipped': total_roms - successful_count - failed_count
+                'skipped': skipped_count
             },
-            api_quota={
-                'requests_today': queue_stats.get('processed', 0),
-                'max_requests_per_day': 10000
-            },
+            api_quota=api_quota,
             thread_stats=thread_stats,
             performance_metrics=performance_metrics
         )

@@ -112,9 +112,13 @@ class ImageDownloader:
                 if attempt == self.max_retries - 1:
                     return False, f"Download failed after {self.max_retries} attempts: {e}"
                 
-                # Wait before retry
+                # Wait before retry (in small chunks to keep UI responsive)
                 delay = 2 ** attempt
-                time.sleep(delay)
+                remaining = delay
+                while remaining > 0:
+                    chunk = min(remaining, 0.1)  # 100ms chunks
+                    time.sleep(chunk)
+                    remaining -= chunk
             
             except Exception as e:
                 return False, f"Unexpected error: {e}"
