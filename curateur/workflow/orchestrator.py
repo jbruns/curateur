@@ -750,40 +750,44 @@ class WorkflowOrchestrator:
                     break
                 
                 # Process batch with end-to-end ROM processing per task
-                async for rom_info, result in self.thread_manager.submit_rom_batch(
-                    rom_processor, batch, ui_callback
-                ):
-                    rom_count += 1
-                    
-                    # Convert ROMInfo to dict for compatibility
-                    rom_info_dict = {
-                        'filename': rom_info.filename,
-                        'path': str(rom_info.path)
-                    }
-                    
-                    # Update UI (footer and queue stats only - tasks update themselves)
-                    # Count skipped ROMs (those with neither success nor error)
-                    skipped = sum(1 for r in results if not r.success and not r.error)
-                    self._update_ui_progress(
-                        rom_info_dict, rom_count, len(rom_entries),
-                        results, not_found_items, skipped
-                    )
-                    
-                    # Store result
-                    results.append(result)
-                    
-                    # Track not found items
-                    if not result.success and result.error == "No game info found from API":
-                        not_found_items.append({
+                try:
+                    async for rom_info, result in self.thread_manager.submit_rom_batch(
+                        rom_processor, batch, ui_callback
+                    ):
+                        rom_count += 1
+                        
+                        # Convert ROMInfo to dict for compatibility
+                        rom_info_dict = {
                             'filename': rom_info.filename,
                             'path': str(rom_info.path)
-                        })
-                    
-                    # Mark work item as processed (find matching work item)
-                    for work_item in work_items:
-                        if work_item.rom_info['filename'] == rom_info.filename:
-                            self.work_queue.mark_processed(work_item)
-                            break
+                        }
+                        
+                        # Update UI (footer and queue stats only - tasks update themselves)
+                        # Count skipped ROMs (those with neither success nor error)
+                        skipped = sum(1 for r in results if not r.success and not r.error)
+                        await self._update_ui_progress(
+                            rom_info_dict, rom_count, len(rom_entries),
+                            results, not_found_items, skipped
+                        )
+                        
+                        # Store result
+                        results.append(result)
+                        
+                        # Track not found items
+                        if not result.success and result.error == "No game info found from API":
+                            not_found_items.append({
+                                'filename': rom_info.filename,
+                                'path': str(rom_info.path)
+                            })
+                        
+                        # Mark work item as processed (find matching work item)
+                        for work_item in work_items:
+                            if work_item.rom_info['filename'] == rom_info.filename:
+                                self.work_queue.mark_processed(work_item)
+                                break
+                except Exception as e:
+                    logger.error(f"Error processing batch: {e}", exc_info=True)
+                    raise
         else:
             # Fallback: Direct sequential processing (when thread_manager is None)
             # This should rarely/never happen in normal operation
@@ -795,11 +799,11 @@ class WorkflowOrchestrator:
                 if not work_item:
                     continue
                 
-                    rom_count += 1
+                rom_count += 1
                 rom_info_dict = work_item.rom_info
                 
                 # Update UI
-                self._update_ui_progress(
+                await self._update_ui_progress(
                     rom_info_dict, rom_count, len(rom_entries),
                     results, not_found_items
                 )
@@ -1098,7 +1102,7 @@ class WorkflowOrchestrator:
             logger.error(f"Failed to write not-found summary: {e}")
             raise
     
-    def _update_ui_progress(
+    async def _update_ui_progress(
         self,
         rom_info_dict: dict,
         rom_count: int,
@@ -1138,7 +1142,7 @@ class WorkflowOrchestrator:
         # Get thread stats if available
         thread_stats = None
         if self.thread_manager and self.thread_manager.is_initialized():
-            stats = self.thread_manager.get_stats()
+            stats = await self.thread_manager.get_stats()
             thread_stats = {
                 'active_threads': stats.get('active_threads', 0),
                 'max_threads': stats.get('max_threads', 1)
