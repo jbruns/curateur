@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 class ThreadPoolManager:
     """
-    Manages parallel operations within ScreenScraper thread limits
+    Manages parallel operations within ScreenScraper worker limits
     
     Now using asyncio tasks instead of thread pool for better responsiveness.
     
     Features:
-    - Respects API-provided maxthreads limit
+    - Respects API-provided maxthreads limit (worker count)
     - Concurrent task execution with asyncio.gather()
     - Dynamic pool sizing based on API quota
     - Active work tracking for UI display
@@ -138,7 +138,7 @@ class ThreadPoolManager:
 
     def _determine_max_threads(self, api_limits: Optional[Dict[str, Any]]) -> int:
         """
-        Determine max threads considering:
+        Determine max workers considering:
         1. API-provided maxthreads
         2. User override (if enabled and valid)
         3. Conservative default (1)
@@ -147,7 +147,7 @@ class ThreadPoolManager:
             api_limits: API-provided limits dict
         
         Returns:
-            Maximum thread count to use
+            Maximum worker count to use
         """
         # Check for rate limit override
         from curateur.api.rate_override import RateLimitOverride
@@ -177,7 +177,7 @@ class ThreadPoolManager:
         self,
         rom_processor: Callable[[Any, Optional[Callable]], Awaitable[Any]],
         rom_batch: list,
-        operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
+        operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None
     ) -> AsyncIterator[Tuple[Any, Any]]:
         """
         Submit batch of ROMs for end-to-end async processing (hash -> API -> download -> verify)
@@ -189,7 +189,7 @@ class ThreadPoolManager:
             rom_processor: Async function to call for each ROM (signature: async func(rom, callback) -> result)
             rom_batch: List of ROM info dicts
             operation_callback: Optional callback for operation updates
-                                Signature: callback(task_name, rom_name, operation, details, progress_pct)
+                                Signature: callback(worker_name, rom_name, operation, details, progress_pct, total_tasks, completed_tasks)
         
         Yields:
             Tuple of (rom, result) as they complete
@@ -271,7 +271,7 @@ class ThreadPoolManager:
         Get task pool statistics
         
         Returns:
-            Dictionary with pool statistics including active tasks
+            Dictionary with pool statistics including active workers
         """
         async with self._lock:
             return {

@@ -22,6 +22,7 @@ from ..api.client import ScreenScraperClient
 from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
 from ..api.match_scorer import calculate_match_confidence
 from ..ui.prompts import prompt_for_search_match
+from ..ui.console_ui import Operations
 from ..media.media_downloader import MediaDownloader
 from ..gamelist.generator import GamelistGenerator
 from ..gamelist.game_entry import GameEntry
@@ -200,8 +201,22 @@ class WorkflowOrchestrator:
         # Step 5: Generate gamelist
         if not self.dry_run and scraped_count > 0:
             try:
+                # Display system-level operation in UI
+                if self.console_ui:
+                    self.console_ui.display_system_operation(
+                        system_name=system.name,
+                        operation=Operations.WRITING_GAMELIST,
+                        details="Generating gamelist.xml..."
+                    )
+                
                 self._generate_gamelist(system, results)
+                
+                # Clear system operation from UI
+                if self.console_ui:
+                    self.console_ui.clear_system_operation()
             except Exception as e:
+                if self.console_ui:
+                    self.console_ui.clear_system_operation()
                 print(f"Warning: Failed to generate gamelist: {e}")
         
         # Step 6: Write unmatched ROMs log if any
@@ -236,7 +251,7 @@ class WorkflowOrchestrator:
         rom_info: ROMInfo,
         media_types: List[str],
         preferred_regions: List[str],
-        operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
+        operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None
     ) -> ScrapingResult:
         """
         Scrape a single ROM.
@@ -247,7 +262,7 @@ class WorkflowOrchestrator:
             media_types: Media types to download
             preferred_regions: Region priority list
             operation_callback: Optional callback for UI updates
-                                Signature: callback(task_name, rom_name, operation, details, progress_pct)
+                                Signature: callback(task_name, rom_name, operation, details, progress_pct, total_tasks, completed_tasks)
             
         Returns:
             ScrapingResult
@@ -256,15 +271,22 @@ class WorkflowOrchestrator:
         rom_name = rom_info.filename
         task_name = f"task-{id(asyncio.current_task())}"
         
-        # Helper to emit events
-        def emit(operation: str, details: str, progress: Optional[float] = None):
+        # Task tracking for progress
+        total_tasks = 2  # Initial: 1 for hash, 1 for API
+        completed_tasks = 0
+        
+        # Helper to emit events with task progress
+        def emit(operation: str, details: str, progress: Optional[float] = None, increment_task: bool = False):
+            nonlocal completed_tasks
+            if increment_task:
+                completed_tasks += 1
             if operation_callback:
-                operation_callback(task_name, rom_name, operation, details, progress)
+                operation_callback(task_name, rom_name, operation, details, progress, total_tasks, completed_tasks)
         
         try:
-            # Step 1: Hashing (already done in scanner, but emit event for consistency)
+            # Step 1: Hashing (already done in scanner, just increment the counter)
             if rom_info.hash_value:
-                emit("Hashing ROM", f"{rom_info.hash_type.upper()}: {rom_info.hash_value[:8]}...")
+                completed_tasks += 1  # Don't emit - already complete
             
             # Step 2: Query API (hash-based lookup)
             if self.dry_run:
@@ -277,8 +299,8 @@ class WorkflowOrchestrator:
             game_info = None
             api_start = time.time()
             
-            # Try hash-based lookup first
-            emit("Fetching metadata", "ScreenScraper API...")
+            # Emit BEFORE starting the API call
+            emit(Operations.FETCHING_METADATA, "ScreenScraper API...")
             
             try:
                 game_info = await self.api_client.query_game(rom_info)
@@ -289,7 +311,8 @@ class WorkflowOrchestrator:
                     self.performance_monitor.record_api_call(api_duration)
                 
                 logger.debug(f"Hash lookup successful for {rom_info.filename}")
-                emit("Metadata found", f"Game ID: {game_info.get('id', 'N/A')}")
+                # Increment task counter but don't emit completion status
+                completed_tasks += 1
                 
                 # After first successful API call, check if we should scale thread pools
                 if not self._thread_pools_scaled and self.thread_manager:
@@ -310,7 +333,7 @@ class WorkflowOrchestrator:
                 
                 # Try search fallback if enabled
                 if self.enable_search_fallback:
-                    emit("Search fallback", "Trying text search...")
+                    emit(Operations.SEARCH_FALLBACK, "Trying text search...")
                     logger.info(f"Attempting search fallback for {rom_info.filename}")
                     game_info = await self._search_fallback(rom_info, preferred_regions)
                     
@@ -322,10 +345,11 @@ class WorkflowOrchestrator:
                             self.performance_monitor.record_api_call(api_duration)
                         
                         logger.info(f"Search fallback successful for {rom_info.filename}")
-                        emit("Metadata found", f"Game ID: {game_info.get('id', 'N/A')}")
+                        # Increment task counter but don't emit completion status
+                        completed_tasks += 1
                     else:
                         logger.info(f"Search fallback found no matches for {rom_info.filename}")
-                        emit("No matches", "Game not found in database")
+                        emit(Operations.NO_MATCHES, "Game not found in database")
             
             if not game_info:
                 # Track as unmatched
@@ -350,6 +374,7 @@ class WorkflowOrchestrator:
             
             media_paths = {}
             media_count = 0
+            media_downloaded_count = 0
             
             try:
                 # Get media dict from game_info and flatten to list
@@ -361,13 +386,9 @@ class WorkflowOrchestrator:
                         media_list.extend(media_items)
                     
                     if media_list:
-                        # Group media by type for progress tracking
-                        media_by_type = {}
-                        for media_item in media_list:
-                            media_type = media_item.get('type', 'unknown')
-                            if media_type not in media_by_type:
-                                media_by_type[media_type] = []
-                            media_by_type[media_type].append(media_item)
+                        # Update total tasks with media count (reset progress bar)
+                        total_tasks = completed_tasks + len(media_list)
+                        emit(Operations.downloading_media(0, len(media_list), 'preparing'), Operations.media_summary(0, len(media_list)))
                         
                         download_results = await media_downloader.download_media_for_game(
                             media_list=media_list,
@@ -375,27 +396,24 @@ class WorkflowOrchestrator:
                             system=system.name
                         )
                         
-                        # Process results and emit per-media-type events
+                        # Process results - just count, don't emit for each one
                         for result in download_results:
-                            media_type_display = result.media_type.replace('_', ' ').title()
-                            
                             if result.success and result.file_path:
-                                emit("Verifying media", f"{media_type_display}")
                                 media_paths[result.media_type] = result.file_path
                                 media_count += 1
+                                media_downloaded_count += 1
+                                completed_tasks += 1
                             elif not result.success:
                                 # Log media download failures
                                 logger.warning(
                                     f"Failed to download {result.media_type} for {rom_info.filename}: {result.error}"
                                 )
-                                emit("Download failed", f"{media_type_display}: {result.error[:30]}")
+                                completed_tasks += 1
             except Exception as e:
                 # Log but don't fail the entire ROM for media errors
                 logger.warning(f"Media download error for {rom_info.filename}: {e}")
-                emit("Media error", str(e)[:40])
             
-            # Final status
-            emit("Complete", f"{media_count} media downloaded")
+            # Don't emit final completion status - let worker go idle naturally
             
             return ScrapingResult(
                 rom_path=rom_path,
@@ -433,7 +451,7 @@ class WorkflowOrchestrator:
         """
         async def process_rom(
             rom_info: ROMInfo,
-            operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
+            operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None
         ) -> ScrapingResult:
             """
             Process a single ROM end-to-end
@@ -476,7 +494,7 @@ class WorkflowOrchestrator:
     
     def _create_ui_callback(self) -> Optional[Callable]:
         """
-        Create a UI callback for thread operation updates
+        Create a UI callback for worker operation updates
         
         Returns:
             Callback function or None if no ConsoleUI
@@ -485,40 +503,38 @@ class WorkflowOrchestrator:
             return None
         
         def ui_callback(
-            thread_name: str,
+            worker_name: str,
             rom_name: str,
             operation: str,
             details: str,
-            progress_pct: Optional[float] = None
+            progress_pct: Optional[float] = None,
+            total_tasks: Optional[int] = None,
+            completed_tasks: Optional[int] = None
         ) -> None:
             """
             Bridge operation events to ConsoleUI
             
             Args:
-                thread_name: Name of the thread (e.g., "api-1")
+                worker_name: Name of the worker (e.g., "task-12345")
                 rom_name: Name of the ROM being processed
                 operation: Operation description (e.g., "Hashing ROM", "Fetching metadata")
                 details: Additional details
                 progress_pct: Optional progress percentage (0.0-100.0)
+                total_tasks: Total number of tasks for current ROM
+                completed_tasks: Number of completed tasks
             """
-            # Get or assign thread ID
-            thread_id = self.console_ui._get_or_assign_thread_id(thread_name)
+            # Get or assign worker ID
+            worker_id = self.console_ui._get_or_assign_worker_id(worker_name)
             
-            # Update thread operation
-            self.console_ui.update_thread_operation(
-                thread_id=thread_id,
+            # Update worker operation
+            self.console_ui.update_worker_operation(
+                worker_id=worker_id,
                 rom_name=rom_name,
                 operation=operation,
                 details=details,
-                progress_pct=progress_pct
-            )
-            
-            # Add to history (with timestamp as Unix timestamp float)
-            timestamp = time.time()
-            self.console_ui.add_thread_history(
-                thread_id=thread_id,
-                message=f"{operation}: {details}",
-                timestamp=timestamp
+                progress_pct=progress_pct,
+                total_tasks=total_tasks,
+                completed_tasks=completed_tasks
             )
         
         return ui_callback
@@ -548,11 +564,11 @@ class WorkflowOrchestrator:
         not_found_items = []  # Track 404 errors separately
         rom_count = 0
         
-        # Initialize idle threads in UI if available
+        # Initialize idle workers in UI if available
         if self.console_ui and self.thread_manager and self.thread_manager.is_initialized():
-            max_threads = self.thread_manager.max_concurrent
-            for i in range(1, max_threads + 1):
-                self.console_ui.clear_thread_operation(i)  # Pass integer, not string
+            max_workers = self.thread_manager.max_concurrent
+            for i in range(1, max_workers + 1):
+                self.console_ui.clear_worker_operation(i)  # Pass integer, not string
         
         # Populate work queue with all ROM entries
         for rom_info in rom_entries:
@@ -571,7 +587,7 @@ class WorkflowOrchestrator:
             self.work_queue.add_work(rom_info_dict, 'full_scrape', Priority.NORMAL)
         
         # Define work item processor
-        def process_work_item(work_item) -> dict:
+        async def process_work_item(work_item) -> dict:
             """Process a single work item from the queue"""
             rom_info_dict = work_item.rom_info
             
@@ -595,7 +611,7 @@ class WorkflowOrchestrator:
                 
                 # Try hash-based lookup first
                 try:
-                    game_info = self.api_client.query_game(rom_info)
+                    game_info = await self.api_client.query_game(rom_info)
                     if self.performance_monitor:
                         self.performance_monitor.record_api_call()
                     logger.debug(f"Hash lookup successful for {rom_info.filename}")
@@ -655,7 +671,7 @@ class WorkflowOrchestrator:
                         if self.enable_search_fallback:
                             logger.info(f"Attempting search fallback for {rom_info.filename}")
                             try:
-                                game_info = self._search_fallback(rom_info, preferred_regions)
+                                game_info = await self._search_fallback(rom_info, preferred_regions)
                                 if game_info:
                                     logger.info(f"Search fallback successful for {rom_info.filename}")
                                     if self.performance_monitor:
@@ -790,7 +806,7 @@ class WorkflowOrchestrator:
                 
                 # Process the work item
                 try:
-                    api_result = process_work_item(work_item)
+                    api_result = await process_work_item(work_item)
                     
                     # Handle result using helper method
                     self._handle_api_result(

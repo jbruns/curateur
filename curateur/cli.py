@@ -112,12 +112,13 @@ For more information, see IMPLEMENTATION_PLAN.md
     return parser
 
 
-def _setup_logging(config: dict) -> None:
+def _setup_logging(config: dict, console_ui=None) -> None:
     """
     Setup logging configuration from config.
     
     Args:
         config: Configuration dictionary
+        console_ui: Optional ConsoleUI instance for integrated logging
     """
     logging_config = config.get('logging', {})
     
@@ -131,6 +132,7 @@ def _setup_logging(config: dict) -> None:
     # Console handler - use RichHandler to integrate with Rich UI
     if logging_config.get('console', True):
         console_handler = RichHandler(
+            console=console_ui.console if console_ui else None,  # Link to UI's console
             show_time=False,  # Rich UI handles time display
             show_path=False,  # Cleaner output
             markup=True,
@@ -141,6 +143,18 @@ def _setup_logging(config: dict) -> None:
         formatter = logging.Formatter('%(message)s')  # Simplified for Rich
         console_handler.setFormatter(formatter)
         handlers.append(console_handler)
+        
+        # Add custom handler for ConsoleUI's log panel (if UI is enabled)
+        if console_ui:
+            from curateur.ui.console_ui import RichUILogHandler
+            ui_handler = RichUILogHandler(console_ui)
+            ui_handler.setLevel(level)
+            # Simple formatter - just the message (level is handled by add_log_entry)
+            ui_formatter = logging.Formatter('%(message)s')
+            ui_handler.setFormatter(ui_formatter)
+            handlers.append(ui_handler)
+            # Store reference in console_ui for cleanup
+            console_ui.log_handler = ui_handler
     
     # File handler (if configured)
     log_file = logging_config.get('file')
@@ -183,7 +197,7 @@ def main(argv: Optional[list] = None) -> int:
         print(f"Unexpected error loading config: {e}", file=sys.stderr)
         return 1
     
-    # Setup logging from config
+    # Setup initial logging from config (will be reconfigured if UI is enabled)
     _setup_logging(config)
     
     # Apply CLI overrides
@@ -330,6 +344,9 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         try:
             console_ui = ConsoleUI(config)
             console_ui.start()
+            
+            # Reconfigure logging to integrate with console UI
+            _setup_logging(config, console_ui)
         except Exception as e:
             logger.warning(f"Could not initialize console UI: {e}")
     
