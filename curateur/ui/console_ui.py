@@ -84,12 +84,13 @@ class ConsoleUI:
         self.system_task: Optional[TaskID] = None
         self.rom_task: Optional[TaskID] = None
         
-        # Thread operation tracking
-        self.thread_operations: Dict[int, Dict[str, Any]] = {}  # thread_id -> operation state
-        self.thread_id_map: Dict[str, int] = {}  # thread_name -> thread_id
+        # Worker operation tracking (threads or async tasks)
+        # Note: "thread" terminology retained for consistency, but these track async tasks now
+        self.thread_operations: Dict[int, Dict[str, Any]] = {}  # worker_id -> operation state
+        self.thread_id_map: Dict[str, int] = {}  # worker_name -> worker_id
         self.next_thread_id = 1
         self.thread_history_size = 5
-        self.last_ui_update: Dict[int, float] = {}  # thread_id -> last update timestamp
+        self.last_ui_update: Dict[int, float] = {}  # worker_id -> last update timestamp
         
         # Current state
         self.current_system = ""
@@ -162,13 +163,16 @@ class ConsoleUI:
     
     def _get_or_assign_thread_id(self, thread_name: str) -> int:
         """
-        Get or assign a sequential thread ID for a thread name
+        Get or assign a sequential worker ID for a task/thread name
+        
+        Note: Works with both threading.current_thread().name and async task identifiers.
+        Rich Live display is async-compatible (Rich 13.0.0+).
         
         Args:
-            thread_name: Actual thread name from threading.current_thread().name
+            thread_name: Worker identifier (thread name or task-{id})
         
         Returns:
-            Sequential thread ID (1, 2, 3, ...)
+            Sequential worker ID (1, 2, 3, ...)
         """
         if thread_name not in self.thread_id_map:
             self.thread_id_map[thread_name] = self.next_thread_id
@@ -234,10 +238,14 @@ class ConsoleUI:
         progress_pct: Optional[float] = None
     ) -> None:
         """
-        Update thread operation status
+        Update worker operation status (async-compatible, synchronous update)
+        
+        Note: This method is intentionally synchronous. It's safe to call from async code
+        as it only updates internal state and triggers Rich Live re-renders, which are
+        handled by Rich's async-compatible rendering system.
         
         Args:
-            thread_id: Sequential thread ID (1, 2, 3, ...)
+            thread_id: Sequential worker ID (1, 2, 3, ...)
             rom_name: ROM filename
             operation: Operation type ('hashing', 'api_fetch', 'downloading', 'verifying', 'idle', 'skipped', 'disabled')
             details: Operation details text
@@ -297,10 +305,10 @@ class ConsoleUI:
     
     def clear_thread_operation(self, thread_id: int) -> None:
         """
-        Clear thread operation and reset to idle state
+        Clear worker operation and reset to idle state (async-compatible)
         
         Args:
-            thread_id: Sequential thread ID
+            thread_id: Sequential worker ID
         """
         if thread_id not in self.thread_operations:
             return

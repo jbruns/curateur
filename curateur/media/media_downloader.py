@@ -4,6 +4,7 @@ Main media downloader integration.
 Coordinates URL selection, downloading, validation, and organization of game media.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from .url_selector import MediaURLSelector
@@ -60,6 +61,7 @@ class MediaDownloader:
     def __init__(
         self,
         media_root: Path,
+        client,  # httpx.AsyncClient
         preferred_regions: Optional[List[str]] = None,
         enabled_media_types: Optional[List[str]] = None,
         timeout: int = 30,
@@ -72,6 +74,7 @@ class MediaDownloader:
         
         Args:
             media_root: Root directory for media storage
+            client: httpx.AsyncClient for HTTP requests
             preferred_regions: Region priority list
             enabled_media_types: Media types to download
             timeout: Download timeout in seconds
@@ -85,6 +88,7 @@ class MediaDownloader:
         )
         
         self.downloader = ImageDownloader(
+            client=client,
             timeout=timeout,
             max_retries=max_retries,
             min_width=min_width,
@@ -93,14 +97,14 @@ class MediaDownloader:
         
         self.organizer = MediaOrganizer(media_root)
     
-    def download_media_for_game(
+    async def download_media_for_game(
         self,
         media_list: List[Dict],
         rom_path: str,
         system: str
     ) -> List[DownloadResult]:
         """
-        Download all enabled media for a game.
+        Download all enabled media for a game concurrently.
         
         Args:
             media_list: List of media dicts from API response
@@ -111,7 +115,7 @@ class MediaDownloader:
             List of DownloadResult objects
             
         Example:
-            results = downloader.download_media_for_game(
+            results = await downloader.download_media_for_game(
                 api_response['media'],
                 'Super Mario Bros (USA).nes',
                 'nes'
@@ -123,27 +127,27 @@ class MediaDownloader:
                 else:
                     print(f"Failed to download {result.media_type}: {result.error}")
         """
-        results = []
-        
         # Get ROM basename for file naming
         rom_basename = self.organizer.get_rom_basename(rom_path)
         
         # Select best media URLs
         selected_media = self.url_selector.select_media_urls(media_list, rom_path)
         
-        # Download each media type
-        for media_type, media_info in selected_media.items():
-            result = self._download_single_media(
+        # Download all media types concurrently using asyncio.gather
+        download_tasks = [
+            self._download_single_media(
                 media_type,
                 media_info,
                 system,
                 rom_basename
             )
-            results.append(result)
+            for media_type, media_info in selected_media.items()
+        ]
         
-        return results
+        results = await asyncio.gather(*download_tasks)
+        return list(results)
     
-    def _download_single_media(
+    async def _download_single_media(
         self,
         media_type: str,
         media_info: Dict,
@@ -184,7 +188,7 @@ class MediaDownloader:
         validate = media_type not in ['manuel', 'video']
         
         # Download and validate
-        success, error = self.downloader.download(url, output_path, validate=validate)
+        success, error = await self.downloader.download(url, output_path, validate=validate)
         
         if success:
             # Get dimensions (only for images)

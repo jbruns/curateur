@@ -53,7 +53,9 @@ def live_config():
 @pytest.fixture(scope='module')
 def live_client(live_config):
     """Create API client with real credentials."""
-    return ScreenScraperClient(live_config)
+    from curateur.api.throttle import ThrottleManager, RateLimit
+    throttle_manager = ThrottleManager(RateLimit(calls=20, window_seconds=60))
+    return ScreenScraperClient(live_config, throttle_manager)
 
 
 @pytest.mark.live

@@ -4,13 +4,11 @@ HTTP connection pooling for efficient parallel requests
 Provides persistent connections and automatic retry logic.
 """
 
+import asyncio
 import logging
-import threading
 from typing import Optional
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +19,15 @@ class ConnectionPoolManager:
     
     Features:
     - Persistent connections
-    - Connection reuse across threads
+    - Connection reuse across async tasks
     - Automatic retry logic
     - Timeout configuration
     
     Example:
         manager = ConnectionPoolManager(config)
-        session = manager.get_session()
-        
-        # Use session for requests
-        response = session.get('https://api.example.com/data')
-        
-        # Clean up
-        manager.close_session()
+        async with manager.get_client() as client:
+            # Use client for requests
+            response = await client.get('https://api.example.com/data')
     """
     
     def __init__(self, config: dict):
@@ -44,15 +38,15 @@ class ConnectionPoolManager:
             config: Configuration dictionary
         """
         self.config = config
-        self.session: Optional[requests.Session] = None
-        self.lock = threading.Lock()
+        self.client: Optional[httpx.AsyncClient] = None
+        self.lock = asyncio.Lock()
     
-    def create_session(self, max_connections: int = 10) -> requests.Session:
+    def create_client(self, max_connections: int = 10) -> httpx.AsyncClient:
         """
-        Create requests session with connection pooling
+        Create httpx async client with connection pooling
         
         Configuration:
-        - Connection pool size based on thread count
+        - Connection pool size based on task count
         - Keep-alive enabled
         - Automatic retry with exponential backoff
         - Conservative timeouts
@@ -61,63 +55,67 @@ class ConnectionPoolManager:
             max_connections: Maximum number of connections in pool
         
         Returns:
-            Configured requests.Session
+            Configured httpx.AsyncClient
         """
-        session = requests.Session()
-        
-        # Configure retry strategy
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET", "POST"]
-        )
-        
-        # Configure adapter with connection pooling
-        adapter = HTTPAdapter(
-            pool_connections=max_connections,
-            pool_maxsize=max_connections * 2,
-            max_retries=retry_strategy,
-            pool_block=False
-        )
-        
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
-        # Set default timeout (connect, read)
         timeout = self.config.get('api', {}).get('request_timeout', 30)
-        session.timeout = (10, timeout)
+        
+        # Configure connection limits
+        limits = httpx.Limits(
+            max_connections=max_connections,
+            max_keepalive_connections=max_connections,
+            keepalive_expiry=5.0
+        )
+        
+        # Configure timeout
+        timeout_config = httpx.Timeout(
+            connect=10.0,
+            read=timeout,
+            write=30.0,
+            pool=10.0
+        )
+        
+        # Configure transport with retries
+        transport = httpx.AsyncHTTPTransport(
+            limits=limits,
+            retries=3
+        )
+        
+        client = httpx.AsyncClient(
+            timeout=timeout_config,
+            transport=transport,
+            follow_redirects=True
+        )
         
         logger.info(
             f"Connection pool created: max_connections={max_connections}, "
             f"timeout={timeout}s"
         )
         
-        return session
+        return client
     
-    def get_session(self, max_connections: Optional[int] = None) -> requests.Session:
+    async def get_client(self, max_connections: Optional[int] = None) -> httpx.AsyncClient:
         """
-        Get or create session (thread-safe)
+        Get or create async client (async-safe)
         
         Args:
             max_connections: Maximum connections (uses default if None)
         
         Returns:
-            Shared requests.Session
+            Shared httpx.AsyncClient
         """
-        with self.lock:
-            if self.session is None:
+        async with self.lock:
+            if self.client is None or self.client.is_closed:
                 conn_count = max_connections or 10
-                self.session = self.create_session(conn_count)
-            return self.session
+                self.client = self.create_client(conn_count)
+            return self.client
     
-    def close_session(self) -> None:
-        """Close session and release connections"""
-        with self.lock:
-            if self.session:
+    async def close_client(self) -> None:
+        """Close client and release connections"""
+        async with self.lock:
+            if self.client and not self.client.is_closed:
                 logger.debug("Closing connection pool...")
-                self.session.close()
-                self.session = None
+                await self.client.aclose()
+                self.client = None
                 logger.info("Connection pool closed")
     
     def get_stats(self) -> dict:
@@ -128,6 +126,6 @@ class ConnectionPoolManager:
             Dictionary with pool statistics
         """
         return {
-            'session_active': self.session is not None,
+            'client_active': self.client is not None and not self.client.is_closed,
             'config_timeout': self.config.get('api', {}).get('request_timeout', 30)
         }

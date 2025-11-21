@@ -8,7 +8,9 @@ Tests end-to-end workflows combining multiple API components:
 """
 
 import pytest
-import responses
+import pytest_asyncio
+import respx
+import httpx
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,18 +39,24 @@ TEST_CONFIG = {
 }
 
 
-@pytest.fixture
-def api_client():
+@pytest_asyncio.fixture
+async def api_client():
     """Create API client for integration tests."""
-    return ScreenScraperClient(TEST_CONFIG)
+    from curateur.api.throttle import ThrottleManager, RateLimit
+    throttle_manager = ThrottleManager(RateLimit(calls=20, window_seconds=60))
+    
+    # Create an httpx.AsyncClient (tests will mock HTTP calls anyway)
+    async with httpx.AsyncClient() as client:
+        yield ScreenScraperClient(TEST_CONFIG, throttle_manager=throttle_manager, client=client)
 
 
 @pytest.mark.integration
 class TestEndToEndWorkflow:
     """Test complete API workflow from ROM info to game data."""
     
-    @responses.activate
-    def test_complete_workflow_success(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_complete_workflow_success(self, api_client):
         """Test complete workflow: ROMInfo → query → parse → verify → result."""
         # Create ROM info
         rom_info = ROMInfo(
@@ -59,7 +67,8 @@ class TestEndToEndWorkflow:
             system="nes",
             query_filename="Super Mario Bros. (World).nes",
             file_size=40976,
-            crc32="3337ec46"
+            hash_type="crc32",
+            hash_value="3337ec46"
         )
         
         # Mock complete successful response
@@ -101,15 +110,12 @@ class TestEndToEndWorkflow:
   </jeu>
 </Data>'''.encode('utf-8')
         
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=response_xml,
-            status=200
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(
+            return_value=httpx.Response(200, content=response_xml)
         )
         
         # Execute workflow
-        game_data = api_client.query_game(rom_info)
+        game_data = await api_client.query_game(rom_info)
         
         # Verify complete workflow results
         assert game_data is not None
@@ -132,8 +138,9 @@ class TestEndToEndWorkflow:
         # Verify rate limiter was initialized
         assert api_client._rate_limits_initialized
     
-    @responses.activate
-    def test_workflow_with_minimal_response(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_workflow_with_minimal_response(self, api_client):
         """Test workflow handles minimal API response gracefully."""
         rom_info = ROMInfo(
             path=Path("/fake/roms/Obscure Game.nes"),
@@ -143,7 +150,8 @@ class TestEndToEndWorkflow:
             system="nes",
             query_filename="Obscure Game.nes",
             file_size=24592,
-            crc32="12345678"
+            hash_type="crc32",
+            hash_value="12345678"
         )
         
         # Minimal response with just name
@@ -160,15 +168,12 @@ class TestEndToEndWorkflow:
   </jeu>
 </Data>'''
         
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=response_xml,
-            status=200
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(
+            return_value=httpx.Response(200, content=response_xml)
         )
         
         # Execute workflow
-        game_data = api_client.query_game(rom_info)
+        game_data = await api_client.query_game(rom_info)
         
         # Verify minimal data is handled
         assert game_data is not None
@@ -181,8 +186,9 @@ class TestEndToEndWorkflow:
 class TestMultiGameSequence:
     """Test querying multiple games sequentially."""
     
-    @responses.activate
-    def test_query_multiple_games(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_query_multiple_games(self, api_client):
         """Test querying multiple games in sequence with rate limiting."""
         # Create multiple ROM infos
         roms = [
@@ -194,7 +200,8 @@ class TestMultiGameSequence:
                 system="nes",
                 query_filename="Game1.nes",
                 file_size=40976,
-                crc32="11111111"
+                hash_type="crc32",
+                hash_value="11111111"
             ),
             ROMInfo(
                 path=Path("/fake/Game2.nes"),
@@ -204,7 +211,8 @@ class TestMultiGameSequence:
                 system="nes",
                 query_filename="Game2.nes",
                 file_size=40976,
-                crc32="22222222"
+                hash_type="crc32",
+                hash_value="22222222"
             ),
             ROMInfo(
                 path=Path("/fake/Game3.nes"),
@@ -214,12 +222,14 @@ class TestMultiGameSequence:
                 system="nes",
                 query_filename="Game3.nes",
                 file_size=40976,
-                crc32="33333333"
+                hash_type="crc32",
+                hash_value="33333333"
             )
         ]
         
-        # Mock responses for each game
-        for i, rom in enumerate(roms, 1):
+        # Mock responses for each game - respx will return them in sequence
+        responses_list = []
+        for i in range(1, 4):
             response_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Data>
   <ssuser>
@@ -233,18 +243,15 @@ class TestMultiGameSequence:
     </noms>
   </jeu>
 </Data>'''.encode()
-            
-            responses.add(
-                responses.GET,
-                'https://api.screenscraper.fr/api2/jeuInfos.php',
-                body=response_xml,
-                status=200
-            )
+            responses_list.append(httpx.Response(200, content=response_xml))
+        
+        # Set up mock to return responses in sequence
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(side_effect=responses_list)
         
         # Query all games
         results = []
         for rom in roms:
-            game_data = api_client.query_game(rom)
+            game_data = await api_client.query_game(rom)
             results.append(game_data)
         
         # Verify all succeeded
@@ -261,8 +268,9 @@ class TestMultiGameSequence:
 class TestErrorRecovery:
     """Test error handling and recovery in workflows."""
     
-    @responses.activate
-    def test_workflow_handles_404_gracefully(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_workflow_handles_404_gracefully(self, api_client):
         """Test workflow handles game not found errors."""
         rom_info = ROMInfo(
             path=Path("/fake/Unknown Game.nes"),
@@ -272,7 +280,8 @@ class TestErrorRecovery:
             system="nes",
             query_filename="Unknown Game.nes",
             file_size=1024,
-            crc32="99999999"
+            hash_type="crc32",
+            hash_value="99999999"
         )
         
         # 404 response
@@ -285,19 +294,17 @@ class TestErrorRecovery:
   <erreur>Erreur : Rom non trouvee</erreur>
 </Data>'''.encode('utf-8')
         
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=response_xml,
-            status=404
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(
+            return_value=httpx.Response(404, content=response_xml)
         )
         
         # Should raise SkippableAPIError
         with pytest.raises(SkippableAPIError):
-            api_client.query_game(rom_info)
+            await api_client.query_game(rom_info)
     
-    @responses.activate
-    def test_workflow_continues_after_skippable_error(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_workflow_continues_after_skippable_error(self, api_client):
         """Test that workflow can continue after skippable errors."""
         roms = [
             ROMInfo(
@@ -308,7 +315,8 @@ class TestErrorRecovery:
                 system="nes",
                 query_filename="Good Game.nes",
                 file_size=40976,
-                crc32="12345678"
+                hash_type="crc32",
+                hash_value="12345678"
             ),
             ROMInfo(
                 path=Path("/fake/Bad Game.nes"),
@@ -318,7 +326,8 @@ class TestErrorRecovery:
                 system="nes",
                 query_filename="Bad Game.nes",
                 file_size=1024,
-                crc32="99999999"
+                hash_type="crc32",
+                hash_value="99999999"
             ),
             ROMInfo(
                 path=Path("/fake/Another Good Game.nes"),
@@ -328,51 +337,37 @@ class TestErrorRecovery:
                 system="nes",
                 query_filename="Another Good Game.nes",
                 file_size=40976,
-                crc32="87654321"
+                hash_type="crc32",
+                hash_value="87654321"
             )
         ]
         
-        # Success response for first game
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=b'''<?xml version="1.0"?>
+        # Set up mock to return responses in sequence
+        responses_list = [
+            httpx.Response(200, content=b'''<?xml version="1.0"?>
 <Data>
   <ssuser><id>1</id><maxrequestspermin>20</maxrequestspermin></ssuser>
   <jeu id="1"><noms><nom region="us">Good Game</nom></noms></jeu>
-</Data>''',
-            status=200
-        )
-        
-        # 404 for second game
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=b'''<?xml version="1.0"?>
+</Data>'''),
+            httpx.Response(404, content=b'''<?xml version="1.0"?>
 <Data>
   <ssuser><id>1</id><maxrequestspermin>20</maxrequestspermin></ssuser>
   <erreur>Rom non trouvee</erreur>
-</Data>''',
-            status=404
-        )
-        
-        # Success for third game
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=b'''<?xml version="1.0"?>
+</Data>'''),
+            httpx.Response(200, content=b'''<?xml version="1.0"?>
 <Data>
   <ssuser><id>1</id><maxrequestspermin>20</maxrequestspermin></ssuser>
   <jeu id="3"><noms><nom region="us">Another Good Game</nom></noms></jeu>
-</Data>''',
-            status=200
-        )
+</Data>''')
+        ]
+        
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(side_effect=responses_list)
         
         # Query games, handling errors
         results = []
         for rom in roms:
             try:
-                game_data = api_client.query_game(rom)
+                game_data = await api_client.query_game(rom)
                 results.append(game_data)
             except SkippableAPIError:
                 results.append(None)
@@ -390,8 +385,9 @@ class TestErrorRecovery:
 class TestNameVerificationIntegration:
     """Test name verification in complete workflow."""
     
-    @responses.activate
-    def test_workflow_rejects_name_mismatch(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_workflow_rejects_name_mismatch(self, api_client):
         """Test that workflow properly rejects name mismatches."""
         # ROM filename suggests Zelda
         rom_info = ROMInfo(
@@ -402,7 +398,8 @@ class TestNameVerificationIntegration:
             system="nes",
             query_filename="Legend of Zelda (USA).nes",
             file_size=131088,
-            crc32="38027b14"
+            hash_type="crc32",
+            hash_value="38027b14"
         )
         
         # But API returns Mario data (wrong game)
@@ -419,19 +416,17 @@ class TestNameVerificationIntegration:
   </jeu>
 </Data>'''
         
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=response_xml,
-            status=200
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(
+            return_value=httpx.Response(200, content=response_xml)
         )
         
         # Should reject due to name mismatch
         with pytest.raises(SkippableAPIError, match="Name verification failed"):
-            api_client.query_game(rom_info)
+            await api_client.query_game(rom_info)
     
-    @responses.activate
-    def test_workflow_accepts_similar_names(self, api_client):
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_workflow_accepts_similar_names(self, api_client):
         """Test that workflow accepts names with minor differences."""
         # ROM with region tags and special chars
         rom_info = ROMInfo(
@@ -442,7 +437,8 @@ class TestNameVerificationIntegration:
             system="nes",
             query_filename="Super Mario Bros. (USA) (Rev A) [!].nes",
             file_size=40976,
-            crc32="3337ec46"
+            hash_type="crc32",
+            hash_value="3337ec46"
         )
         
         # API returns clean name
@@ -459,15 +455,12 @@ class TestNameVerificationIntegration:
   </jeu>
 </Data>'''
         
-        responses.add(
-            responses.GET,
-            'https://api.screenscraper.fr/api2/jeuInfos.php',
-            body=response_xml,
-            status=200
+        respx.get('https://api.screenscraper.fr/api2/jeuInfos.php').mock(
+            return_value=httpx.Response(200, content=response_xml)
         )
         
         # Should succeed - names are similar after normalization
-        game_data = api_client.query_game(rom_info)
+        game_data = await api_client.query_game(rom_info)
         assert game_data is not None
         assert game_data['name'] == 'Super Mario Bros.'
 

@@ -1,8 +1,8 @@
 """ScreenScraper API client implementation."""
 
+import asyncio
 import logging
-import requests
-import threading
+import httpx
 import time
 from enum import Enum
 from typing import Dict, Any, Optional
@@ -46,14 +46,14 @@ class ScreenScraperClient:
     
     BASE_URL = "https://api.screenscraper.fr/api2"
     
-    def __init__(self, config: Dict[str, Any], throttle_manager: ThrottleManager, session: Optional[requests.Session] = None):
+    def __init__(self, config: Dict[str, Any], throttle_manager: ThrottleManager, client: Optional[httpx.AsyncClient] = None):
         """
         Initialize API client.
         
         Args:
             config: Configuration dictionary with screenscraper credentials
             throttle_manager: ThrottleManager instance for rate limiting
-            session: Optional requests.Session for connection pooling
+            client: Optional httpx.AsyncClient for connection pooling
         """
         # Authentication
         self.devid = config['screenscraper']['devid']
@@ -68,8 +68,8 @@ class ScreenScraperClient:
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
         
-        # HTTP session (use provided or create new)
-        self.session = session if session else requests.Session()
+        # HTTP client (use provided or None - caller must provide)
+        self.client = client
         
         # Throttle manager for rate limiting
         self.throttle_manager = throttle_manager
@@ -77,10 +77,9 @@ class ScreenScraperClient:
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
         
-        # Store user limits from API (maxthreads, etc.) with thread-safe access
+        # Store user limits from API (maxthreads, etc.) with async-safe access
         self._user_limits: Optional[Dict[str, Any]] = None
-        self._user_limits_lock = threading.Lock()
-        self._user_limits_lock = threading.Lock()
+        self._user_limits_lock = asyncio.Lock()
     
     def _build_redacted_url(self, url: str, params: Dict[str, Any]) -> str:
         """Build URL with credentials redacted for logging."""
@@ -90,7 +89,7 @@ class ScreenScraperClient:
         query_string = urlencode(redacted_params)
         return f"{url}?{query_string}"
     
-    def query_game(self, rom_info: ROMInfo) -> Optional[Dict[str, Any]]:
+    async def query_game(self, rom_info: ROMInfo) -> Optional[Dict[str, Any]]:
         """
         Query ScreenScraper for game information.
         
@@ -111,8 +110,8 @@ class ScreenScraperClient:
             raise SkippableAPIError(f"Platform not mapped: {e}")
         
         # Build API request
-        def make_request():
-            return self._query_jeu_infos(
+        async def make_request():
+            return await self._query_jeu_infos(
                 systemeid=systemeid,
                 romnom=rom_info.query_filename,
                 romtaille=rom_info.file_size,
@@ -123,7 +122,7 @@ class ScreenScraperClient:
         context = f"{rom_info.filename} ({rom_info.system.upper()})"
         
         try:
-            game_data = retry_with_backoff(
+            game_data = await retry_with_backoff(
                 make_request,
                 max_attempts=self.max_retries,
                 initial_delay=self.retry_backoff,
@@ -157,7 +156,7 @@ class ScreenScraperClient:
         
         return game_data
     
-    def _query_jeu_infos(
+    async def _query_jeu_infos(
         self,
         systemeid: int,
         romnom: str,
@@ -180,7 +179,7 @@ class ScreenScraperClient:
             Various API errors
         """
         # Wait for rate limit
-        self.throttle_manager.wait_if_needed(APIEndpoint.JEU_INFOS.value)
+        await self.throttle_manager.wait_if_needed(APIEndpoint.JEU_INFOS.value)
         
         # Build parameters
         params = {
@@ -209,14 +208,14 @@ class ScreenScraperClient:
         
         start_time = time.time()
         try:
-            response = self.session.get(
+            response = await self.client.get(
                 url,
                 params=params,
                 timeout=self.request_timeout
             )
-        except requests.exceptions.Timeout:
+        except httpx.TimeoutException:
             raise Exception("Request timeout")
-        except requests.exceptions.ConnectionError:
+        except httpx.ConnectError:
             raise Exception("Connection error")
         except Exception as e:
             raise Exception(f"Network error: {e}")
@@ -251,10 +250,10 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Extract and store user limits from response (thread-safe with monotonic updates)
+        # Extract and store user limits from response (async-safe with monotonic updates)
         new_user_info = parse_user_info(root)
         if new_user_info:
-            with self._user_limits_lock:
+            async with self._user_limits_lock:
                 # First time initialization
                 if self._user_limits is None:
                     self._user_limits = new_user_info
@@ -276,7 +275,7 @@ class ScreenScraperClient:
         
         return game_data
     
-    def search_game(
+    async def search_game(
         self,
         rom_info: ROMInfo,
         max_results: int = 5
@@ -305,8 +304,8 @@ class ScreenScraperClient:
             raise SkippableAPIError(f"Platform not mapped: {e}")
         
         # Build API request
-        def make_request():
-            return self._query_jeu_recherche(
+        async def make_request():
+            return await self._query_jeu_recherche(
                 systemeid=systemeid,
                 recherche=rom_info.query_filename,
                 max_results=max_results
@@ -316,7 +315,7 @@ class ScreenScraperClient:
         context = f"Search: {rom_info.query_filename} ({rom_info.system.upper()})"
         
         try:
-            results = retry_with_backoff(
+            results = await retry_with_backoff(
                 make_request,
                 max_attempts=self.max_retries,
                 initial_delay=self.retry_backoff,
@@ -330,7 +329,7 @@ class ScreenScraperClient:
             # Convert other errors to skippable
             raise SkippableAPIError(f"Search API error: {e}")
     
-    def _query_jeu_recherche(
+    async def _query_jeu_recherche(
         self,
         systemeid: int,
         recherche: str,
@@ -351,7 +350,7 @@ class ScreenScraperClient:
             Various API errors
         """
         # Wait for rate limit
-        self.throttle_manager.wait_if_needed(APIEndpoint.JEU_RECHERCHE.value)
+        await self.throttle_manager.wait_if_needed(APIEndpoint.JEU_RECHERCHE.value)
         
         # Build parameters
         params = {
@@ -376,14 +375,14 @@ class ScreenScraperClient:
         
         start_time = time.time()
         try:
-            response = self.session.get(
+            response = await self.client.get(
                 url,
                 params=params,
                 timeout=self.request_timeout
             )
-        except requests.exceptions.Timeout:
+        except httpx.TimeoutException:
             raise Exception("Request timeout")
-        except requests.exceptions.ConnectionError:
+        except httpx.ConnectError:
             raise Exception("Connection error")
         except Exception as e:
             raise Exception(f"Network error: {e}")
@@ -418,10 +417,10 @@ class ScreenScraperClient:
         if error_msg:
             raise SkippableAPIError(f"API error: {error_msg}")
         
-        # Extract and store user limits from response (thread-safe with monotonic updates)
+        # Extract and store user limits from response (async-safe with monotonic updates)
         new_user_info = parse_user_info(root)
         if new_user_info:
-            with self._user_limits_lock:
+            async with self._user_limits_lock:
                 # First time initialization
                 if self._user_limits is None:
                     self._user_limits = new_user_info

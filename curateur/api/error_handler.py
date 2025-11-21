@@ -1,7 +1,8 @@
 """Unified error handling for ScreenScraper API interactions."""
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Callable, Awaitable, Union
 from enum import Enum
+import asyncio
 import time
 import logging
 import sys
@@ -155,8 +156,8 @@ def categorize_error(exception: Exception) -> Tuple[Exception, ErrorCategory]:
     return (exception, ErrorCategory.NON_RETRYABLE)
 
 
-def retry_with_backoff(
-    func,
+async def retry_with_backoff(
+    func: Union[Callable, Callable[[], Awaitable]],
     max_attempts: int = 3,
     initial_delay: float = 5.0,
     backoff_factor: float = 2.0,
@@ -165,8 +166,11 @@ def retry_with_backoff(
     """
     Retry a function with exponential backoff using selective retry logic.
     
+    Supports both sync and async functions. For async functions, uses asyncio.sleep()
+    for better responsiveness.
+    
     Args:
-        func: Function to retry
+        func: Function to retry (sync or async)
         max_attempts: Maximum number of attempts
         initial_delay: Initial delay in seconds
         backoff_factor: Multiplier for each retry
@@ -180,10 +184,14 @@ def retry_with_backoff(
     """
     delay = initial_delay
     last_exception = None
+    is_async = asyncio.iscoroutinefunction(func)
     
     for attempt in range(1, max_attempts + 1):
         try:
-            return func()
+            if is_async:
+                return await func()
+            else:
+                return func()
         except Exception as e:
             # Categorize the error
             exception, category = categorize_error(e)
@@ -206,12 +214,16 @@ def retry_with_backoff(
                 if attempt < max_attempts:
                     print(f"  ⚠ {context}: {exception}")
                     print(f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})...")
-                    # Sleep in small chunks to keep UI responsive
-                    remaining = delay
-                    while remaining > 0:
-                        chunk = min(remaining, 0.1)  # 100ms chunks
-                        time.sleep(chunk)
-                        remaining -= chunk
+                    # Use async sleep if we're in async context for better UI responsiveness
+                    if is_async:
+                        await asyncio.sleep(delay)
+                    else:
+                        # Sleep in small chunks to keep UI responsive for sync calls
+                        remaining = delay
+                        while remaining > 0:
+                            chunk = min(remaining, 0.1)  # 100ms chunks
+                            time.sleep(chunk)
+                            remaining -= chunk
                     delay *= backoff_factor
                 else:
                     print(f"  ✗ {context}: Failed after {max_attempts} attempts")

@@ -8,11 +8,11 @@ Coordinates the complete scraping workflow:
 4. Generate gamelist
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Callable
 from dataclasses import dataclass
-import threading
 import time
 
 from ..config.es_systems import SystemDefinition
@@ -126,7 +126,7 @@ class WorkflowOrchestrator:
         # Track if we've scaled thread pools based on API limits
         self._thread_pools_scaled = False
     
-    def scrape_system(
+    async def scrape_system(
         self,
         system: SystemDefinition,
         media_types: List[str] = None,
@@ -171,7 +171,7 @@ class WorkflowOrchestrator:
         # Step 2-4: Process each ROM (parallel or sequential)
         if self.thread_manager and not self.dry_run:
             # Use parallel processing with work queue
-            results, not_found_items = self._scrape_roms_parallel(
+            results, not_found_items = await self._scrape_roms_parallel(
                 system,
                 rom_entries,
                 media_types,
@@ -180,7 +180,7 @@ class WorkflowOrchestrator:
         else:
             # Use sequential processing
             for rom_info in rom_entries:
-                result = self._scrape_rom(
+                result = await self._scrape_rom(
                     system,
                     rom_info,
                     media_types,
@@ -230,7 +230,7 @@ class WorkflowOrchestrator:
             not_found_items=not_found_items
         )
     
-    def _scrape_rom(
+    async def _scrape_rom(
         self,
         system: SystemDefinition,
         rom_info: ROMInfo,
@@ -247,19 +247,19 @@ class WorkflowOrchestrator:
             media_types: Media types to download
             preferred_regions: Region priority list
             operation_callback: Optional callback for UI updates
-                                Signature: callback(thread_name, rom_name, operation, details, progress_pct)
+                                Signature: callback(task_name, rom_name, operation, details, progress_pct)
             
         Returns:
             ScrapingResult
         """
         rom_path = rom_info.path
         rom_name = rom_info.filename
-        thread_name = threading.current_thread().name
+        task_name = f"task-{id(asyncio.current_task())}"
         
         # Helper to emit events
         def emit(operation: str, details: str, progress: Optional[float] = None):
             if operation_callback:
-                operation_callback(thread_name, rom_name, operation, details, progress)
+                operation_callback(task_name, rom_name, operation, details, progress)
         
         try:
             # Step 1: Hashing (already done in scanner, but emit event for consistency)
@@ -281,7 +281,7 @@ class WorkflowOrchestrator:
             emit("Fetching metadata", "ScreenScraper API...")
             
             try:
-                game_info = self.api_client.query_game(rom_info)
+                game_info = await self.api_client.query_game(rom_info)
                 api_duration = time.time() - api_start
                 
                 # Record API timing
@@ -298,11 +298,11 @@ class WorkflowOrchestrator:
                         logger.info(f"API limits received for rescaling: {user_limits}")
                         
                         # Attempt to rescale pools based on actual API limits
-                        scaled = self.thread_manager.rescale_pools(user_limits)
+                        scaled = await self.thread_manager.rescale_pools(user_limits)
                         if scaled:
-                            logger.info("Thread pools dynamically scaled based on API limits")
+                            logger.info("Task pool dynamically scaled based on API limits")
                         else:
-                            logger.info("Thread pool rescale not needed (already at correct size)")
+                            logger.info("Task pool rescale not needed (already at correct size)")
                         self._thread_pools_scaled = True
                 
             except SkippableAPIError as e:
@@ -312,7 +312,7 @@ class WorkflowOrchestrator:
                 if self.enable_search_fallback:
                     emit("Search fallback", "Trying text search...")
                     logger.info(f"Attempting search fallback for {rom_info.filename}")
-                    game_info = self._search_fallback(rom_info, preferred_regions)
+                    game_info = await self._search_fallback(rom_info, preferred_regions)
                     
                     if game_info:
                         api_duration = time.time() - api_start
@@ -343,6 +343,7 @@ class WorkflowOrchestrator:
             # Step 3: Download media
             media_downloader = MediaDownloader(
                 media_root=self.media_directory,
+                client=self.api_client.client,
                 preferred_regions=preferred_regions,
                 enabled_media_types=media_types
             )
@@ -368,7 +369,7 @@ class WorkflowOrchestrator:
                                 media_by_type[media_type] = []
                             media_by_type[media_type].append(media_item)
                         
-                        download_results = media_downloader.download_media_for_game(
+                        download_results = await media_downloader.download_media_for_game(
                             media_list=media_list,
                             rom_path=str(rom_info.path),
                             system=system.name
@@ -428,9 +429,9 @@ class WorkflowOrchestrator:
             preferred_regions: Region preference list
             
         Returns:
-            Callable that processes a single ROM with optional callback
+            Async callable that processes a single ROM with optional callback
         """
-        def process_rom(
+        async def process_rom(
             rom_info: ROMInfo,
             operation_callback: Optional[Callable[[str, str, str, str, Optional[float]], None]] = None
         ) -> ScrapingResult:
@@ -448,7 +449,7 @@ class WorkflowOrchestrator:
             
             try:
                 # Call the existing _scrape_rom method with callback
-                result = self._scrape_rom(
+                result = await self._scrape_rom(
                     system=system,
                     rom_info=rom_info,
                     media_types=media_types,
@@ -522,7 +523,7 @@ class WorkflowOrchestrator:
         
         return ui_callback
     
-    def _scrape_roms_parallel(
+    async def _scrape_roms_parallel(
         self,
         system: SystemDefinition,
         rom_entries: List[ROMInfo],
@@ -530,7 +531,7 @@ class WorkflowOrchestrator:
         preferred_regions: List[str]
     ) -> Tuple[List[ScrapingResult], List[dict]]:
         """
-        Scrape ROMs in parallel using WorkQueueManager and ThreadPoolManager.
+        Scrape ROMs in parallel using WorkQueueManager and async task pool.
         
         Uses work queue consumer pattern with selective retry based on error category.
         
@@ -549,7 +550,7 @@ class WorkflowOrchestrator:
         
         # Initialize idle threads in UI if available
         if self.console_ui and self.thread_manager and self.thread_manager.is_initialized():
-            max_threads = self.thread_manager.max_threads
+            max_threads = self.thread_manager.max_concurrent
             for i in range(1, max_threads + 1):
                 self.console_ui.clear_thread_operation(i)  # Pass integer, not string
         
@@ -686,11 +687,11 @@ class WorkflowOrchestrator:
                     'error': str(exception)
                 }
         
-        # Work queue consumption - always use parallel processing (thread pool)
-        # Even with max_threads=1, this allows dynamic rescaling after first API response
+        # Work queue consumption - always use parallel processing (async tasks)
+        # Even with max_concurrent=1, this allows dynamic rescaling after first API response
         if self.thread_manager:
-            # Parallel batch processing with per-thread UI updates
-            logger.info(f"Using thread pool with {self.thread_manager.max_threads} worker(s)")
+            # Parallel batch processing with per-task UI updates
+            logger.info(f"Using task pool with {self.thread_manager.max_concurrent} concurrent task(s)")
             
             # Create UI callback and ROM processor
             ui_callback = self._create_ui_callback()
@@ -698,11 +699,11 @@ class WorkflowOrchestrator:
             
             while not self.work_queue.is_empty():
                 # Apply any pending rescale from previous batch
-                if self.thread_manager.apply_pending_rescale():
-                    logger.info(f"Thread pool rescaled, new max: {self.thread_manager.max_threads}")
+                if await self.thread_manager.apply_pending_rescale():
+                    logger.info(f"Task pool rescaled, new max: {self.thread_manager.max_concurrent}")
                 
-                # Recalculate batch size to adapt to dynamic thread pool rescaling
-                batch_size = self.thread_manager.max_threads * 2  # Keep threads fed
+                # Recalculate batch size to adapt to dynamic task pool rescaling
+                batch_size = self.thread_manager.max_concurrent * 2  # Keep tasks fed
                 
                 # Get batch of work items and extract ROMInfo objects
                 batch = []
@@ -732,8 +733,8 @@ class WorkflowOrchestrator:
                 if not batch:
                     break
                 
-                # Process batch with end-to-end ROM processing per thread
-                for rom_info, result in self.thread_manager.submit_rom_batch(
+                # Process batch with end-to-end ROM processing per task
+                async for rom_info, result in self.thread_manager.submit_rom_batch(
                     rom_processor, batch, ui_callback
                 ):
                     rom_count += 1
@@ -744,7 +745,7 @@ class WorkflowOrchestrator:
                         'path': str(rom_info.path)
                     }
                     
-                    # Update UI (footer and queue stats only - threads update themselves)
+                    # Update UI (footer and queue stats only - tasks update themselves)
                     # Count skipped ROMs (those with neither success nor error)
                     skipped = sum(1 for r in results if not r.success and not r.error)
                     self._update_ui_progress(
@@ -870,7 +871,7 @@ class WorkflowOrchestrator:
         
         return media_paths, media_count
     
-    def _search_fallback(
+    async def _search_fallback(
         self,
         rom_info: ROMInfo,
         preferred_regions: List[str]
@@ -890,7 +891,7 @@ class WorkflowOrchestrator:
         """
         try:
             # Search API
-            results = self.api_client.search_game(
+            results = await self.api_client.search_game(
                 rom_info,
                 max_results=self.search_max_results
             )

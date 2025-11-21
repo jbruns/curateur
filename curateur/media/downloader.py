@@ -4,11 +4,11 @@ Image downloader with validation.
 Downloads images from URLs with retry logic and validates them using Pillow.
 """
 
+import asyncio
 import os
-import time
 from pathlib import Path
 from typing import Optional, Tuple
-import requests
+import httpx
 from PIL import Image
 from io import BytesIO
 
@@ -36,6 +36,7 @@ class ImageDownloader:
     
     def __init__(
         self,
+        client: httpx.AsyncClient,
         timeout: int = 30,
         max_retries: int = 3,
         min_width: int = 50,
@@ -45,21 +46,19 @@ class ImageDownloader:
         Initialize image downloader.
         
         Args:
+            client: httpx.AsyncClient for HTTP requests
             timeout: HTTP request timeout in seconds
             max_retries: Maximum number of retry attempts
             min_width: Minimum acceptable image width in pixels
             min_height: Minimum acceptable image height in pixels
         """
+        self.client = client
         self.timeout = timeout
         self.max_retries = max_retries
         self.min_width = min_width
         self.min_height = min_height
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'curateur/1.0.0'
-        })
     
-    def download(
+    async def download(
         self,
         url: str,
         output_path: Path,
@@ -77,7 +76,7 @@ class ImageDownloader:
             Tuple of (success: bool, error_message: str or None)
             
         Example:
-            success, error = downloader.download(
+            success, error = await downloader.download(
                 'https://example.com/image.jpg',
                 Path('covers/game.jpg')
             )
@@ -91,7 +90,7 @@ class ImageDownloader:
         for attempt in range(self.max_retries):
             try:
                 # Download image data
-                image_data = self._download_with_retry(url, attempt)
+                image_data = await self._download_with_retry(url, attempt)
                 
                 # Validate if requested
                 if validate:
@@ -108,24 +107,20 @@ class ImageDownloader:
                 
                 return True, None
                 
-            except requests.RequestException as e:
+            except (httpx.HTTPError, httpx.TimeoutException) as e:
                 if attempt == self.max_retries - 1:
                     return False, f"Download failed after {self.max_retries} attempts: {e}"
                 
-                # Wait before retry (in small chunks to keep UI responsive)
+                # Wait before retry with async sleep
                 delay = 2 ** attempt
-                remaining = delay
-                while remaining > 0:
-                    chunk = min(remaining, 0.1)  # 100ms chunks
-                    time.sleep(chunk)
-                    remaining -= chunk
+                await asyncio.sleep(delay)
             
             except Exception as e:
                 return False, f"Unexpected error: {e}"
         
         return False, "Download failed (max retries exceeded)"
     
-    def _download_with_retry(self, url: str, attempt: int) -> bytes:
+    async def _download_with_retry(self, url: str, attempt: int) -> bytes:
         """
         Download image data from URL.
         
@@ -137,9 +132,13 @@ class ImageDownloader:
             Image data as bytes
             
         Raises:
-            requests.RequestException: If download fails
+            httpx.HTTPError: If download fails
         """
-        response = self.session.get(url, timeout=self.timeout)
+        response = await self.client.get(
+            url, 
+            timeout=self.timeout,
+            headers={'User-Agent': 'curateur/1.0.0'}
+        )
         response.raise_for_status()
         
         # Check content type (allow images, PDFs, videos, and generic downloads)

@@ -14,8 +14,10 @@ authors = [
 dependencies = [
     "PyYAML>=6.0",
     "lxml>=4.9.0",
-    "requests>=2.31.0",
+    "httpx>=0.24.0",
     "Pillow>=10.0.0",
+    "rich>=13.0.0",
+    "psutil>=5.9.0",
 ]
 
 [project.scripts]
@@ -25,6 +27,9 @@ curateur = "curateur.cli:main"
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "respx>=0.20.0",  # HTTP mocking for httpx
 ]
 
 [tool.setuptools]

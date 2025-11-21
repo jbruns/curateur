@@ -218,7 +218,8 @@ def main(argv: Optional[list] = None) -> int:
     
     # Run main scraping workflow
     try:
-        return run_scraper(config, args)
+        import asyncio
+        return asyncio.run(run_scraper(config, args))
     except KeyboardInterrupt:
         print("\n\nScraping interrupted by user.", file=sys.stderr)
         return 130
@@ -227,9 +228,9 @@ def main(argv: Optional[list] = None) -> int:
         return 1
 
 
-def run_scraper(config: dict, args: argparse.Namespace) -> int:
+async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     """
-    Run the main scraping workflow.
+    Run the main scraping workflow (async).
     
     Args:
         config: Loaded configuration
@@ -256,10 +257,10 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     else:
         systems = all_systems
     
-    # Phase D: Initialize connection pool manager
+    # Phase D: Initialize async connection pool manager
     from curateur.api.connection_pool import ConnectionPoolManager
     conn_manager = ConnectionPoolManager(config)
-    session = conn_manager.get_session(max_connections=10)
+    client = await conn_manager.get_client(max_connections=10)
     
     # Phase E: Validate API configuration
     max_retries = config.get('api', {}).get('max_retries', 3)
@@ -289,7 +290,7 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     work_queue = WorkQueueManager(max_retries=max_retries)
     
     # Initialize API client with throttle_manager
-    api_client = ScreenScraperClient(config, throttle_manager=throttle_manager, session=session)
+    api_client = ScreenScraperClient(config, throttle_manager=throttle_manager, client=client)
     
     # Phase D: Initialize thread pool manager and get API limits
     from curateur.workflow.thread_pool import ThreadPoolManager
@@ -366,8 +367,8 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
             print(f"Search fallback: ENABLED (threshold: {search_config.get('confidence_threshold', 0.7):.1%})")
             if search_config.get('interactive_search'):
                 print(f"Interactive mode: ENABLED")
-        if thread_manager and thread_manager.max_threads > 1:
-            print(f"Parallel processing: {thread_manager.max_threads} threads")
+        if thread_manager and thread_manager.max_concurrent > 1:
+            print(f"Parallel processing: {thread_manager.max_concurrent} threads")
         print(f"{'='*60}\n")
     
     # Process each system
@@ -391,7 +392,7 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
                         total_systems=len(systems)
                     )
                 
-                result = orchestrator.scrape_system(
+                result = await orchestrator.scrape_system(
                     system=system,
                     media_types=media_types_to_scrape,
                     preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
@@ -447,10 +448,10 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
                     logger.warning(f"  - {item['rom_info'].get('filename', 'unknown')}: {item['error']}")
         
         if thread_manager:
-            thread_manager.shutdown(wait=True)
+            await thread_manager.shutdown(wait=True)
         
         if conn_manager:
-            conn_manager.close_session()
+            await conn_manager.close_client()
         
         # Reset throttle manager state
         if throttle_manager:
@@ -532,6 +533,10 @@ def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Write error log if needed
     if error_logger.has_errors():
         error_logger.write_summary('scraping_errors.log')
+    
+    # Cleanup: close async client
+    if conn_manager:
+        await conn_manager.close_client()
     
     return 0
 
