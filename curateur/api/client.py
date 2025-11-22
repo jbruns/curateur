@@ -67,6 +67,7 @@ class ScreenScraperClient:
         self.max_retries = config.get('api', {}).get('max_retries', 3)
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
+        self._quota_warning_threshold = config.get('scraping', {}).get('quota_warning_threshold', 0.95)
         
         # HTTP client (use provided or None - caller must provide)
         self.client = client
@@ -155,6 +156,105 @@ class ScreenScraperClient:
                 raise SkippableAPIError("Name verification failed")
         
         return game_data
+    
+    async def get_user_info(self) -> Dict[str, Any]:
+        """
+        Authenticate and get user information from ssuserInfos.php.
+        
+        This should be called before any processing to:
+        1. Validate credentials and user access level
+        2. Get maxthreads for thread pool sizing
+        3. Get quota info for tracking and display
+        
+        Returns:
+            User limits dict with maxthreads, maxrequestspermin, requeststoday, etc.
+            
+        Raises:
+            SystemExit: If authentication fails or user level insufficient
+        """
+        # Wait for rate limit (though this is typically the first call)
+        await self.throttle_manager.wait_if_needed('ssuserInfos.php')
+        
+        # Build parameters
+        params = {
+            'devid': self.devid,
+            'devpassword': self.devpassword,
+            'softname': self.softname,
+            'ssid': self.ssid,
+            'sspassword': self.sspassword,
+            'output': 'xml'
+        }
+        
+        # Make request
+        url = f"{self.BASE_URL}/ssuserInfos.php"
+        
+        # Log request with redacted credentials
+        if logger.isEnabledFor(logging.DEBUG):
+            redacted_url = self._build_redacted_url(url, params)
+            logger.debug(f"API Request (authentication): {redacted_url}")
+        
+        try:
+            response = await self.client.get(
+                url,
+                params=params,
+                timeout=self.request_timeout
+            )
+        except httpx.TimeoutException:
+            logger.error("Authentication failed: Request timeout - network error, retry possible")
+            raise SystemExit(1)
+        except httpx.ConnectError:
+            logger.error("Authentication failed: Connection error - network error, retry possible")
+            raise SystemExit(1)
+        except Exception as e:
+            logger.error(f"Authentication failed: Network error - {e}")
+            raise SystemExit(1)
+        
+        # Check HTTP status
+        if response.status_code == 401 or response.status_code == 403:
+            logger.error("Authentication failed: Invalid credentials - check config.yaml user_id and user_password")
+            raise SystemExit(1)
+        elif response.status_code != 200:
+            logger.error(f"Authentication failed: HTTP {response.status_code}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Response body: {response.text}")
+            raise SystemExit(1)
+        
+        # Validate and parse response
+        try:
+            root = validate_response(response.content, expected_format='xml')
+        except ResponseError as e:
+            logger.error(f"Authentication failed: Invalid XML response - {e}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Response body: {response.text}")
+            raise SystemExit(1)
+        
+        # Extract user info
+        user_info = parse_user_info(root)
+        if not user_info:
+            logger.error("Authentication failed: No user info in response")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Response body: {response.text}")
+            raise SystemExit(1)
+        
+        # Validate user level (niveau == 1 required for API access)
+        niveau = user_info.get('niveau')
+        if niveau != 1:
+            logger.error(f"Authentication failed: User level {niveau} insufficient (niveau=1 required)")
+            raise SystemExit(1)
+        
+        # Store user limits
+        async with self._user_limits_lock:
+            self._user_limits = user_info
+            self._rate_limits_initialized = True
+        
+        # Log success with username
+        username = user_info.get('id', 'unknown')
+        logger.info(f"Authenticated as ScreenScraper user: {username}")
+        logger.info(f"API limits: maxthreads={user_info.get('maxthreads')}, "
+                   f"maxrequestsperday={user_info.get('maxrequestsperday')}, "
+                   f"maxrequestspermin={user_info.get('maxrequestspermin')}")
+        
+        return user_info
     
     async def _query_jeu_infos(
         self,
@@ -266,6 +366,12 @@ class ScreenScraperClient:
                     if new_requests > old_requests:
                         self._user_limits = new_user_info
                         logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
+            
+            # Update throttle manager quota tracking
+            await self.throttle_manager.update_quota(new_user_info)
+            
+            # Check quota thresholds and log warnings if exceeded
+            await self.throttle_manager.check_quota_threshold(self._quota_warning_threshold)
         
         # Parse game info
         try:
@@ -442,39 +548,16 @@ class ScreenScraperClient:
         
         return results
     
-    def get_rate_limits(self) -> Dict[str, Any]:
-        """
-        Get current rate limit information.
-        
-        Returns:
-            Dictionary with rate limit info from throttle manager
-        """
-        # Return stats for all endpoints
-        return {
-            endpoint.value: self.throttle_manager.get_stats(endpoint.value)
-            for endpoint in APIEndpoint
-        }
-    
     def get_user_limits(self) -> Optional[Dict[str, Any]]:
         """
         Get API-provided user limits (maxthreads, maxrequestspermin, etc.).
         
-        This information is only available after the first successful API call.
+        This information is available after get_user_info() or first API call.
         
         Returns:
             Dictionary with user limits from API, or None if not yet initialized
-            Expected keys: maxthreads, maxrequestspermin, maxrequestsperday, requeststoday
+            Expected keys: maxthreads, maxrequestspermin, maxrequestsperday, requeststoday,
+                          requestskotoday, maxrequestskoperday
         """
         return self._user_limits
-    
-    def get_user_limits(self) -> Optional[Dict[str, Any]]:
-        """
-        Get API-provided user limits (maxthreads, maxrequestspermin, etc.).
-        
-        This information is only available after the first successful API call.
-        
-        Returns:
-            Dictionary with user limits from API, or None if not yet initialized
-            Expected keys: maxthreads, maxrequestspermin, maxrequestsperday, requeststoday
-        """
-        return self._user_limits
+

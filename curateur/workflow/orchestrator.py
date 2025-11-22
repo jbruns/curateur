@@ -83,7 +83,8 @@ class WorkflowOrchestrator:
         preferred_regions: Optional[List[str]] = None,
         thread_manager: Optional['ThreadPoolManager'] = None,
         performance_monitor: Optional['PerformanceMonitor'] = None,
-        console_ui: Optional['ConsoleUI'] = None
+        console_ui: Optional['ConsoleUI'] = None,
+        throttle_manager: Optional['ThrottleManager'] = None
     ):
         """
         Initialize workflow orchestrator.
@@ -103,6 +104,7 @@ class WorkflowOrchestrator:
             thread_manager: Optional ThreadPoolManager for parallel operations
             performance_monitor: Optional PerformanceMonitor for metrics tracking
             console_ui: Optional ConsoleUI for rich display
+            throttle_manager: Optional ThrottleManager for quota tracking
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
@@ -120,12 +122,10 @@ class WorkflowOrchestrator:
         self.thread_manager = thread_manager
         self.performance_monitor = performance_monitor
         self.console_ui = console_ui
+        self.throttle_manager = throttle_manager
         
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
-        
-        # Track if we've scaled thread pools based on API limits
-        self._thread_pools_scaled = False
     
     async def scrape_system(
         self,
@@ -300,7 +300,7 @@ class WorkflowOrchestrator:
             api_start = time.time()
             
             # Emit BEFORE starting the API call
-            emit(Operations.FETCHING_METADATA, "ScreenScraper API...")
+            emit(Operations.FETCHING_METADATA, "Fetching metadata...")
             
             try:
                 game_info = await self.api_client.query_game(rom_info)
@@ -313,20 +313,6 @@ class WorkflowOrchestrator:
                 logger.debug(f"Hash lookup successful for {rom_info.filename}")
                 # Increment task counter but don't emit completion status
                 completed_tasks += 1
-                
-                # After first successful API call, check if we should scale thread pools
-                if not self._thread_pools_scaled and self.thread_manager:
-                    user_limits = self.api_client.get_user_limits()
-                    if user_limits:
-                        logger.info(f"API limits received for rescaling: {user_limits}")
-                        
-                        # Attempt to rescale pools based on actual API limits
-                        scaled = await self.thread_manager.rescale_pools(user_limits)
-                        if scaled:
-                            logger.info("Task pool dynamically scaled based on API limits")
-                        else:
-                            logger.info("Task pool rescale not needed (already at correct size)")
-                        self._thread_pools_scaled = True
                 
             except SkippableAPIError as e:
                 logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
@@ -386,18 +372,31 @@ class WorkflowOrchestrator:
                         media_list.extend(media_items)
                     
                     if media_list:
-                        # Update total tasks with media count (reset progress bar)
-                        total_tasks = completed_tasks + len(media_list)
-                        emit(Operations.downloading_media(0, len(media_list), 'preparing'), Operations.media_summary(0, len(media_list)))
-                        
-                        download_results = await media_downloader.download_media_for_game(
+                        # Download media and get filtered count
+                        download_results, selected_count = await media_downloader.download_media_for_game(
                             media_list=media_list,
                             rom_path=str(rom_info.path),
                             system=system.name
                         )
                         
-                        # Process results - just count, don't emit for each one
-                        for result in download_results:
+                        # Update total tasks with selected media count
+                        total_tasks = completed_tasks + selected_count
+                        
+                        # Process results and emit progress for each
+                        for idx, result in enumerate(download_results, 1):
+                            # Get ES-DE media type name
+                            from curateur.media.media_types import get_directory_for_media_type
+                            try:
+                                esde_type = get_directory_for_media_type(result.media_type)
+                            except ValueError:
+                                esde_type = result.media_type
+                            
+                            # Emit progress with media type
+                            emit(
+                                Operations.downloading_media(idx, selected_count, esde_type),
+                                Operations.media_summary(media_downloaded_count + (1 if result.success else 0), selected_count)
+                            )
+                            
                             if result.success and result.file_path:
                                 media_paths[result.media_type] = result.file_path
                                 media_count += 1
@@ -413,7 +412,9 @@ class WorkflowOrchestrator:
                 # Log but don't fail the entire ROM for media errors
                 logger.warning(f"Media download error for {rom_info.filename}: {e}")
             
-            # Don't emit final completion status - let worker go idle naturally
+            # Release worker ID so it can be reused for next ROM
+            if operation_callback and self.console_ui:
+                self.console_ui._release_worker_id(task_name)
             
             return ScrapingResult(
                 rom_path=rom_path,
@@ -426,6 +427,11 @@ class WorkflowOrchestrator:
             
         except Exception as e:
             logger.error(f"Error scraping {rom_info.filename}: {e}")
+            
+            # Release worker ID on error too
+            if operation_callback and self.console_ui:
+                self.console_ui._release_worker_id(task_name)
+            
             return ScrapingResult(
                 rom_path=rom_path,
                 success=False,
@@ -571,20 +577,38 @@ class WorkflowOrchestrator:
                 self.console_ui.clear_worker_operation(i)  # Pass integer, not string
         
         # Populate work queue with all ROM entries
-        for rom_info in rom_entries:
-            rom_info_dict = {
-                'filename': rom_info.filename,
-                'path': str(rom_info.path),
-                'system': rom_info.system,
-                'file_size': rom_info.file_size,
-                'hash_type': rom_info.hash_type,
-                'hash_value': rom_info.hash_value,
-                'query_filename': rom_info.query_filename,
-                'query_filename': rom_info.query_filename,
-                'basename': rom_info.basename,
-                'rom_type': rom_info.rom_type.value  # Serialize enum as string
-            }
-            self.work_queue.add_work(rom_info_dict, 'full_scrape', Priority.NORMAL)
+        logger.info(f"Populating work queue with {len(rom_entries)} ROM entries")
+        successfully_added = 0
+        for idx, rom_info in enumerate(rom_entries):
+            try:
+                # Removed excessive debug logging that was causing BrokenPipeError with Rich
+                rom_info_dict = {
+                    'filename': rom_info.filename,
+                    'path': str(rom_info.path),
+                    'system': rom_info.system,
+                    'file_size': rom_info.file_size,
+                    'hash_type': rom_info.hash_type,
+                    'hash_value': rom_info.hash_value,
+                    'query_filename': rom_info.query_filename,
+                    'basename': rom_info.basename,
+                    'rom_type': rom_info.rom_type.value  # Serialize enum as string
+                }
+                self.work_queue.add_work(rom_info_dict, 'full_scrape', Priority.NORMAL)
+                successfully_added += 1
+            except KeyboardInterrupt:
+                logger.warning(f"Keyboard interrupt received while adding ROM {idx} to queue")
+                raise
+            except SystemExit as e:
+                logger.error(f"SystemExit raised while adding ROM {idx} ({rom_info.filename}): exit code {e.code}", exc_info=True)
+                raise
+            except BaseException as e:
+                logger.error(f"BaseException raised while adding ROM {idx} ({rom_info.filename}): {type(e).__name__}: {e}", exc_info=True)
+                raise
+            except Exception as e:
+                logger.error(f"Failed to add ROM {idx} ({rom_info.filename}) to work queue: {e}", exc_info=True)
+                raise
+        
+        logger.info(f"Work queue populated: successfully added {successfully_added}/{len(rom_entries)}, queue reports {self.work_queue.get_stats()['pending']} items queued")
         
         # Define work item processor
         async def process_work_item(work_item) -> dict:
@@ -615,32 +639,6 @@ class WorkflowOrchestrator:
                     if self.performance_monitor:
                         self.performance_monitor.record_api_call()
                     logger.debug(f"Hash lookup successful for {rom_info.filename}")
-                    
-                    # After first successful API call, check if we should scale thread pools
-                    if not self._thread_pools_scaled and self.thread_manager:
-                        user_limits = self.api_client.get_user_limits()
-                        if user_limits:
-                            logger.info(f"API limits received: {user_limits}")
-                            
-                            # Immediately update footer with fresh API limits
-                            if self.console_ui:
-                                self.console_ui.update_footer(
-                                    stats={'successful': 0, 'failed': 0, 'skipped': 0},
-                                    api_quota={
-                                        'requests_today': user_limits.get('requeststoday', 0),
-                                        'max_requests_per_day': user_limits.get('maxrequestsperday', 0)
-                                    },
-                                    thread_stats={
-                                        'active_threads': 0,
-                                        'max_threads': user_limits.get('maxthreads', 1)
-                                    }
-                                )
-                            
-                            # Attempt to rescale pools based on actual API limits
-                            scaled = self.thread_manager.rescale_pools(user_limits)
-                            if scaled:
-                                logger.info("Thread pools dynamically scaled based on API limits")
-                            self._thread_pools_scaled = True
                     
                 except Exception as e:
                     # Categorize error for selective retry
@@ -713,13 +711,13 @@ class WorkflowOrchestrator:
             ui_callback = self._create_ui_callback()
             rom_processor = self._create_rom_processor(system, media_types, preferred_regions)
             
+            logger.info(f"Starting work queue processing loop. Queue status: is_empty={self.work_queue.is_empty()}, qsize={self.work_queue.queue.qsize()}, stats={self.work_queue.get_stats()}")
+            
+            # Process work continuously, feeding workers as they become available
             while not self.work_queue.is_empty():
-                # Apply any pending rescale from previous batch
-                if await self.thread_manager.apply_pending_rescale():
-                    logger.info(f"Task pool rescaled, new max: {self.thread_manager.max_concurrent}")
-                
-                # Recalculate batch size to adapt to dynamic task pool rescaling
-                batch_size = self.thread_manager.max_concurrent * 2  # Keep tasks fed
+                # Get larger batch to keep workers continuously fed
+                # Use 2x workers to ensure new work is queued while current work processes
+                batch_size = self.thread_manager.max_concurrent * 2
                 
                 # Get batch of work items and extract ROMInfo objects
                 batch = []
@@ -747,6 +745,7 @@ class WorkflowOrchestrator:
                         break
                 
                 if not batch:
+                    logger.warning(f"Empty batch retrieved from work queue. Queue status: is_empty={self.work_queue.is_empty()}, qsize={self.work_queue.queue.qsize()}, stats={self.work_queue.get_stats()}")
                     break
                 
                 # Process batch with end-to-end ROM processing per task
@@ -867,7 +866,7 @@ class WorkflowOrchestrator:
                     media_list.extend(media_items)
                 
                 if media_list:
-                    download_results = media_downloader.download_media_for_game(
+                    download_results, selected_count = media_downloader.download_media_for_game(
                         media_list=media_list,
                         rom_path=str(rom_info.path),
                         system=system.name
@@ -1148,12 +1147,10 @@ class WorkflowOrchestrator:
                 'max_threads': stats.get('max_threads', 1)
             }
         
-        # Get real API quota from user limits
-        user_limits = self.api_client.get_user_limits() or {}
-        api_quota = {
-            'requests_today': user_limits.get('requeststoday', 0),
-            'max_requests_per_day': user_limits.get('maxrequestsperday', 0)
-        }
+        # Get API quota from throttle manager
+        api_quota = {}
+        if self.throttle_manager:
+            api_quota = self.throttle_manager.get_quota_stats()
         
         self.console_ui.update_footer(
             stats={

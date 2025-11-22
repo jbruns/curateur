@@ -88,17 +88,24 @@ class TestOrchestratorWithThreadPool:
     ):
         """Test that orchestrator uses thread pool when available"""
         # Setup
+        from curateur.workflow.work_queue import WorkQueueManager
+        from curateur.api.throttle import ThrottleManager, RateLimit
+        
         api_client = Mock(spec=ScreenScraperClient)
         thread_manager = ThreadPoolManager(mock_config)
         thread_manager.initialize_pools({'maxthreads': 4})
+        work_queue = WorkQueueManager(max_retries=3)
+        throttle_manager = ThrottleManager(default_limit=RateLimit(calls=120, window_seconds=60))
         
         orchestrator = WorkflowOrchestrator(
             api_client=api_client,
             rom_directory=Path('/tmp/roms'),
             media_directory=Path('/tmp/media'),
             gamelist_directory=Path('/tmp/gamelists'),
+            work_queue=work_queue,
             dry_run=False,
-            thread_manager=thread_manager
+            thread_manager=thread_manager,
+            throttle_manager=throttle_manager
         )
         
         # Mock scan_system to return ROMs
@@ -132,19 +139,26 @@ class TestOrchestratorWithThreadPool:
     ):
         """Test that performance monitor tracks metrics during scraping"""
         # Setup
+        from curateur.workflow.work_queue import WorkQueueManager
+        from curateur.api.throttle import ThrottleManager, RateLimit
+        
         api_client = Mock(spec=ScreenScraperClient)
         thread_manager = ThreadPoolManager(mock_config)
         thread_manager.initialize_pools({'maxthreads': 2})
         performance_monitor = PerformanceMonitor(total_roms=2)
+        work_queue = WorkQueueManager(max_retries=3)
+        throttle_manager = ThrottleManager(default_limit=RateLimit(calls=120, window_seconds=60))
         
         orchestrator = WorkflowOrchestrator(
             api_client=api_client,
             rom_directory=Path('/tmp/roms'),
             media_directory=Path('/tmp/media'),
             gamelist_directory=Path('/tmp/gamelists'),
+            work_queue=work_queue,
             dry_run=False,
             thread_manager=thread_manager,
-            performance_monitor=performance_monitor
+            performance_monitor=performance_monitor,
+            throttle_manager=throttle_manager
         )
         
         # Mock scan_system
@@ -179,17 +193,24 @@ class TestOrchestratorWithThreadPool:
     ):
         """Test that errors in parallel processing don't crash entire batch"""
         # Setup
+        from curateur.workflow.work_queue import WorkQueueManager
+        from curateur.api.throttle import ThrottleManager, RateLimit
+        
         api_client = Mock(spec=ScreenScraperClient)
         thread_manager = ThreadPoolManager(mock_config)
         thread_manager.initialize_pools({'maxthreads': 2})
+        work_queue = WorkQueueManager(max_retries=3)
+        throttle_manager = ThrottleManager(default_limit=RateLimit(calls=120, window_seconds=60))
         
         orchestrator = WorkflowOrchestrator(
             api_client=api_client,
             rom_directory=Path('/tmp/roms'),
             media_directory=Path('/tmp/media'),
             gamelist_directory=Path('/tmp/gamelists'),
+            work_queue=work_queue,
             dry_run=False,
-            thread_manager=thread_manager
+            thread_manager=thread_manager,
+            throttle_manager=throttle_manager
         )
         
         # Mock scan_system

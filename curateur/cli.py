@@ -131,14 +131,20 @@ def _setup_logging(config: dict, console_ui=None) -> None:
     
     # Console handler - use RichHandler to integrate with Rich UI
     if logging_config.get('console', True):
-        console_handler = RichHandler(
-            console=console_ui.console if console_ui else None,  # Link to UI's console
-            show_time=False,  # Rich UI handles time display
-            show_path=False,  # Cleaner output
-            markup=True,
-            rich_tracebacks=True,
-            tracebacks_show_locals=False
-        )
+        if console_ui:
+            # Use RichHandler when UI is active
+            console_handler = RichHandler(
+                console=console_ui.console,  # Link to UI's console
+                show_time=False,  # Rich UI handles time display
+                show_path=False,  # Cleaner output
+                markup=True,
+                rich_tracebacks=True,
+                tracebacks_show_locals=False
+            )
+        else:
+            # Use standard StreamHandler when no UI (avoids BrokenPipeError from Rich)
+            console_handler = logging.StreamHandler()
+        
         console_handler.setLevel(level)
         formatter = logging.Formatter('%(message)s')  # Simplified for Rich
         console_handler.setFormatter(formatter)
@@ -306,18 +312,73 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Initialize API client with throttle_manager
     api_client = ScreenScraperClient(config, throttle_manager=throttle_manager, client=client)
     
-    # Phase D: Initialize thread pool manager and get API limits
+    # Phase D: Initialize thread pool manager
     from curateur.workflow.thread_pool import ThreadPoolManager
     thread_manager = ThreadPoolManager(config)
     
-    # Authenticate and get API limits for thread pool initialization
+    # Phase D: Initialize console UI early for login message
+    from curateur.ui.console_ui import ConsoleUI
+    console_ui = None
+    if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
+        try:
+            console_ui = ConsoleUI(config)
+            console_ui.start()
+            logger.debug("Console UI started successfully")
+            
+            # Reconfigure logging to integrate with console UI
+            _setup_logging(config, console_ui)
+            logger.debug("Logging reconfigured for console UI")
+        except Exception as e:
+            logger.error(f"Could not initialize console UI: {e}", exc_info=True)
+            console_ui = None
+    
+    # Authenticate with ScreenScraper and get user limits
+    logger.debug(f"Starting authentication, console_ui={'active' if console_ui else 'disabled'}")
+    if console_ui:
+        console_ui.update_worker_operation(
+            worker_id=1,
+            rom_name="Authentication",
+            operation="login",
+            details="Logging in to ScreenScraper..."
+        )
+    
     try:
-        # Get rate limits from API (first API call initializes them)
-        api_limits = api_client.get_rate_limits()
-        thread_manager.initialize_pools(api_limits)
+        logger.debug("Calling api_client.get_user_info()")
+        user_limits = await api_client.get_user_info()
+        logger.debug(f"Authentication successful: {user_limits}")
+        
+        # Initialize thread pool with actual API limits
+        thread_manager.initialize_pools(user_limits)
+        logger.debug(f"Thread pool initialized with {thread_manager.max_concurrent} workers")
+        
+        # Update throttle manager with initial quota
+        await throttle_manager.update_quota(user_limits)
+        
+        # Initialize all workers in UI as "Waiting for work..."
+        if console_ui and thread_manager.is_initialized():
+            max_workers = thread_manager.max_concurrent
+            for i in range(1, max_workers + 1):
+                console_ui.clear_worker_operation(i)
+            
+            # Immediately update footer with initial quota/thread stats
+            console_ui.update_footer(
+                stats={'successful': 0, 'failed': 0, 'skipped': 0},
+                api_quota=throttle_manager.get_quota_stats(),
+                thread_stats={
+                    'active_threads': 0,
+                    'max_threads': max_workers
+                }
+            )
+    except SystemExit:
+        # Authentication failed - exit already logged
+        if console_ui:
+            console_ui.stop()
+        raise
     except Exception as e:
-        logger.warning(f"Could not initialize thread pools from API: {e}")
-        thread_manager.initialize_pools(None)  # Use defaults
+        logger.error(f"Unexpected error during authentication: {e}")
+        if console_ui:
+            console_ui.stop()
+        raise SystemExit(1)
     
     # Phase D: Count total ROMs for performance monitor
     total_roms = 0
@@ -337,19 +398,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     from curateur.workflow.performance import PerformanceMonitor
     performance_monitor = PerformanceMonitor(total_roms=total_roms) if total_roms > 0 else None
     
-    # Phase D: Initialize console UI (optional, based on TTY)
-    from curateur.ui.console_ui import ConsoleUI
-    console_ui = None
-    if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
-        try:
-            console_ui = ConsoleUI(config)
-            console_ui.start()
-            
-            # Reconfigure logging to integrate with console UI
-            _setup_logging(config, console_ui)
-        except Exception as e:
-            logger.warning(f"Could not initialize console UI: {e}")
-    
     # Get search configuration (with defaults)
     search_config = config.get('search', {})
     
@@ -368,7 +416,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
         thread_manager=thread_manager,
         performance_monitor=performance_monitor,
-        console_ui=console_ui
+        console_ui=console_ui,
+        throttle_manager=throttle_manager
     )
     
     progress = ProgressTracker()
@@ -443,6 +492,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 progress.finish_system()
                 
             except Exception as e:
+                logger.error(f"Error processing system {system.fullname}: {e}", exc_info=True)
                 print(f"\nError processing system {system.fullname}: {e}")
                 progress.finish_system()
                 continue

@@ -81,7 +81,7 @@ class Operations:
         Returns:
             Formatted operation string
         """
-        return f"Downloading media {current}/{total}: {media_type}"
+        return f"Downloading media: {current}/{total}... {media_type}"
     
     @staticmethod
     def media_summary(downloaded: int, total: int) -> str:
@@ -95,7 +95,7 @@ class Operations:
         Returns:
             Formatted summary string
         """
-        return f"{downloaded}/{total} files downloaded"
+        return f"Media: {downloaded}/{total}"
 
 
 class ConsoleUI:
@@ -339,7 +339,7 @@ class ConsoleUI:
     
     def _release_worker_id(self, worker_name: str) -> None:
         """
-        Release a worker ID back to the pool when worker completes
+        Mark a worker as idle and ready for reassignment when task completes
         
         Args:
             worker_name: Worker identifier to release
@@ -347,17 +347,27 @@ class ConsoleUI:
         if worker_name in self.worker_id_map:
             worker_id = self.worker_id_map[worker_name]
             
-            # Return ID to available pool
+            # Remove the old task name mapping so this worker_id can be reassigned
+            del self.worker_id_map[worker_name]
+            
+            # Mark worker as idle in UI but keep the slot active
+            if worker_id in self.worker_operations:
+                self.worker_operations[worker_id] = {
+                    'rom_name': '<idle>',
+                    'operation': 'idle',
+                    'details': 'Waiting for work...',
+                    'progress': None,
+                    'total_tasks': 0,
+                    'completed_tasks': 0,
+                    'status': 'idle',
+                    'operation_start_time': None,
+                    'worker_name': None  # No longer associated with a task
+                }
+            
+            # Make the worker_id available for reassignment
             self.available_worker_ids.add(worker_id)
             
-            # Clean up tracking
-            del self.worker_id_map[worker_name]
-            if worker_id in self.worker_operations:
-                del self.worker_operations[worker_id]
-            if worker_id in self.last_ui_update:
-                del self.last_ui_update[worker_id]
-            
-            logger.debug(f"Released worker_id={worker_id} from worker_name='{worker_name}'")
+            logger.debug(f"Released worker_id={worker_id} from worker_name='{worker_name}', marked idle and available for reassignment")
     
     def display_system_operation(self, system_name: str, operation: str, details: str) -> None:
         """
@@ -815,14 +825,26 @@ class ConsoleUI:
                 "", ""
             )
             
-            # API quota row
+            # API quota row (with bad requests on same row)
             requests_today = api_quota.get('requests_today', 0)
             max_requests = api_quota.get('max_requests_per_day', 0)
+            bad_requests_today = api_quota.get('requestskotoday', 0)
+            max_bad_requests = api_quota.get('maxrequestskoperday', 0)
             
+            # Get quota threshold from config
+            quota_threshold = self.config.get('scraping', {}).get('quota_warning_threshold', 0.95)
+            
+            # Format API quota
             if max_requests > 0 and requests_today >= 0:
-                quota_pct = (requests_today / max_requests) * 100
-                quota_style = "red" if quota_pct > 90 else "yellow" if quota_pct > 75 else "green"
-                quota_text = f"{requests_today}/{max_requests} ({quota_pct:.1f}%)"
+                quota_pct = requests_today / max_requests
+                # Color code based on percentage: green <80%, yellow 80%-<threshold, red >=threshold
+                if quota_pct >= quota_threshold:
+                    quota_style = "red"
+                elif quota_pct >= 0.80:
+                    quota_style = "yellow"
+                else:
+                    quota_style = "green"
+                quota_text = f"{requests_today}/{max_requests} ({quota_pct:.1%})"
             elif requests_today > 0:
                 # Have requests but no max (shouldn't happen with API data)
                 quota_style = "dim"
@@ -832,9 +854,27 @@ class ConsoleUI:
                 quota_style = "dim"
                 quota_text = "N/A"
             
+            # Format bad requests
+            if max_bad_requests > 0 and bad_requests_today >= 0:
+                bad_quota_pct = bad_requests_today / max_bad_requests
+                # Use same color thresholds as regular quota
+                if bad_quota_pct >= quota_threshold:
+                    bad_quota_style = "red"
+                elif bad_quota_pct >= 0.80:
+                    bad_quota_style = "yellow"
+                else:
+                    bad_quota_style = "green"
+                bad_quota_text = f"{bad_requests_today}/{max_bad_requests} ({bad_quota_pct:.1%})"
+            elif bad_requests_today > 0:
+                bad_quota_style = "dim"
+                bad_quota_text = f"{bad_requests_today}"
+            else:
+                bad_quota_style = "dim"
+                bad_quota_text = "N/A"
+            
             footer_table.add_row(
                 "API Quota:", Text(quota_text, style=quota_style),
-                "", ""
+                "Bad Requests:", Text(bad_quota_text, style=bad_quota_style)
             )
             
             # ScreenScraper worker stats
@@ -847,27 +887,27 @@ class ConsoleUI:
                 )
             
             # Performance metrics
+            avg_api_time = performance_metrics.get('avg_api_time', 0) if performance_metrics else 0
+            avg_rom_time = performance_metrics.get('avg_rom_time', 0) if performance_metrics else 0
+            
+            # Show N/A if no data collected yet (values will be 0 initially)
+            if avg_api_time > 0:
+                api_time_text = f"{avg_api_time:.0f}ms"
+            else:
+                api_time_text = "N/A"
+            
+            if avg_rom_time > 0:
+                rom_time_text = f"{avg_rom_time:.1f}s"
+            else:
+                rom_time_text = "N/A"
+            
+            footer_table.add_row(
+                "Avg API Response:", Text(api_time_text, style="yellow"),
+                "Avg ROM Time:", Text(rom_time_text, style="cyan")
+            )
+            
+            # ETA
             if performance_metrics:
-                avg_api_time = performance_metrics.get('avg_api_time', 0)
-                avg_rom_time = performance_metrics.get('avg_rom_time', 0)
-                
-                # Show N/A if no data collected yet (values will be 0 initially)
-                if avg_api_time > 0:
-                    api_time_text = f"{avg_api_time:.0f}ms"
-                else:
-                    api_time_text = "N/A"
-                
-                if avg_rom_time > 0:
-                    rom_time_text = f"{avg_rom_time:.1f}s"
-                else:
-                    rom_time_text = "N/A"
-                
-                footer_table.add_row(
-                    "Avg API Response:", Text(api_time_text, style="yellow"),
-                    "Avg ROM Time:", Text(rom_time_text, style="cyan")
-                )
-                
-                # ETA
                 eta = performance_metrics.get('eta')
                 if eta and isinstance(eta, timedelta):
                     hours = int(eta.total_seconds() // 3600)

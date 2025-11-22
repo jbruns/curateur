@@ -82,96 +82,44 @@ class ThreadPoolManager:
             f"Task pool initialized: {self.max_concurrent} concurrent tasks (ScreenScraper limit)"
         )
     
-    async def rescale_pools(self, api_provided_limits: Dict[str, Any]) -> bool:
-        """
-        Dynamically rescale task pool based on updated API limits.
-        
-        This allows scaling up after the first API response reveals actual maxthreads.
-        
-        Args:
-            api_provided_limits: dict with 'maxthreads' from API response
-        
-        Returns:
-            True if pool was rescaled, False if no change needed
-        """
-        new_max_concurrent = self._determine_max_threads(api_provided_limits)
-        
-        async with self._lock:
-            if not self._initialized:
-                # Not yet initialized, just initialize with new limits
-                logger.info(f"Task pool not yet initialized, initializing with {new_max_concurrent} tasks")
-                self.initialize_pools(api_provided_limits)
-                return True
-            
-            if new_max_concurrent == self.max_concurrent:
-                # No change needed
-                logger.debug(f"Concurrent task count unchanged at {self.max_concurrent}")
-                return False
-            
-            logger.info(
-                f"Rescaling task pool: {self.max_concurrent} -> {new_max_concurrent} concurrent tasks"
-            )
-            
-            # Update max concurrent tasks
-            self.max_concurrent = new_max_concurrent
-            
-            # Create new semaphore with new limit
-            self.semaphore = asyncio.Semaphore(self.max_concurrent)
-            
-            # Reset active work count after rescale
-            self._active_work_count = 0
-            
-            logger.info(
-                f"Task pool rescaled: {self.max_concurrent} concurrent tasks"
-            )
-            return True
-    
-    async def apply_pending_rescale(self) -> bool:
-        """
-        Apply a pending rescale. With async, rescaling is immediate, so this is a no-op.
-        Kept for API compatibility.
-        
-        Returns:
-            False (no pending rescale in async version)
-        """
-        return False
-
     def _determine_max_threads(self, api_limits: Optional[Dict[str, Any]]) -> int:
         """
         Determine max workers considering:
-        1. API-provided maxthreads
-        2. User override (if enabled and valid)
+        1. API-provided maxthreads (authoritative upper bound)
+        2. User override (if enabled) - clamped to API limit
         3. Conservative default (1)
         
         Args:
             api_limits: API-provided limits dict
         
         Returns:
-            Maximum worker count to use
+            Maximum worker count to use (1 <= result <= API maxthreads)
         """
-        # Check for rate limit override
-        from curateur.api.rate_override import RateLimitOverride
-        override = RateLimitOverride(self.config)
-        
-        if override.is_enabled():
-            limits = override.get_effective_limits(api_limits)
-            logger.info(f"Using override maxthreads: {limits.max_threads}")
-            return limits.max_threads
-        
-        # Use API-provided limit
+        # Get API-provided limit (authoritative upper bound)
+        api_maxthreads = None
         if api_limits and 'maxthreads' in api_limits:
-            threads = int(api_limits['maxthreads'])
-            logger.info(f"Using API-provided maxthreads: {threads}")
+            api_maxthreads = int(api_limits['maxthreads'])
+        
+        # Check if rate limit override is enabled
+        rate_limit_override_enabled = self.config.get('scraping', {}).get('rate_limit_override_enabled', False)
+        
+        if rate_limit_override_enabled:
+            # User has override enabled - use RateLimitOverride to get effective limits
+            from curateur.api.rate_override import RateLimitOverride
+            override = RateLimitOverride(self.config)
+            limits = override.get_effective_limits(api_limits)
+            threads = limits.max_threads
+            logger.info(f"Using rate_limit_override maxthreads: {threads}")
             return threads
         
-        # Fall back to config or default
-        config_threads = self.config.get('scraping', {}).get('max_threads', 0)
-        if config_threads > 0:
-            logger.info(f"Using config maxthreads: {config_threads}")
-            return config_threads
+        # Use API-provided limit (no override)
+        if api_maxthreads is not None:
+            logger.info(f"Using API-provided maxthreads: {api_maxthreads}")
+            return api_maxthreads
         
-        logger.info("Using default maxthreads: 1")
-        return 1  # Conservative default
+        # Fall back to conservative default if API limit not available
+        logger.info("Using default maxthreads: 1 (API limit not yet available)")
+        return 1
     
     async def submit_rom_batch(
         self,
@@ -223,19 +171,20 @@ class ThreadPoolManager:
         
         # Create async wrapper that respects semaphore and tracks work
         async def process_with_semaphore(rom):
-            async with self.semaphore:
-                async with self._lock:
-                    self._active_work_count += 1
-                try:
+            # Increment active count before acquiring semaphore (worker is active during entire processing)
+            async with self._lock:
+                self._active_work_count += 1
+            try:
+                async with self.semaphore:
                     result = await rom_processor(rom, operation_callback)
                     return (rom, result)
-                except Exception as e:
-                    logger.error(f"ROM processing failed for {rom}: {e}")
-                    return (rom, {'error': str(e)})
-                finally:
-                    async with self._lock:
-                        if not self._shutdown_flag:
-                            self._active_work_count = max(0, self._active_work_count - 1)
+            except Exception as e:
+                logger.error(f"ROM processing failed for {rom}: {e}")
+                return (rom, {'error': str(e)})
+            finally:
+                async with self._lock:
+                    if not self._shutdown_flag:
+                        self._active_work_count = max(0, self._active_work_count - 1)
         
         # Create all tasks
         tasks = [asyncio.create_task(process_with_semaphore(rom)) for rom in rom_batch]

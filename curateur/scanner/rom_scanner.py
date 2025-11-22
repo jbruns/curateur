@@ -1,5 +1,6 @@
 """Main ROM scanner implementation."""
 
+import logging
 import os
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
@@ -13,6 +14,8 @@ from curateur.scanner.disc_handler import (
     validate_disc_subdirectory,
     DiscSubdirError
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ScannerError(Exception):
@@ -51,6 +54,7 @@ def scan_system(
     # Scan directory
     try:
         entries = list(rom_path.iterdir())
+        logger.info(f"Found {len(entries)} entries in {rom_path}")
     except PermissionError as e:
         raise ScannerError(f"Permission denied accessing ROM directory: {rom_path}")
     except Exception as e:
@@ -99,6 +103,7 @@ def scan_system(
                 f"both {' and '.join(types)} present. Skipping both."
             )
     
+    logger.info(f"Scan complete: {len(roms)} ROMs found after processing {len(entries)} entries and resolving {len(conflicts)} conflicts")
     return roms
 
 

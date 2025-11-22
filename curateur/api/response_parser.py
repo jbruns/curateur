@@ -266,9 +266,10 @@ def parse_user_info(root: etree.Element) -> Dict[str, Any]:
     
     user_info = {}
     
-    # Extract rate limits
+    # Extract rate limits and quota info
     for field in ['id', 'niveau', 'contribution', 'maxthreads', 
-                  'maxrequestspermin', 'requeststoday', 'maxrequestsperday']:
+                  'maxrequestspermin', 'requeststoday', 'maxrequestsperday',
+                  'requestskotoday', 'maxrequestskoperday']:
         elem = ssuser_elem.find(field)
         if elem is not None and elem.text:
             try:

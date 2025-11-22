@@ -163,15 +163,19 @@ class TestNotFoundHandling:
         ]
         
         # Create orchestrator with temp paths
+        from curateur.api.throttle import ThrottleManager, RateLimit
+        
         api_client = Mock()
         work_queue = WorkQueueManager(max_retries=3)
+        throttle_manager = ThrottleManager(default_limit=RateLimit(calls=120, window_seconds=60))
         
         orchestrator = WorkflowOrchestrator(
             api_client=api_client,
             rom_directory=tmp_path / 'roms',
             media_directory=tmp_path / 'media',
             gamelist_directory=tmp_path / 'gamelists',
-            work_queue=work_queue
+            work_queue=work_queue,
+            throttle_manager=throttle_manager
         )
         
         # Write summary

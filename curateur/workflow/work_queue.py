@@ -95,10 +95,11 @@ class WorkQueueManager:
             sort_key = (priority.value, self._item_counter)
         
         self.queue.put((sort_key, item))
-        logger.debug(
-            f"Added work: {rom_info.get('filename', 'unknown')} "
-            f"(action={action}, priority={priority.name})"
-        )
+        # Temporarily disabled to reduce log noise
+        # logger.debug(
+        #     f"Added work: {rom_info.get('filename', 'unknown')} "
+        #     f"(action={action}, priority={priority.name})"
+        # )
     
     def get_work(self, timeout: Optional[float] = None) -> Optional[WorkItem]:
         """
@@ -179,7 +180,7 @@ class WorkQueueManager:
         Returns:
             True if no work items in queue
         """
-        return self.queue.empty()
+        return self.queue.qsize() == 0
     
     def get_stats(self) -> dict:
         """

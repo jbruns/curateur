@@ -143,6 +143,14 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
                 f"scraping.name_verification must be one of: {', '.join(valid_modes)}"
             )
     
+    # Validate quota_warning_threshold
+    if 'quota_warning_threshold' in section:
+        threshold = section['quota_warning_threshold']
+        if not isinstance(threshold, (int, float)):
+            errors.append("scraping.quota_warning_threshold must be a number")
+        elif threshold < 0.0 or threshold > 1.0:
+            errors.append("scraping.quota_warning_threshold must be between 0.0 and 1.0")
+    
     return errors
 
 

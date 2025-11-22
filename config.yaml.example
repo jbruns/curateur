@@ -174,6 +174,13 @@ scraping:
   # Note: strict=exact, normal=normalized, lenient=fuzzy, disabled=skip check
   name_verification: normal
   
+  # Quota warning threshold
+  # Purpose: Log warning when approaching API quota limits (daily requests or bad requests)
+  # Valid: 0.0 - 1.0 (0.95 = warn at 95% usage)
+  # Default: 0.95
+  # Note: Warning logged once per session when threshold crossed for either quota type
+  quota_warning_threshold: 0.95
+  
   # Advanced: Rate limit override (use with caution)
   # Purpose: Override API-provided rate limits for advanced scenarios
   # Valid: true | false

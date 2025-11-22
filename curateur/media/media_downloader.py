@@ -102,7 +102,7 @@ class MediaDownloader:
         media_list: List[Dict],
         rom_path: str,
         system: str
-    ) -> List[DownloadResult]:
+    ) -> tuple[List[DownloadResult], int]:
         """
         Download all enabled media for a game concurrently.
         
@@ -112,15 +112,16 @@ class MediaDownloader:
             system: System name (e.g., 'nes', 'snes')
             
         Returns:
-            List of DownloadResult objects
+            Tuple of (list of DownloadResult objects, count of media to download)
             
         Example:
-            results = await downloader.download_media_for_game(
+            results, selected_count = await downloader.download_media_for_game(
                 api_response['media'],
                 'Super Mario Bros (USA).nes',
                 'nes'
             )
             
+            print(f"Downloading {selected_count} media files")
             for result in results:
                 if result.success:
                     print(f"Downloaded {result.media_type} to {result.file_path}")
@@ -145,7 +146,7 @@ class MediaDownloader:
         ]
         
         results = await asyncio.gather(*download_tasks)
-        return list(results)
+        return list(results), len(selected_media)
     
     async def _download_single_media(
         self,

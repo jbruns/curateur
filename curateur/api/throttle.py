@@ -69,6 +69,17 @@ class ThrottleManager:
         self.consecutive_429s = {}  # endpoint -> count for exponential backoff
         self.backoff_multiplier = {}  # endpoint -> current multiplier
         self.global_lock = asyncio.Lock()
+        
+        # Quota tracking from ScreenScraper API
+        self.requeststoday = 0
+        self.maxrequestsperday = 0
+        self.requestskotoday = 0
+        self.maxrequestskoperday = 0
+        
+        # Session-wide threshold warning flags
+        self._quota_threshold_warned = False
+        self._bad_quota_threshold_warned = False
+        self._quota_lock = asyncio.Lock()
     
     async def _get_endpoint_lock(self, endpoint: str) -> asyncio.Lock:
         """Get or create lock for endpoint"""
@@ -288,3 +299,72 @@ class ThrottleManager:
             self.consecutive_429s.clear()
             self.backoff_multiplier.clear()
             logger.info("Reset all throttles")
+    
+    async def update_quota(self, user_limits: dict) -> None:
+        """
+        Update quota information from API response
+        
+        Thread-safe update of quota fields from ScreenScraper user info.
+        
+        Args:
+            user_limits: Dictionary with user quota fields from API response
+        """
+        async with self._quota_lock:
+            if 'requeststoday' in user_limits:
+                self.requeststoday = int(user_limits['requeststoday'])
+            if 'maxrequestsperday' in user_limits:
+                self.maxrequestsperday = int(user_limits['maxrequestsperday'])
+            if 'requestskotoday' in user_limits:
+                self.requestskotoday = int(user_limits['requestskotoday'])
+            if 'maxrequestskoperday' in user_limits:
+                self.maxrequestskoperday = int(user_limits['maxrequestskoperday'])
+    
+    async def check_quota_threshold(self, threshold: float) -> None:
+        """
+        Check if quota threshold is exceeded and log warning once per session
+        
+        Calculates percentage usage for both regular and bad request quotas,
+        logging a WARNING once per session when threshold is crossed for each type.
+        
+        Args:
+            threshold: Warning threshold as float 0.0-1.0 (e.g., 0.95 = 95%)
+        """
+        async with self._quota_lock:
+            # Check regular request quota
+            if self.maxrequestsperday > 0 and not self._quota_threshold_warned:
+                usage_pct = self.requeststoday / self.maxrequestsperday
+                if usage_pct >= threshold:
+                    logger.warning(
+                        f"API quota threshold exceeded: {self.requeststoday}/{self.maxrequestsperday} "
+                        f"requests today ({usage_pct:.1%} >= {threshold:.1%})"
+                    )
+                    self._quota_threshold_warned = True
+            
+            # Check bad request quota
+            if self.maxrequestskoperday > 0 and not self._bad_quota_threshold_warned:
+                bad_usage_pct = self.requestskotoday / self.maxrequestskoperday
+                if bad_usage_pct >= threshold:
+                    logger.warning(
+                        f"API bad request quota threshold exceeded: {self.requestskotoday}/{self.maxrequestskoperday} "
+                        f"bad requests today ({bad_usage_pct:.1%} >= {threshold:.1%})"
+                    )
+                    self._bad_quota_threshold_warned = True
+    
+    def get_quota_stats(self) -> dict:
+        """
+        Get current quota statistics
+        
+        Returns flat dict with all quota fields for UI display.
+        Synchronous method for use in non-async contexts.
+        
+        Returns:
+            Dictionary with requeststoday, maxrequestsperday, 
+            requestskotoday, maxrequestskoperday
+        """
+        return {
+            'requeststoday': self.requeststoday,
+            'maxrequestsperday': self.maxrequestsperday,
+            'requestskotoday': self.requestskotoday,
+            'maxrequestskoperday': self.maxrequestskoperday
+        }
+
