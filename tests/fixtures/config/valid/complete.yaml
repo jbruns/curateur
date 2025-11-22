@@ -17,25 +17,21 @@ scraping:
     - titlescreens
   preferred_regions: [us, eu, jp]
   preferred_language: en
+  hash_algorithm: crc32
   crc_size_limit: 1073741824
   image_min_dimension: 50
-  skip_scraped: false
-  update_mode: false
-  validate_gamelist: true
   gamelist_integrity_threshold: 0.95
-  clean_mismatched_media: false
-  media_only_mode: false
   update_policy: changed_only
   update_metadata: true
   update_media: true
   merge_strategy: preserve_user_edits
-  log_changes: true
-  log_unchanged_fields: false
+  clean_mismatched_media: false
   checkpoint_interval: 100
   name_verification: normal
+  quota_warning_threshold: 0.95
   rate_limit_override_enabled: false
   rate_limit_override:
-    max_threads: 1
+    max_workers: 1
     requests_per_minute: 60
     daily_quota: 10000
 

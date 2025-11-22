@@ -134,6 +134,58 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
         if not isinstance(dim, int) or dim < 1:
             errors.append("scraping.image_min_dimension must be a positive integer")
     
+    if 'gamelist_integrity_threshold' in section:
+        threshold = section['gamelist_integrity_threshold']
+        if not isinstance(threshold, (int, float)):
+            errors.append("scraping.gamelist_integrity_threshold must be a number")
+        elif threshold < 0.0 or threshold > 1.0:
+            errors.append("scraping.gamelist_integrity_threshold must be between 0.0 and 1.0")
+    
+    if 'checkpoint_interval' in section:
+        interval = section['checkpoint_interval']
+        if not isinstance(interval, int) or interval < 0:
+            errors.append("scraping.checkpoint_interval must be a non-negative integer")
+    
+    # Validate hash_algorithm
+    if 'hash_algorithm' in section:
+        algorithm = section['hash_algorithm']
+        valid_algorithms = ['crc32', 'md5', 'sha1']
+        if algorithm not in valid_algorithms:
+            errors.append(
+                f"scraping.hash_algorithm must be one of: {', '.join(valid_algorithms)}"
+            )
+    
+    # Validate update_policy
+    if 'update_policy' in section:
+        policy = section['update_policy']
+        valid_policies = ['always', 'changed_only', 'never']
+        if policy not in valid_policies:
+            errors.append(
+                f"scraping.update_policy must be one of: {', '.join(valid_policies)}"
+            )
+    
+    # Validate boolean flags
+    if 'update_metadata' in section:
+        if not isinstance(section['update_metadata'], bool):
+            errors.append("scraping.update_metadata must be a boolean")
+    
+    if 'update_media' in section:
+        if not isinstance(section['update_media'], bool):
+            errors.append("scraping.update_media must be a boolean")
+    
+    if 'clean_mismatched_media' in section:
+        if not isinstance(section['clean_mismatched_media'], bool):
+            errors.append("scraping.clean_mismatched_media must be a boolean")
+    
+    # Validate merge_strategy
+    if 'merge_strategy' in section:
+        strategy = section['merge_strategy']
+        valid_strategies = ['preserve_user_edits', 'overwrite_all']
+        if strategy not in valid_strategies:
+            errors.append(
+                f"scraping.merge_strategy must be one of: {', '.join(valid_strategies)}"
+            )
+    
     # Validate verification mode
     if 'name_verification' in section:
         mode = section['name_verification']

@@ -11,22 +11,35 @@ Coordinates the complete scraping workflow:
 import asyncio
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Callable
+from typing import List, Dict, Optional, Tuple, Callable, Any, TYPE_CHECKING
 from dataclasses import dataclass
 import time
+
+if TYPE_CHECKING:
+    from ..workflow.thread_pool import ThreadPoolManager
+    from ..workflow.performance import PerformanceMonitor
+    from ..ui.console_ui import ConsoleUI
+    from ..api.throttle import ThrottleManager
 
 from ..config.es_systems import SystemDefinition
 from ..scanner.rom_scanner import scan_system
 from ..scanner.rom_types import ROMInfo
+from ..scanner.hash_calculator import calculate_hash
 from ..api.client import ScreenScraperClient
 from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
 from ..api.match_scorer import calculate_match_confidence
 from ..ui.prompts import prompt_for_search_match
 from ..ui.console_ui import Operations
 from ..media.media_downloader import MediaDownloader
+from ..media.media_types import to_singular
 from ..gamelist.generator import GamelistGenerator
 from ..gamelist.game_entry import GameEntry
+from ..gamelist.parser import GamelistParser
+from ..gamelist.integrity_validator import IntegrityValidator
+from ..gamelist.metadata_merger import MetadataMerger
 from ..workflow.work_queue import WorkQueueManager, Priority
+from ..workflow.evaluator import WorkflowEvaluator, WorkflowDecision
+from ..workflow.checkpoint import CheckpointManager, prompt_resume_from_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +54,8 @@ class ScrapingResult:
     media_downloaded: int = 0
     game_info: Optional[dict] = None
     media_paths: Optional[dict] = None
+    skipped: bool = False
+    skip_reason: Optional[str] = None
 
 
 @dataclass
@@ -75,6 +90,7 @@ class WorkflowOrchestrator:
         media_directory: Path,
         gamelist_directory: Path,
         work_queue: WorkQueueManager,
+        config: Dict[str, Any],
         dry_run: bool = False,
         enable_search_fallback: bool = False,
         search_confidence_threshold: float = 0.7,
@@ -95,6 +111,7 @@ class WorkflowOrchestrator:
             media_directory: Root directory for downloaded media
             gamelist_directory: Root directory for gamelists
             work_queue: WorkQueueManager for retry handling (required)
+            config: Configuration dictionary
             dry_run: If True, simulate actions without making changes
             enable_search_fallback: Enable search when hash lookup fails
             search_confidence_threshold: Minimum confidence score to accept match
@@ -111,6 +128,7 @@ class WorkflowOrchestrator:
         self.media_directory = media_directory
         self.gamelist_directory = gamelist_directory
         self.work_queue = work_queue
+        self.config = config
         self.dry_run = dry_run
         self.enable_search_fallback = enable_search_fallback
         self.search_confidence_threshold = search_confidence_threshold
@@ -124,8 +142,25 @@ class WorkflowOrchestrator:
         self.console_ui = console_ui
         self.throttle_manager = throttle_manager
         
+        # Initialize workflow evaluator
+        self.evaluator = WorkflowEvaluator(self.config)
+        
+        # Initialize integrity validator
+        integrity_threshold = self.config.get('scraping', {}).get('gamelist_integrity_threshold', 0.95)
+        self.integrity_validator = IntegrityValidator(threshold=integrity_threshold)
+        
+        # Store paths for easy access
+        self.paths = {
+            'roms': self.rom_directory,
+            'media': self.media_directory,
+            'gamelists': self.gamelist_directory
+        }
+        
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
+        
+        # Checkpoint manager (initialized per-system)
+        self.checkpoint_manager: Optional[CheckpointManager] = None
     
     async def scrape_system(
         self,
@@ -152,16 +187,105 @@ class WorkflowOrchestrator:
         if preferred_regions is None:
             preferred_regions = ['us', 'wor', 'eu']
         
+        # Step 0: System start logging
+        logger.info(f"=== Begin work for system: {system.name} ===")
+        logger.info(f"System ID: {system.screenscraper_id}")
+        logger.info(f"ROM path: {system.rom_path}")
+        
+        # Initialize checkpoint manager for this system
+        gamelist_dir = self.paths['gamelists'] / system.name
+        self.checkpoint_manager = CheckpointManager(
+            str(gamelist_dir),
+            system.name,
+            self.config
+        )
+        
+        # Try to load existing checkpoint
+        checkpoint = self.checkpoint_manager.load_checkpoint()
+        resume_from_checkpoint = False
+        
+        if checkpoint:
+            # Prompt user to resume from checkpoint
+            resume_from_checkpoint = prompt_resume_from_checkpoint(checkpoint)
+            if not resume_from_checkpoint:
+                # User wants fresh start - remove checkpoint
+                self.checkpoint_manager.remove_checkpoint()
+                logger.info("Starting fresh scrape (checkpoint discarded)")
+        
         # Step 1: Scan ROMs
+        logger.info("Scanning ROMs...")
         rom_entries = scan_system(
             system,
             rom_root=self.rom_directory,
             crc_size_limit=1073741824
         )
+        logger.info(f"ROM scan complete: {len(rom_entries)} files found")
+        
+        # Set total ROM count for checkpoint tracking
+        self.checkpoint_manager.set_total_roms(len(rom_entries))
+        
+        # Filter out already-processed ROMs if resuming
+        if resume_from_checkpoint:
+            original_count = len(rom_entries)
+            rom_entries = [
+                rom for rom in rom_entries 
+                if not self.checkpoint_manager.is_processed(rom.filename)
+            ]
+            skipped_from_checkpoint = original_count - len(rom_entries)
+            if skipped_from_checkpoint > 0:
+                logger.info(
+                    f"Resuming from checkpoint: skipping {skipped_from_checkpoint} "
+                    f"already-processed ROMs, {len(rom_entries)} remaining"
+                )
         
         # Notify progress tracker with actual ROM count
         if progress_tracker:
             progress_tracker.start_system(system.fullname, len(rom_entries))
+        
+        # Step 2: Parse and validate existing gamelist
+        gamelist_path = self.paths['gamelists'] / system.name / 'gamelist.xml'
+        existing_entries = []
+        
+        if gamelist_path.exists():
+            logger.info("Parsing existing gamelist...")
+            parser = GamelistParser()
+            try:
+                existing_entries = parser.parse_gamelist(gamelist_path)
+                logger.info(f"Parsed {len(existing_entries)} entries from existing gamelist")
+                
+                # Validate gamelist integrity
+                rom_paths = [rom_info.path for rom_info in rom_entries]
+                validation_result = self.integrity_validator.validate(existing_entries, rom_paths)
+                
+                logger.info(f"Gamelist validation: {validation_result.match_ratio:.1%} match ratio")
+                
+                if not validation_result.is_valid:
+                    logger.warning(
+                        f"Gamelist integrity check failed for {system.name}: "
+                        f"{validation_result.match_ratio:.1%} match ratio "
+                        f"(threshold: {self.integrity_validator.threshold:.1%})"
+                    )
+                    logger.info(
+                        f"Missing ROMs: {len(validation_result.missing_roms)}, "
+                        f"Orphaned entries: {len(validation_result.orphaned_entries)}"
+                    )
+                    
+                    # Prompt user for confirmation (if interactive)
+                    if not self._prompt_gamelist_validation_failure(system.name, validation_result):
+                        logger.info(f"Skipping system {system.name} due to validation failure")
+                        return SystemResult(
+                            system_name=system.fullname,
+                            total_roms=len(rom_entries),
+                            scraped=0,
+                            failed=0,
+                            skipped=len(rom_entries),
+                            results=[]
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to parse existing gamelist: {e}")
+                existing_entries = []
+        else:
+            logger.info("Gamelist validation: not applicable (no existing gamelist)")
         
         results = []
         not_found_items = []
@@ -169,25 +293,14 @@ class WorkflowOrchestrator:
         failed_count = 0
         skipped_count = 0
         
-        # Step 2-4: Process each ROM (parallel or sequential)
-        if self.thread_manager and not self.dry_run:
-            # Use parallel processing with work queue
-            results, not_found_items = await self._scrape_roms_parallel(
-                system,
-                rom_entries,
-                media_types,
-                preferred_regions
-            )
-        else:
-            # Use sequential processing
-            for rom_info in rom_entries:
-                result = await self._scrape_rom(
-                    system,
-                    rom_info,
-                    media_types,
-                    preferred_regions
-                )
-                results.append(result)
+        # Step 2-4: Process ROMs (parallel with 1-N workers)
+        results, not_found_items = await self._scrape_roms_parallel(
+            system,
+            rom_entries,
+            media_types,
+            preferred_regions,
+            existing_entries
+        )
         
         # Count results
         for result in results:
@@ -209,6 +322,7 @@ class WorkflowOrchestrator:
                         details="Generating gamelist.xml..."
                     )
                 
+                logger.info(f"Committing gamelist: {scraped_count} entries")
                 self._generate_gamelist(system, results)
                 
                 # Clear system operation from UI
@@ -238,6 +352,19 @@ class WorkflowOrchestrator:
             self.work_queue.reset_for_new_system()
             logger.debug(f"Work queue reset after completing {system.name}")
         
+        # Step 9: Write summary log
+        self._write_summary_log(system, results, scraped_count, skipped_count, failed_count)
+        
+        # Step 10: Remove checkpoint after successful completion
+        if self.checkpoint_manager:
+            self.checkpoint_manager.remove_checkpoint()
+        
+        logger.info(
+            f"System complete: {system.name} - "
+            f"{scraped_count} successful, {skipped_count} skipped, {failed_count} failed"
+        )
+        logger.info(f"=== End work for system: {system.name} ===")
+        
         return SystemResult(
             system_name=system.fullname,
             total_roms=len(rom_entries),
@@ -256,6 +383,7 @@ class WorkflowOrchestrator:
         rom_info: ROMInfo,
         media_types: List[str],
         preferred_regions: List[str],
+        existing_entries: List[GameEntry] = None,
         operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None,
         shutdown_event: Optional[asyncio.Event] = None
     ) -> ScrapingResult:
@@ -267,6 +395,7 @@ class WorkflowOrchestrator:
             rom_info: ROM information from scanner
             media_types: Media types to download
             preferred_regions: Region priority list
+            existing_entries: List of existing gamelist entries
             operation_callback: Optional callback for UI updates
                                 Signature: callback(task_name, rom_name, operation, details, progress_pct, total_tasks, completed_tasks)
             shutdown_event: Optional event to check for cancellation
@@ -296,7 +425,6 @@ class WorkflowOrchestrator:
                 emit(Operations.HASHING_ROM, "Hashing ROM...")
                 
                 # Determine which file to hash based on ROM type
-                from ..scanner.hash_calculator import calculate_crc32
                 from ..scanner.rom_types import ROMType
                 from ..scanner.m3u_parser import get_disc1_file
                 
@@ -315,8 +443,19 @@ class WorkflowOrchestrator:
                 else:
                     hash_file = rom_info.path
                 
-                # Calculate hash
-                rom_info.hash_value = calculate_crc32(hash_file, rom_info.crc_size_limit)
+                # Calculate hash using configured algorithm
+                hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
+                logger.info(f"Hashing ROM: {rom_info.name}")
+                rom_info.hash_value = calculate_hash(
+                    hash_file,
+                    algorithm=hash_algorithm,
+                    size_limit=rom_info.crc_size_limit
+                )
+                
+                if rom_info.hash_value:
+                    logger.info(f"Hash calculated: {hash_algorithm.upper()}={rom_info.hash_value}")
+                else:
+                    logger.info("Hash calculation skipped (file size exceeds limit)")
                 
                 # Don't emit completion - move directly to next operation
                 completed_tasks += 1
@@ -324,56 +463,126 @@ class WorkflowOrchestrator:
                 # Hash already calculated
                 completed_tasks += 1
             
-            # Step 2: Query API (hash-based lookup)
+            rom_hash = rom_info.hash_value
+            
+            # Step 2: Look up existing gamelist entry for this ROM
+            gamelist_entry = None
+            if existing_entries:
+                rom_relative_path = f"./{rom_info.name}"
+                for entry in existing_entries:
+                    if entry.path == rom_relative_path:
+                        gamelist_entry = entry
+                        break
+            
+            # Step 3: Evaluate ROM with WorkflowEvaluator
+            decision = self.evaluator.evaluate_rom(
+                rom_info=rom_info,
+                gamelist_entry=gamelist_entry,
+                rom_hash=rom_hash
+            )
+            
+            # Log evaluator decision at DEBUG level
+            logger.debug(
+                f"Evaluator decision for {rom_info.name}: "
+                f"fetch_metadata={decision.fetch_metadata}, "
+                f"update_metadata={decision.update_metadata}, "
+                f"update_media={decision.update_media}, "
+                f"media_to_download={decision.media_to_download}, "
+                f"media_to_validate={decision.media_to_validate}, "
+                f"clean_disabled_media={decision.clean_disabled_media}, "
+                f"skip_reason={decision.skip_reason}"
+            )
+            
+            # Check if ROM should be skipped
+            if decision.skip_reason:
+                logger.info(f"Skipping {rom_info.name}: {decision.skip_reason}")
+                return ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=True,
+                    error=None,
+                    skipped=True,
+                    skip_reason=decision.skip_reason
+                )
+            
+            # Step 4: Query API (hash-based lookup) - only if needed
             if self.dry_run:
                 return ScrapingResult(
-                    rom_path=rom_path,
+                    rom_path=rom_info.path,
                     success=True,
                     api_id="DRY_RUN"
                 )
             
             game_info = None
-            api_start = time.time()
             
-            # Emit BEFORE starting the API call
-            emit(Operations.FETCHING_METADATA, "Fetching metadata...")
-            
-            try:
-                game_info = await self.api_client.query_game(rom_info)
-                api_duration = time.time() - api_start
+            if decision.fetch_metadata:
+                # Emit UI event
+                if operation_callback:
+                    emit(Operations.FETCHING_METADATA, "Fetching metadata...")
                 
-                # Record API timing
-                if hasattr(self, 'performance_monitor') and self.performance_monitor:
-                    self.performance_monitor.record_api_call(api_duration)
+                logger.info(
+                    f"Fetching metadata: {rom_info.name} "
+                    f"(hash={rom_hash}, size={rom_info.path.stat().st_size})"
+                )
+                logger.debug(
+                    f"API request: hash={rom_hash}, "
+                    f"size={rom_info.size}, "
+                    f"system_id={system.screenscraper_id}"
+                )
                 
-                logger.debug(f"Hash lookup successful for {rom_info.filename}")
-                # Increment task counter but don't emit completion status
-                completed_tasks += 1
+                api_start = time.time()
                 
-            except SkippableAPIError as e:
-                logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
-                
-                # Try search fallback if enabled
-                if self.enable_search_fallback:
-                    emit(Operations.SEARCH_FALLBACK, "Trying text search...")
-                    logger.info(f"Attempting search fallback for {rom_info.filename}")
-                    game_info = await self._search_fallback(rom_info, preferred_regions)
+                try:
+                    game_info = await self.api_client.query_game(rom_info)
+                    api_duration = time.time() - api_start
+                    
+                    # Record API timing
+                    if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                        self.performance_monitor.record_api_call(api_duration)
                     
                     if game_info:
-                        api_duration = time.time() - api_start
+                        # Count non-empty fields
+                        field_count = len([k for k in game_info.keys() if game_info.get(k)])
+                        logger.info(
+                            f"Metadata processed: {field_count} fields, "
+                            f"{len(game_info.get('names', {}))} names, "
+                            f"{len(game_info.get('descriptions', {}))} descriptions, "
+                            f"language={self.config.get('scraping', {}).get('preferred_language', 'en')}"
+                        )
+                        logger.debug(
+                            f"Metadata fields: name={game_info.get('name', 'N/A')[:50]}, "
+                            f"desc={game_info.get('desc', 'N/A')[:50]}..."
+                        )
+                    
+                    logger.debug(f"Hash lookup successful for {rom_info.filename}")
+                    # Increment task counter but don't emit completion status
+                    completed_tasks += 1
+                    
+                except SkippableAPIError as e:
+                    logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
+                    
+                    # Try search fallback if enabled
+                    if self.enable_search_fallback:
+                        emit(Operations.SEARCH_FALLBACK, "Trying text search...")
+                        logger.info(f"Attempting search fallback for {rom_info.filename}")
+                        game_info = await self._search_fallback(rom_info, preferred_regions)
                         
-                        # Record API timing
-                        if hasattr(self, 'performance_monitor') and self.performance_monitor:
-                            self.performance_monitor.record_api_call(api_duration)
-                        
-                        logger.info(f"Search fallback successful for {rom_info.filename}")
-                        # Increment task counter but don't emit completion status
-                        completed_tasks += 1
+                        if game_info:
+                            api_duration = time.time() - api_start
+                            
+                            # Record API timing
+                            if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                                self.performance_monitor.record_api_call(api_duration)
+                            
+                            logger.info(f"Search fallback successful for {rom_info.filename}")
+                            # Increment task counter but don't emit completion status
+                            completed_tasks += 1
+                        else:
+                            logger.info(f"Search fallback found no matches for {rom_info.filename}")
+                            emit(Operations.NO_MATCHES, "Game not found in database")
                     else:
-                        logger.info(f"Search fallback found no matches for {rom_info.filename}")
-                        emit(Operations.NO_MATCHES, "Game not found in database")
+                        raise
             
-            if not game_info:
+            if not game_info and decision.fetch_metadata:
                 # Track as unmatched
                 system_name = system.name
                 if system_name not in self.unmatched_roms:
@@ -381,75 +590,227 @@ class WorkflowOrchestrator:
                 self.unmatched_roms[system_name].append(rom_info.filename)
                 
                 return ScrapingResult(
-                    rom_path=rom_path,
+                    rom_path=rom_info.path,
                     success=False,
                     error="No game info found from API"
                 )
             
-            # Step 3: Download media
-            media_downloader = MediaDownloader(
-                media_root=self.media_directory,
-                client=self.api_client.client,
-                preferred_regions=preferred_regions,
-                enabled_media_types=media_types
-            )
-            
+            # Step 5: Process media with hash validation
             media_paths = {}
             media_count = 0
-            media_downloaded_count = 0
+            media_hashes = {}
+            hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
             
-            try:
-                # Get media dict from game_info and flatten to list
+            if game_info:
+                media_downloader = MediaDownloader(
+                    media_root=self.media_directory,
+                    client=self.api_client.client,
+                    preferred_regions=preferred_regions,
+                    enabled_media_types=media_types
+                )
+                
+                # Get media list from game_info
                 media_dict = game_info.get('media', {})
+                media_list = []
                 if media_dict:
-                    # Convert dict of lists to flat list
-                    media_list = []
                     for media_type, media_items in media_dict.items():
                         media_list.extend(media_items)
-                    
-                    if media_list:
-                        # Progress callback for download starts
-                        def download_progress(media_type: str, idx: int, total: int):
-                            from curateur.media.media_types import get_directory_for_media_type
-                            try:
-                                esde_type = get_directory_for_media_type(media_type)
-                            except ValueError:
-                                esde_type = media_type
-                            emit("Downloading media", f"{idx}/{total} ({esde_type})")
+                
+                # Download media files (from decision.media_to_download)
+                if decision.media_to_download and media_list:
+                    for idx, media_type_singular in enumerate(decision.media_to_download, 1):
+                        # Emit UI event
+                        if operation_callback:
+                            emit("Downloading media", f"{media_type_singular} ({idx}/{len(decision.media_to_download)})")
                         
-                        # Download media and get filtered count
-                        download_results, selected_count = await media_downloader.download_media_for_game(
-                            media_list=media_list,
-                            rom_path=str(rom_info.path),
-                            system=system.name,
-                            progress_callback=download_progress,
-                            shutdown_event=shutdown_event
+                        logger.info(
+                            f"Downloading media {idx}/{len(decision.media_to_download)}: "
+                            f"{media_type_singular} for {rom_info.name}"
+                        )
+                        logger.debug(
+                            f"Media selection preferences: regions={preferred_regions}, "
+                            f"language={self.config.get('scraping', {}).get('preferred_language', 'en')}"
                         )
                         
-                        # Update total tasks with selected media count
-                        total_tasks = completed_tasks + selected_count
+                        # Convert singular to plural for MediaDownloader
+                        from ..media.media_types import to_plural
+                        media_type_plural = to_plural(media_type_singular)
                         
-                        # Process results
-                        for result in download_results:
-                            if result.success and result.file_path:
-                                media_paths[result.media_type] = result.file_path
-                                media_count += 1
-                                media_downloaded_count += 1
-                                completed_tasks += 1
-                            elif not result.success:
-                                # Log media download failures
-                                logger.warning(
-                                    f"Failed to download {result.media_type} for {rom_info.filename}: {result.error}"
+                        # Filter media list for this type
+                        type_media_list = [m for m in media_list if m.get('type') == media_type_plural]
+                        
+                        if type_media_list:
+                            # Download using existing MediaDownloader logic
+                            download_results, _ = await media_downloader.download_media_for_game(
+                                media_list=type_media_list,
+                                rom_path=str(rom_info.path),
+                                system=system.name,
+                                shutdown_event=shutdown_event
+                            )
+                            
+                            for result in download_results:
+                                if result.success and result.file_path:
+                                    media_paths[media_type_singular] = result.file_path
+                                    media_count += 1
+                                    completed_tasks += 1
+                                    
+                                    # Calculate hash for downloaded media
+                                    media_path = Path(result.file_path)
+                                    if media_path.exists():
+                                        media_hash = calculate_hash(
+                                            media_path,
+                                            algorithm=hash_algorithm,
+                                            size_limit=0  # No size limit for media
+                                        )
+                                        if media_hash:
+                                            media_hashes[media_type_singular] = media_hash
+                                            logger.info(
+                                                f"Media downloaded: {media_type_singular}, "
+                                                f"hash={media_hash}"
+                                            )
+                
+                # Validate existing media (from decision.media_to_validate)
+                if decision.media_to_validate:
+                    for media_type_singular in decision.media_to_validate:
+                        # Emit UI event
+                        if operation_callback:
+                            emit(Operations.HASHING_MEDIA, media_type_singular)
+                        
+                        logger.info(f"Hashing media: {media_type_singular} for {rom_info.name}")
+                        
+                        # Get media file path
+                        media_path = self._get_media_path(system, rom_info, media_type_singular)
+                        
+                        if media_path and media_path.exists():
+                            # Calculate hash
+                            media_hash = calculate_hash(
+                                media_path,
+                                algorithm=hash_algorithm,
+                                size_limit=0  # No size limit for media
+                            )
+                            
+                            # Compare with stored hash
+                            stored_hash = None
+                            if gamelist_entry and gamelist_entry.hash:
+                                stored_hash = gamelist_entry.hash.get('media', {}).get(media_type_singular)
+                            
+                            if media_hash != stored_hash:
+                                logger.info(
+                                    f"Media hash mismatch for {media_type_singular}: "
+                                    f"stored={stored_hash}, calculated={media_hash}"
                                 )
-                                completed_tasks += 1
-            except Exception as e:
-                # Log but don't fail the entire ROM for media errors
-                logger.warning(f"Media download error for {rom_info.filename}: {e}")
+                                
+                                # Re-download media
+                                from ..media.media_types import to_plural
+                                media_type_plural = to_plural(media_type_singular)
+                                type_media_list = [m for m in media_list if m.get('type') == media_type_plural]
+                                
+                                if type_media_list:
+                                    download_results, _ = await media_downloader.download_media_for_game(
+                                        media_list=type_media_list,
+                                        rom_path=str(rom_info.path),
+                                        system=system.name,
+                                        shutdown_event=shutdown_event
+                                    )
+                                    
+                                    for result in download_results:
+                                        if result.success and result.file_path:
+                                            media_paths[media_type_singular] = result.file_path
+                                            media_hashes[media_type_singular] = media_hash
+                            else:
+                                logger.info(
+                                    f"Media hash validated: {media_type_singular} "
+                                    f"(hash={media_hash})"
+                                )
+                                media_hashes[media_type_singular] = media_hash
             
+            # Clean disabled media types if configured
+            if decision.clean_disabled_media:
+                from ..media.media_types import MEDIA_TYPE_SINGULAR
+                
+                # Get all possible media types (singular form)
+                all_media_types = set(MEDIA_TYPE_SINGULAR.values())
+                # Get currently enabled media types (already in singular form)
+                enabled_types = set(media_types)
+                # Find disabled types
+                disabled_types = all_media_types - enabled_types
+                
+                for media_type_singular in disabled_types:
+                    media_path = self._get_media_path(system, rom_info, media_type_singular)
+                    
+                    if media_path and media_path.exists():
+                        if not self.dry_run:
+                            # Move to CLEANUP directory instead of deleting
+                            from ..media.media_types import to_plural
+                            media_type_plural = to_plural(media_type_singular)
+                            cleanup_dir = self.media_directory / "CLEANUP" / system.name / media_type_plural
+                            cleanup_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            cleanup_path = cleanup_dir / media_path.name
+                            media_path.rename(cleanup_path)
+                            
+                            logger.info(
+                                f"Cleaned disabled media: {media_type_singular} for {rom_info.name} "
+                                f"(moved to CLEANUP/{system.name}/{media_type_plural})"
+                            )
+                        else:
+                            logger.info(
+                                f"Would clean disabled media: {media_type_singular} for {rom_info.name}"
+                            )
+            
+            # Step 6: Create or update GameEntry with hashes
+            if decision.update_metadata and game_info:
+                # Create entry from API response
+                game_entry = GameEntry.from_api_response(
+                    game_info=game_info,
+                    rom_path=f"./{rom_info.name}",
+                    media_paths=media_paths
+                )
+                
+                # Add hash information
+                game_entry.hash = {
+                    'rom': {hash_algorithm: rom_hash} if rom_hash else {},
+                    'media': media_hashes
+                }
+                
+                # Merge with existing entry if present
+                if gamelist_entry and decision.update_metadata:
+                    merge_strategy = self.config.get('scraping', {}).get('merge_strategy', 'preserve_user_edits')
+                    merger = MetadataMerger(merge_strategy=merge_strategy)
+                    
+                    merge_result = merger.merge_entries(gamelist_entry, game_entry)
+                    
+                    # Update hash in merged entry
+                    merge_result.merged_entry.hash = game_entry.hash
+                    
+                    game_entry = merge_result.merged_entry
+                    
+                    logger.debug(
+                        f"Metadata merged: {len(merge_result.preserved_fields)} preserved, "
+                        f"{len(merge_result.updated_fields)} updated"
+                    )
+                
+                # Store hash in checkpoint for resume capability
+                if self.checkpoint_manager and game_entry.hash:
+                    self.checkpoint_manager.add_game_entry_hash(
+                        game_entry.path,
+                        game_entry.hash
+                    )
+                
+                return ScrapingResult(
+                    rom_path=rom_info.path,
+                    success=True,
+                    api_id=str(game_info.get('id', '')),
+                    media_downloaded=media_count,
+                    game_info=game_info,
+                    media_paths=media_paths
+                )
+            
+            # Return success even if no updates made
             return ScrapingResult(
-                rom_path=rom_path,
+                rom_path=rom_info.path,
                 success=True,
-                api_id=str(game_info.get('id', '')),
+                api_id=str(game_info.get('id', '')) if game_info else None,
                 media_downloaded=media_count,
                 game_info=game_info,
                 media_paths=media_paths
@@ -459,7 +820,7 @@ class WorkflowOrchestrator:
             logger.error(f"Error scraping {rom_info.filename}: {e}")
             
             return ScrapingResult(
-                rom_path=rom_path,
+                rom_path=rom_info.path,
                 success=False,
                 error=str(e)
             )
@@ -468,7 +829,8 @@ class WorkflowOrchestrator:
         self,
         system: SystemDefinition,
         media_types: List[str],
-        preferred_regions: List[str]
+        preferred_regions: List[str],
+        existing_entries: List[GameEntry] = None
     ) -> Callable:
         """
         Create a ROM processor function for use with ThreadPoolManager.submit_rom_batch
@@ -477,6 +839,7 @@ class WorkflowOrchestrator:
             system: System definition
             media_types: Media types to download
             preferred_regions: Region preference list
+            existing_entries: List of existing gamelist entries
             
         Returns:
             Async callable that processes a single ROM with optional callback
@@ -500,12 +863,13 @@ class WorkflowOrchestrator:
             rom_start_time = time.time()
             
             try:
-                # Call the existing _scrape_rom method with callback
+                # Call the existing _scrape_rom method with callback and existing_entries
                 result = await self._scrape_rom(
                     system=system,
                     rom_info=rom_info,
                     media_types=media_types,
                     preferred_regions=preferred_regions,
+                    existing_entries=existing_entries,
                     operation_callback=operation_callback,
                     shutdown_event=shutdown_event
                 )
@@ -579,7 +943,8 @@ class WorkflowOrchestrator:
         system: SystemDefinition,
         rom_entries: List[ROMInfo],
         media_types: List[str],
-        preferred_regions: List[str]
+        preferred_regions: List[str],
+        existing_entries: List[GameEntry] = None
     ) -> Tuple[List[ScrapingResult], List[dict]]:
         """
         Scrape ROMs in parallel using WorkQueueManager and async task pool.
@@ -591,6 +956,7 @@ class WorkflowOrchestrator:
             rom_entries: List of ROM information from scanner
             media_types: Media types to download
             preferred_regions: Region priority list
+            existing_entries: List of existing gamelist entries
             
         Returns:
             Tuple of (results list, not_found_items list)
@@ -642,104 +1008,13 @@ class WorkflowOrchestrator:
         
         logger.info(f"Work queue populated: successfully added {successfully_added}/{len(rom_entries)}, queue reports {self.work_queue.get_stats()['pending']} items queued")
         
-        # Define work item processor
-        async def process_work_item(work_item) -> dict:
-            """Process a single work item from the queue"""
-            rom_info_dict = work_item.rom_info
-            
-            # Reconstruct ROMInfo from dict
-            from ..scanner.rom_types import ROMType
-            rom_info = ROMInfo(
-                path=Path(rom_info_dict['path']),
-                filename=rom_info_dict['filename'],
-                basename=rom_info_dict['basename'],
-                rom_type=ROMType(rom_info_dict['rom_type']),  # Deserialize enum
-                system=rom_info_dict['system'],
-                query_filename=rom_info_dict['query_filename'],
-                file_size=rom_info_dict['file_size'],
-                hash_type=rom_info_dict.get('hash_type', 'crc32'),
-                hash_value=rom_info_dict.get('hash_value')
-            )
-            
-            try:
-                # Query API
-                game_info = None
-                
-                # Try hash-based lookup first
-                try:
-                    game_info = await self.api_client.query_game(rom_info)
-                    if self.performance_monitor:
-                        self.performance_monitor.record_api_call()
-                    logger.debug(f"Hash lookup successful for {rom_info.filename}")
-                    
-                except Exception as e:
-                    # Categorize error for selective retry
-                    exception, category = categorize_error(e)
-                    
-                    if category == ErrorCategory.NOT_FOUND:
-                        # 404 - don't retry, track separately
-                        return {
-                            'rom_info': rom_info,
-                            'category': 'not_found',
-                            'error': str(exception)
-                        }
-                    elif category == ErrorCategory.RETRYABLE:
-                        # 429, 5xx, network - retry
-                        return {
-                            'rom_info': rom_info,
-                            'category': 'retryable',
-                            'error': str(exception)
-                        }
-                    elif category == ErrorCategory.FATAL:
-                        # 403 auth failure - propagate
-                        raise exception
-                    else:
-                        # NON_RETRYABLE - log and skip
-                        logger.debug(f"Hash lookup failed for {rom_info.filename}: {exception}")
-                        
-                        # Try search fallback if enabled
-                        if self.enable_search_fallback:
-                            logger.info(f"Attempting search fallback for {rom_info.filename}")
-                            try:
-                                game_info = await self._search_fallback(rom_info, preferred_regions)
-                                if game_info:
-                                    logger.info(f"Search fallback successful for {rom_info.filename}")
-                                    if self.performance_monitor:
-                                        self.performance_monitor.record_api_call()
-                            except Exception as search_e:
-                                search_exception, search_category = categorize_error(search_e)
-                                if search_category == ErrorCategory.NOT_FOUND:
-                                    return {
-                                        'rom_info': rom_info,
-                                        'category': 'not_found',
-                                        'error': str(search_exception)
-                                    }
-                                elif search_category == ErrorCategory.RETRYABLE:
-                                    return {
-                                        'rom_info': rom_info,
-                                        'category': 'retryable',
-                                        'error': str(search_exception)
-                                    }
-                
-                return {'rom_info': rom_info, 'game_info': game_info, 'category': 'success'}
-                
-            except Exception as e:
-                exception, category = categorize_error(e)
-                if category == ErrorCategory.FATAL:
-                    raise exception
-                return {
-                    'rom_info': rom_info,
-                    'category': category.value,
-                    'error': str(exception)
-                }
-        
         # Work queue consumption using producer-consumer pattern with workers
-        if self.thread_manager:
+        if self.thread_manager and self.thread_manager.is_initialized() and not self.dry_run:
             logger.info(f"Using task pool with {self.thread_manager.max_concurrent} concurrent worker(s)")
             
-            # Create UI callback and ROM processor
+            # Create UI callback and ROM processor (with existing_entries)
             ui_callback = self._create_ui_callback()
-            rom_processor = self._create_rom_processor(system, media_types, preferred_regions)
+            rom_processor = self._create_rom_processor(system, media_types, preferred_regions, existing_entries)
             
             # Clear any previous results
             self.thread_manager.clear_results()
@@ -774,10 +1049,22 @@ class WorkflowOrchestrator:
             
             logger.info(f"All workers completed processing ({len(worker_results)} results)")
             
-            # Convert worker results to our expected format
+            # Convert worker results to our expected format and record in checkpoint
             for rom_info, result in worker_results:
                 rom_count += 1
                 results.append(result)
+                
+                # Record in checkpoint
+                if self.checkpoint_manager:
+                    action = 'skip' if result.skipped else 'full_scrape'
+                    self.checkpoint_manager.add_processed_rom(
+                        rom_info.filename,
+                        action,
+                        result.success,
+                        result.error
+                    )
+                    # Save checkpoint periodically
+                    self.checkpoint_manager.save_checkpoint()
                 
                 # Track not found items
                 if not result.success and result.error == "No game info found from API":
@@ -801,107 +1088,57 @@ class WorkflowOrchestrator:
             await self.thread_manager.stop_workers()
             
         else:
-            # Fallback: Direct sequential processing (when thread_manager is None)
-            # This should rarely/never happen in normal operation
-            logger.warning("No thread manager available - using direct sequential processing")
+            # Fallback: Simple sequential processing
+            # Used when: dry-run mode, thread_manager not initialized, or no thread_manager
+            logger.info("Using simple sequential processing (no worker pool)")
             
-            # Sequential work queue consumption loop
-            while not self.work_queue.is_empty():
-                work_item = self.work_queue.get_work(timeout=0.1)
-                if not work_item:
-                    continue
-                
+            # Sequential processing using _scrape_rom
+            for rom_info in rom_entries:
                 rom_count += 1
-                rom_info_dict = work_item.rom_info
                 
                 # Update UI
-                await self._update_ui_progress(
-                    rom_info_dict, rom_count, len(rom_entries),
-                    results, not_found_items
-                )
-                
-                # Process the work item
-                try:
-                    api_result = await process_work_item(work_item)
-                    
-                    # Handle result using helper method
-                    self._handle_api_result(
-                        api_result, work_item, system, results, not_found_items,
-                        media_types, preferred_regions
+                if self.console_ui:
+                    await self._update_ui_progress(
+                        {'filename': rom_info.filename}, rom_count, len(rom_entries),
+                        results, not_found_items
                     )
+                
+                # Process ROM using unified method
+                try:
+                    result = await self._scrape_rom(
+                        system=system,
+                        rom_info=rom_info,
+                        media_types=media_types,
+                        preferred_regions=preferred_regions,
+                        existing_entries=existing_entries
+                    )
+                    results.append(result)
+                    
+                    # Record in checkpoint
+                    if self.checkpoint_manager:
+                        action = 'skip' if result.skipped else 'full_scrape'
+                        self.checkpoint_manager.add_processed_rom(
+                            rom_info.filename,
+                            action,
+                            result.success,
+                            result.error
+                        )
+                        # Save checkpoint periodically
+                        self.checkpoint_manager.save_checkpoint()
+                    
+                    # Track not found items
+                    if not result.success and result.error == "No game info found from API":
+                        not_found_items.append({
+                            'filename': rom_info.filename,
+                            'path': str(rom_info.path)
+                        })
                 
                 except Exception as e:
                     # Fatal error - propagate
-                    logger.error(f"Fatal error processing work item: {e}")
+                    logger.error(f"Fatal error processing ROM {rom_info.filename}: {e}")
                     raise
         
         return results, not_found_items
-    
-    def _download_media_parallel(
-        self,
-        system: SystemDefinition,
-        rom_info: ROMInfo,
-        game_info: dict,
-        media_types: List[str],
-        preferred_regions: List[str]
-    ) -> Tuple[dict, int]:
-        """
-        Download media files using MediaDownloader.
-        
-        Args:
-            system: System definition
-            rom_info: ROM information
-            game_info: Game metadata from API
-            media_types: Media types to download
-            preferred_regions: Region priority list
-            
-        Returns:
-            Tuple of (media_paths dict, media_count)
-        """
-        media_downloader = MediaDownloader(
-            media_root=self.media_directory,
-            preferred_regions=preferred_regions,
-            enabled_media_types=media_types
-        )
-        
-        media_paths = {}
-        media_count = 0
-        
-        try:
-            # Get media dict from game_info and flatten to list
-            media_dict = game_info.get('media', {})
-            if media_dict:
-                # Convert dict of lists to flat list
-                # media_dict format: {'box-2D': [{...}, {...}], 'ss': [{...}]}
-                # Convert to: [{...}, {...}, {...}]
-                media_list = []
-                for media_type, media_items in media_dict.items():
-                    media_list.extend(media_items)
-                
-                if media_list:
-                    download_results, selected_count = media_downloader.download_media_for_game(
-                        media_list=media_list,
-                        rom_path=str(rom_info.path),
-                        system=system.name
-                    )
-                    
-                    # Process results
-                    for result in download_results:
-                        if result.success and result.file_path:
-                            media_paths[result.media_type] = result.file_path
-                            media_count += 1
-                            
-                            if self.performance_monitor:
-                                self.performance_monitor.record_download()
-                        elif not result.success:
-                            # Log media download failures
-                            logger.warning(
-                                f"Failed to download {result.media_type} for {rom_info.filename}: {result.error}"
-                            )
-        except Exception as e:
-            logger.debug(f"Media download failed: {e}")
-        
-        return media_paths, media_count
     
     async def _search_fallback(
         self,
@@ -1200,81 +1437,136 @@ class WorkflowOrchestrator:
             queue_pending=queue_stats['pending']
         )
     
-    def _handle_api_result(
+    def _prompt_gamelist_validation_failure(
         self,
-        api_result: dict,
-        work_item: 'WorkItem',
-        system: 'SystemDefinition',
-        results: list,
-        not_found_items: list,
-        media_types: List[str],
-        preferred_regions: List[str]
-    ) -> None:
-        """Handle API result and update results/work queue"""
-        if api_result['category'] == 'not_found':
-            # 404 - track separately and mark processed
-            not_found_items.append({
-                'rom_info': api_result['rom_info'],
-                'error': api_result['error']
-            })
-            self.work_queue.mark_processed(work_item)
+        system_name: str,
+        validation_result
+    ) -> bool:
+        """
+        Prompt user whether to continue when gamelist validation fails.
         
-        elif api_result['category'] == 'retryable':
-            # Retry with higher priority
-            self.work_queue.retry_failed(work_item, api_result['error'])
-        
-        elif api_result['category'] == 'success':
-            game_info = api_result.get('game_info')
-            rom_info = api_result['rom_info']
+        Args:
+            system_name: Name of the system
+            validation_result: ValidationResult from IntegrityValidator
             
-            if not game_info:
-                # No game info - mark as unmatched
-                system_name = system.name
-                if system_name not in self.unmatched_roms:
-                    self.unmatched_roms[system_name] = []
-                self.unmatched_roms[system_name].append(rom_info.filename)
-                
-                result = ScrapingResult(
-                    rom_path=rom_info.path,
-                    success=False,
-                    error="No game info found from API"
-                )
-                results.append(result)
-                self.work_queue.mark_processed(work_item)
-            else:
-                # Download media in parallel
-                media_paths, media_count = self._download_media_parallel(
-                    system=system,
-                    rom_info=rom_info,
-                    game_info=game_info,
-                    media_types=media_types,
-                    preferred_regions=preferred_regions
-                )
-                
-                # Update performance monitor
-                if self.performance_monitor:
-                    self.performance_monitor.record_rom_processed()
-                
-                result = ScrapingResult(
-                    rom_path=rom_info.path,
-                    success=True,
-                    api_id=str(game_info.get('id', '')),
-                    media_downloaded=media_count,
-                    game_info=game_info,
-                    media_paths=media_paths
-                )
-                results.append(result)
-                self.work_queue.mark_processed(work_item)
+        Returns:
+            True to continue, False to skip system
+        """
+        # In non-interactive mode, always continue
+        if not self.interactive_search:
+            return True
         
-        else:
-            # Other categories - log and mark processed
-            rom_info = api_result['rom_info']
-            logger.warning(f"Non-retryable error for {rom_info.filename}: {api_result.get('error', 'unknown')}")
-            result = ScrapingResult(
-                rom_path=rom_info.path,
-                success=False,
-                error=api_result.get('error', 'Unknown error')
-            )
-            results.append(result)
-            self.work_queue.mark_processed(work_item)
+        # Prompt user
+        print(f"\n⚠️  Gamelist validation failed for {system_name}")
+        print(f"   Match ratio: {validation_result.match_ratio:.1%} (threshold: {self.integrity_validator.threshold:.1%})")
+        print(f"   Missing ROMs: {len(validation_result.missing_roms)}")
+        print(f"   Orphaned entries: {len(validation_result.orphaned_entries)}")
+        
+        response = input("\nContinue processing this system? [y/N]: ").strip().lower()
+        return response in ('y', 'yes')
+    
+    def _get_media_path(
+        self,
+        system: SystemDefinition,
+        rom_info: ROMInfo,
+        media_type_singular: str
+    ) -> Optional[Path]:
+        """
+        Get the expected path for a media file.
+        
+        Args:
+            system: System definition
+            rom_info: ROM information
+            media_type_singular: Singular media type name
+            
+        Returns:
+            Path to media file, or None if not found
+        """
+        from ..media.media_types import get_directory_for_media_type
+        
+        try:
+            # Convert singular to ES-DE directory name
+            directory = get_directory_for_media_type(media_type_singular)
+        except ValueError:
+            logger.warning(f"Unknown media type: {media_type_singular}")
+            return None
+        
+        # Build path: media_root / system / directory / rom_stem.ext
+        media_dir = self.media_directory / system.name / directory
+        rom_stem = rom_info.path.stem
+        
+        # Try common image extensions
+        for ext in ['.png', '.jpg', '.jpeg']:
+            media_path = media_dir / f"{rom_stem}{ext}"
+            if media_path.exists():
+                return media_path
+        
+        return None
+    
+    def _write_summary_log(
+        self,
+        system: SystemDefinition,
+        results: List[ScrapingResult],
+        scraped_count: int,
+        skipped_count: int,
+        failed_count: int
+    ) -> None:
+        """
+        Write summary log for a system.
+        
+        Args:
+            system: System definition
+            results: List of scraping results
+            scraped_count: Number of successfully scraped ROMs
+            skipped_count: Number of skipped ROMs
+            failed_count: Number of failed ROMs
+        """
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        gamelist_dir = self.paths['gamelists'] / system.name
+        gamelist_dir.mkdir(parents=True, exist_ok=True)
+        
+        summary_path = gamelist_dir / f"curateur_summary_{timestamp}.log"
+        
+        try:
+            with open(summary_path, 'w') as f:
+                f.write(f"Curateur Summary - {system.name}\n")
+                f.write(f"Generated: {timestamp}\n")
+                f.write(f"{'='*60}\n\n")
+                
+                f.write(f"Total ROMs: {len(results)}\n")
+                f.write(f"Successful: {scraped_count}\n")
+                f.write(f"Skipped: {skipped_count}\n")
+                f.write(f"Failed: {failed_count}\n\n")
+                
+                # Successful results
+                successful_results = [r for r in results if r.success and not r.error]
+                if successful_results:
+                    f.write("=== Successful ===\n")
+                    for result in successful_results:
+                        f.write(f"✓ {result.rom_path.name}\n")
+                    f.write("\n")
+                
+                # Skipped results
+                skipped_results = [r for r in results if hasattr(r, 'skipped') and r.skipped]
+                if skipped_results:
+                    f.write("=== Skipped ===\n")
+                    for result in skipped_results:
+                        reason = getattr(result, 'skip_reason', 'Unknown reason')
+                        f.write(f"○ {result.rom_path.name} - {reason}\n")
+                    f.write("\n")
+                
+                # Failed results
+                failed_results = [r for r in results if not r.success]
+                if failed_results:
+                    f.write("=== Failed ===\n")
+                    for result in failed_results:
+                        f.write(f"✗ {result.rom_path.name} - {result.error}\n")
+                    f.write("\n")
+            
+            logger.info(f"Summary log written: {summary_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write summary log: {e}")
+
 

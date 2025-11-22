@@ -96,19 +96,6 @@ For more information, see IMPLEMENTATION_PLAN.md
         help='Enable interactive prompts for selecting search matches. Overrides config.'
     )
     
-    # Milestone 2 flags (not yet implemented but documented)
-    parser.add_argument(
-        '--skip-scraped',
-        action='store_true',
-        help='[Milestone 2] Skip ROMs already in gamelist with complete metadata'
-    )
-    
-    parser.add_argument(
-        '--update',
-        action='store_true',
-        help='[Milestone 2] Re-scrape all ROMs and update metadata/media'
-    )
-    
     return parser
 
 
@@ -177,6 +164,15 @@ def _setup_logging(config: dict, console_ui=None) -> None:
         handlers=handlers,
         force=True  # Override any existing configuration
     )
+    
+    # Suppress httpx debug logging to prevent credential leakage in URLs
+    # httpx logs full URLs at DEBUG level which would expose API credentials
+    httpx_logger = logging.getLogger('httpx')
+    httpx_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+    
+    # Also suppress httpcore (underlying transport layer)
+    httpcore_logger = logging.getLogger('httpcore')
+    httpcore_logger.setLevel(logging.WARNING)
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -227,14 +223,6 @@ def main(argv: Optional[list] = None) -> int:
         if 'search' not in config:
             config['search'] = {}
         config['search']['interactive_search'] = True
-    
-    # Check for Milestone 2 flags
-    if args.skip_scraped or args.update:
-        print(
-            "Warning: --skip-scraped and --update are Milestone 2 features "
-            "and are not yet implemented.",
-            file=sys.stderr
-        )
     
     # Run main scraping workflow
     try:
@@ -408,6 +396,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         media_directory=Path(config['paths']['media']).expanduser(),
         gamelist_directory=Path(config['paths']['gamelists']).expanduser(),
         work_queue=work_queue,
+        config=config,
         dry_run=config['runtime'].get('dry_run', False),
         enable_search_fallback=search_config.get('enable_search_fallback', False),
         search_confidence_threshold=search_config.get('confidence_threshold', 0.7),

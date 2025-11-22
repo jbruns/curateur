@@ -65,9 +65,16 @@ scraping:
   # Default: en
   preferred_language: en
   
-  # Maximum file size (bytes) for CRC hashing
-  # Purpose: Skip CRC calculation for files larger than this (performance)
-  # Valid: Non-negative integer (0 = disabled, calculate all ROMs)
+  # Hash algorithm for ROM and media file verification
+  # Purpose: Algorithm used to calculate and compare file hashes
+  # Valid: crc32 | md5 | sha1
+  # Default: crc32
+  # Note: Stored in gamelist.xml <hash> element for change detection
+  hash_algorithm: crc32
+  
+  # Maximum file size (bytes) for hash calculation
+  # Purpose: Skip hash calculation for files larger than this (performance)
+  # Valid: Non-negative integer (0 = disabled, calculate all files)
   # Default: 1073741824 (1 GiB)
   # Note: Large ISO/CHD files may be slow to hash
   crc_size_limit: 1073741824
@@ -79,86 +86,52 @@ scraping:
   # Note: Prevents corrupt or placeholder images
   image_min_dimension: 50
   
-  # Skip ROMs already present in gamelist.xml
-  # Purpose: Avoid re-scraping ROMs with existing entries
-  # Valid: true | false
-  # Default: false
-  # Note: Requires update_mode=false (mutually exclusive)
-  skip_scraped: false
-  
-  # Enable update mode for existing gamelist entries
-  # Purpose: Re-scrape and update metadata for existing ROMs
-  # Valid: true | false
-  # Default: false
-  # Note: Requires skip_scraped=true (mutually exclusive)
-  update_mode: false
-  
-  # Validate gamelist.xml integrity before operations
-  # Purpose: Compare gamelist entries to scanned ROMs, detect orphans
-  # Valid: true | false
-  # Default: true
-  # Note: Validation threshold controlled by gamelist_integrity_threshold
-  validate_gamelist: true
-  
   # Gamelist integrity threshold (fraction of ROMs that must match)
   # Purpose: Fail validation if match rate below this threshold
   # Valid: 0.0 - 1.0 (0.95 = 95%)
   # Default: 0.95
-  # Note: Used when validate_gamelist=true
+  # Note: Validation always performed; prompt if threshold not met
   gamelist_integrity_threshold: 0.95
+  
+  # Update policy for ROM scraping (hash-based detection)
+  # Purpose: Determines when to fetch metadata based on ROM hash changes
+  # Valid: always | changed_only | never
+  # Default: changed_only
+  # Behavior:
+  #   - always: Fetch metadata for all ROMs regardless of hash match
+  #   - changed_only: Fetch only when ROM hash differs from gamelist (default)
+  #   - never: Skip all ROMs that exist in gamelist and filesystem
+  update_policy: changed_only
+  
+  # Update metadata fields when ROM hash matches
+  # Purpose: Allow metadata updates even when ROM unchanged
+  # Valid: true | false
+  # Default: true
+  # Note: Only applies when update_policy is 'always'; respects merge_strategy
+  update_metadata: true
+  
+  # Update media files when ROM hash matches
+  # Purpose: Re-download/validate media even when ROM unchanged
+  # Valid: true | false
+  # Default: true
+  # Note: Only applies when update_policy is 'always'; validates media hashes
+  update_media: true
+  
+  # Metadata merge strategy for updates
+  # Purpose: Controls field preservation during metadata updates
+  # Valid: preserve_user_edits | overwrite_all
+  # Default: preserve_user_edits
+  # Behavior:
+  #   - preserve_user_edits: Preserve all existing fields, update only scraped fields
+  #   - overwrite_all: Replace scraped fields, preserve only user fields (favorite, playcount, etc.)
+  merge_strategy: preserve_user_edits
   
   # Remove media files for disabled media types
   # Purpose: Clean up media when media_types list changes
   # Valid: true | false
   # Default: false
-  # Note: Moves mismatched media to .backup directories
+  # Note: Removes media types not in enabled media_types list
   clean_mismatched_media: false
-  
-  # Download media only (skip metadata scraping)
-  # Purpose: Fetch missing media for existing gamelist entries
-  # Valid: true | false
-  # Default: false
-  # Note: Requires existing gamelist.xml with entries
-  media_only_mode: false
-  
-  # Update policy for changed ROMs (hash-based detection)
-  # Purpose: Determines when to re-scrape based on ROM changes
-  # Valid: always | changed_only | never
-  # Default: changed_only
-  # Note: 'changed_only' uses stored CRC hashes to detect changes
-  update_policy: changed_only
-  
-  # Update metadata fields during update mode
-  # Purpose: Allow metadata changes when ROM unchanged
-  # Valid: true | false
-  # Default: true
-  # Note: Respects merge_strategy for field preservation
-  update_metadata: true
-  
-  # Update media files during update mode
-  # Purpose: Re-download updated media even if ROM unchanged
-  # Valid: true | false
-  # Default: true
-  update_media: true
-  
-  # Metadata merge strategy for updates
-  # Purpose: Controls whether other gamelist.xml fields (such as playcount, kidMode, ..) are preserved or overwritten.
-  # Valid: preserve_user_edits (recommended) | overwrite_all
-  # Default: preserve_user_edits
-  merge_strategy: preserve_user_edits
-  
-  # Log metadata changes during updates
-  # Purpose: Track what fields changed during update operations
-  # Valid: true | false
-  # Default: true
-  log_changes: true
-  
-  # Log unchanged fields (verbose)
-  # Purpose: Include unchanged fields in change logs
-  # Valid: true | false
-  # Default: false
-  # Note: Generates verbose output, useful for debugging
-  log_unchanged_fields: false
   
   # Checkpoint interval (number of ROMs)
   # Purpose: Save progress periodically for resume capability

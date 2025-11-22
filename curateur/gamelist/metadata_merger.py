@@ -59,12 +59,12 @@ class MetadataMerger:
         'path'
     }
     
-    def __init__(self, merge_strategy: str = 'preserve_user'):
+    def __init__(self, merge_strategy: str = 'preserve_user_edits'):
         """
         Initialize metadata merger
         
         Args:
-            merge_strategy: Merge strategy ('preserve_user', 'update_all', etc.)
+            merge_strategy: Merge strategy ('preserve_user_edits' or 'overwrite_all')
         """
         self.merge_strategy = merge_strategy
         logger.info(f"Metadata Merger initialized (strategy={self.merge_strategy})")
@@ -91,67 +91,24 @@ class MetadataMerger:
         merged_data['path'] = existing.path
         preserved_fields.add('path')
         
-        # Process all fields
-        for field_name in dir(existing):
-            # Skip private/magic methods and non-field attributes
-            if field_name.startswith('_') or field_name in ('from_api_response',):
-                continue
-            
-            # Skip methods
-            attr = getattr(existing, field_name, None)
-            if callable(attr):
-                continue
-            
-            # Already handled path
-            if field_name == 'path':
-                continue
-            
-            existing_value = getattr(existing, field_name, None)
-            scraped_value = getattr(scraped, field_name, None)
-            
-            category = self._get_field_category(field_name)
-            
-            if category == 'user':
-                # Preserve user fields from existing
-                merged_data[field_name] = existing_value
-                if existing_value is not None or (field_name in self.USER_FIELDS and existing_value is not None):
-                    preserved_fields.add(field_name)
-            elif category == 'scraped':
-                # Update scraped fields from new data
-                if scraped_value is not None:
-                    if existing_value is not None and existing_value != scraped_value:
-                        conflicts.add(field_name)
-                    merged_data[field_name] = scraped_value
-                    updated_fields.add(field_name)
-                elif existing_value is not None:
-                    # Keep existing if no scraped value
-                    merged_data[field_name] = existing_value
-                    preserved_fields.add(field_name)
-            elif category == 'provider':
-                # Keep provider fields (don't overwrite)
-                if existing_value is not None:
-                    merged_data[field_name] = existing_value
-                    preserved_fields.add(field_name)
-                elif scraped_value is not None:
-                    merged_data[field_name] = scraped_value
-                    updated_fields.add(field_name)
-            else:
-                # Unknown fields - preserve existing
-                if existing_value is not None:
-                    merged_data[field_name] = existing_value
-                    preserved_fields.add(field_name)
-                elif scraped_value is not None:
-                    merged_data[field_name] = scraped_value
-                    updated_fields.add(field_name)
+        # Hash is always preserved from existing (updated separately by workflow)
+        if hasattr(existing, 'hash') and existing.hash:
+            merged_data['hash'] = existing.hash
+            preserved_fields.add('hash')
+        elif hasattr(scraped, 'hash') and scraped.hash:
+            merged_data['hash'] = scraped.hash
         
-        # Handle extra_fields specially
-        if hasattr(existing, 'extra_fields') and existing.extra_fields:
-            merged_data['extra_fields'] = existing.extra_fields.copy()
-            preserved_fields.add('extra_fields')
-        elif hasattr(scraped, 'extra_fields') and scraped.extra_fields:
-            merged_data['extra_fields'] = scraped.extra_fields.copy()
+        # Apply merge strategy
+        if self.merge_strategy == 'preserve_user_edits':
+            # Preserve all existing fields, update only scraped fields
+            merged_data.update(self._merge_preserve_user_edits(existing, scraped, preserved_fields, updated_fields, conflicts))
+        elif self.merge_strategy == 'overwrite_all':
+            # Replace scraped fields, preserve only user fields and hash
+            merged_data.update(self._merge_overwrite_all(existing, scraped, preserved_fields, updated_fields, conflicts))
         else:
-            merged_data['extra_fields'] = {}
+            # Default to preserve_user_edits
+            logger.warning(f"Unknown merge strategy '{self.merge_strategy}', using 'preserve_user_edits'")
+            merged_data.update(self._merge_preserve_user_edits(existing, scraped, preserved_fields, updated_fields, conflicts))
         
         # Create merged GameEntry
         merged_entry = GameEntry(**merged_data)
@@ -167,6 +124,122 @@ class MetadataMerger:
             updated_fields=updated_fields,
             conflicts=conflicts
         )
+    
+    def _merge_preserve_user_edits(
+        self,
+        existing: GameEntry,
+        scraped: GameEntry,
+        preserved_fields: Set[str],
+        updated_fields: Set[str],
+        conflicts: Set[str]
+    ) -> dict:
+        """
+        Merge strategy: preserve all existing fields, update only scraped fields.
+        
+        Preserves extra_fields dict.
+        """
+        merged_data = {}
+        
+        # Process all fields
+        for field_name in dir(existing):
+            # Skip private/magic methods and non-field attributes
+            if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
+                continue
+            
+            # Skip methods
+            attr = getattr(existing, field_name, None)
+            if callable(attr):
+                continue
+            
+            existing_value = getattr(existing, field_name, None)
+            scraped_value = getattr(scraped, field_name, None)
+            
+            category = self._get_field_category(field_name)
+            
+            if category == 'user' or category == 'provider':
+                # Always preserve user and provider fields
+                merged_data[field_name] = existing_value
+                if existing_value is not None:
+                    preserved_fields.add(field_name)
+            elif category == 'scraped':
+                # Update scraped fields from new data
+                if scraped_value is not None:
+                    if existing_value is not None and existing_value != scraped_value:
+                        conflicts.add(field_name)
+                    merged_data[field_name] = scraped_value
+                    updated_fields.add(field_name)
+                elif existing_value is not None:
+                    # Keep existing if no scraped value
+                    merged_data[field_name] = existing_value
+                    preserved_fields.add(field_name)
+            else:
+                # Unknown fields - preserve existing
+                if existing_value is not None:
+                    merged_data[field_name] = existing_value
+                    preserved_fields.add(field_name)
+        
+        # Preserve extra_fields
+        if hasattr(existing, 'extra_fields') and existing.extra_fields:
+            merged_data['extra_fields'] = existing.extra_fields.copy()
+            preserved_fields.add('extra_fields')
+        else:
+            merged_data['extra_fields'] = {}
+        
+        return merged_data
+    
+    def _merge_overwrite_all(
+        self,
+        existing: GameEntry,
+        scraped: GameEntry,
+        preserved_fields: Set[str],
+        updated_fields: Set[str],
+        conflicts: Set[str]
+    ) -> dict:
+        """
+        Merge strategy: replace scraped fields, preserve only user fields.
+        
+        Discards extra_fields dict.
+        """
+        merged_data = {}
+        
+        # Process all fields
+        for field_name in dir(scraped):
+            # Skip private/magic methods and non-field attributes
+            if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
+                continue
+            
+            # Skip methods
+            attr = getattr(scraped, field_name, None)
+            if callable(attr):
+                continue
+            
+            existing_value = getattr(existing, field_name, None)
+            scraped_value = getattr(scraped, field_name, None)
+            
+            category = self._get_field_category(field_name)
+            
+            if category == 'user':
+                # Preserve user fields from existing
+                merged_data[field_name] = existing_value
+                if existing_value is not None:
+                    preserved_fields.add(field_name)
+            elif category == 'scraped' or category == 'provider':
+                # Overwrite with scraped value
+                if scraped_value is not None:
+                    if existing_value is not None and existing_value != scraped_value:
+                        conflicts.add(field_name)
+                    merged_data[field_name] = scraped_value
+                    updated_fields.add(field_name)
+            else:
+                # Unknown fields - use scraped if available
+                if scraped_value is not None:
+                    merged_data[field_name] = scraped_value
+                    updated_fields.add(field_name)
+        
+        # Discard extra_fields in overwrite_all mode
+        merged_data['extra_fields'] = {}
+        
+        return merged_data
         
     
     def batch_merge(

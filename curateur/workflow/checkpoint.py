@@ -77,6 +77,7 @@ class CheckpointManager:
             'processed_roms': [],
             'failed_roms': [],
             'api_quota': {},
+            'game_entries': [],  # Store entries with hashes for resume
             'stats': {
                 'total_roms': 0,
                 'processed': 0,
@@ -248,6 +249,30 @@ class CheckpointManager:
             'requests_today': quota_info.get('requeststoday'),
             'last_updated': datetime.now().isoformat()
         }
+    
+    def add_game_entry_hash(self, rom_path: str, hash_data: dict) -> None:
+        """
+        Store game entry hash information for resume capability
+        
+        Args:
+            rom_path: Relative ROM path (e.g., "./game.zip")
+            hash_data: Hash dictionary with 'rom' and 'media' keys
+                      {'rom': {'crc32': '...'}, 'media': {'cover': '...', ...}}
+        """
+        # Check if entry already exists
+        for entry in self.data['game_entries']:
+            if entry['path'] == rom_path:
+                # Update existing entry
+                entry['hash'] = hash_data
+                logger.debug(f"Updated checkpoint hash for {rom_path}")
+                return
+        
+        # Add new entry
+        self.data['game_entries'].append({
+            'path': rom_path,
+            'hash': hash_data
+        })
+        logger.debug(f"Added checkpoint hash for {rom_path}")
     
     def set_total_roms(self, total: int) -> None:
         """

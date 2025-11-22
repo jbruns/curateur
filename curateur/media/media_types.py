@@ -46,6 +46,24 @@ MEDIA_TYPE_MAP: Dict[str, str] = {
 # Reverse map: ES-DE directory names to ScreenScraper media types
 DIRECTORY_TO_MEDIA_TYPE: Dict[str, str] = {v: k for k, v in MEDIA_TYPE_MAP.items()}
 
+# Maps plural ES-DE directory names to singular forms (for gamelist.xml and UI)
+MEDIA_TYPE_SINGULAR: Dict[str, str] = {
+    'covers': 'cover',
+    'screenshots': 'screenshot',
+    'titlescreens': 'titlescreen',
+    'marquees': 'marquee',
+    '3dboxes': '3dbox',
+    'backcovers': 'backcover',
+    'fanart': 'fanart',
+    'manuals': 'manual',
+    'physicalmedia': 'physicalmedia',
+    'videos': 'video',
+    'miximages': 'miximage',
+}
+
+# Reverse map: singular forms to plural ES-DE directory names
+SINGULAR_TO_PLURAL: Dict[str, str] = {v: k for k, v in MEDIA_TYPE_SINGULAR.items()}
+
 
 def get_directory_for_media_type(media_type: str) -> str:
     """
@@ -94,3 +112,41 @@ def convert_directory_names_to_media_types(directory_names: List[str]) -> List[s
         if dir_name in DIRECTORY_TO_MEDIA_TYPE:
             media_types.append(DIRECTORY_TO_MEDIA_TYPE[dir_name])
     return media_types
+
+
+def to_singular(plural_type: str) -> str:
+    """
+    Convert plural ES-DE directory name to singular form.
+    
+    Args:
+        plural_type: Plural ES-DE directory name (e.g., 'covers', 'screenshots')
+        
+    Returns:
+        Singular form (e.g., 'cover', 'screenshot')
+        
+    Raises:
+        ValueError: If plural_type is not recognized
+    """
+    if plural_type not in MEDIA_TYPE_SINGULAR:
+        raise ValueError(f"Unknown plural media type: {plural_type}")
+    
+    return MEDIA_TYPE_SINGULAR[plural_type]
+
+
+def to_plural(singular_type: str) -> str:
+    """
+    Convert singular form to plural ES-DE directory name.
+    
+    Args:
+        singular_type: Singular form (e.g., 'cover', 'screenshot')
+        
+    Returns:
+        Plural ES-DE directory name (e.g., 'covers', 'screenshots')
+        
+    Raises:
+        ValueError: If singular_type is not recognized
+    """
+    if singular_type not in SINGULAR_TO_PLURAL:
+        raise ValueError(f"Unknown singular media type: {singular_type}")
+    
+    return SINGULAR_TO_PLURAL[singular_type]

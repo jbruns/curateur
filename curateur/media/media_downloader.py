@@ -21,7 +21,8 @@ class DownloadResult:
         success: bool,
         file_path: Optional[Path] = None,
         error: Optional[str] = None,
-        dimensions: Optional[Tuple[int, int]] = None
+        dimensions: Optional[Tuple[int, int]] = None,
+        hash_value: Optional[str] = None
     ):
         """
         Initialize download result.
@@ -32,12 +33,14 @@ class DownloadResult:
             file_path: Path to downloaded file (if successful)
             error: Error message (if failed)
             dimensions: Image dimensions (width, height) if available
+            hash_value: Hash of downloaded file (if successful)
         """
         self.media_type = media_type
         self.success = success
         self.file_path = file_path
         self.error = error
         self.dimensions = dimensions
+        self.hash_value = hash_value
     
     def __repr__(self) -> str:
         if self.success:
@@ -67,7 +70,8 @@ class MediaDownloader:
         timeout: int = 30,
         max_retries: int = 3,
         min_width: int = 50,
-        min_height: int = 50
+        min_height: int = 50,
+        hash_algorithm: str = 'crc32'
     ):
         """
         Initialize media downloader.
@@ -81,6 +85,7 @@ class MediaDownloader:
             max_retries: Maximum download retry attempts
             min_width: Minimum image width in pixels
             min_height: Minimum image height in pixels
+            hash_algorithm: Hash algorithm for file verification ('crc32', 'md5', 'sha1')
         """
         self.url_selector = MediaURLSelector(
             preferred_regions=preferred_regions,
@@ -96,6 +101,7 @@ class MediaDownloader:
         )
         
         self.organizer = MediaOrganizer(media_root)
+        self.hash_algorithm = hash_algorithm
     
     async def download_media_for_game(
         self,
@@ -208,11 +214,25 @@ class MediaDownloader:
             if media_type not in ['manuel', 'video']:
                 dimensions = self.downloader.get_image_dimensions(output_path)
             
+            # Calculate hash
+            from curateur.scanner.hash_calculator import calculate_hash
+            hash_value = None
+            try:
+                hash_value = calculate_hash(
+                    output_path,
+                    algorithm=self.hash_algorithm,
+                    size_limit=0  # No size limit for media files
+                )
+            except Exception:
+                # Hash calculation failed - continue without hash
+                pass
+            
             return DownloadResult(
                 media_type=media_type,
                 success=True,
                 file_path=output_path,
-                dimensions=dimensions
+                dimensions=dimensions,
+                hash_value=hash_value
             )
         else:
             return DownloadResult(
