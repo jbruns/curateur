@@ -101,9 +101,18 @@ class ImageDownloader:
                             continue
                         return False, f"Validation failed: {validation_error}"
                 
-                # Write to file
-                with open(output_path, 'wb') as f:
-                    f.write(image_data)
+                # Write to temporary file first
+                temp_path = output_path.with_suffix(output_path.suffix + '.tmp')
+                try:
+                    with open(temp_path, 'wb') as f:
+                        f.write(image_data)
+                    # Move to final location only on success
+                    temp_path.rename(output_path)
+                except Exception as e:
+                    # Clean up temp file on error
+                    if temp_path.exists():
+                        temp_path.unlink()
+                    raise
                 
                 return True, None
                 

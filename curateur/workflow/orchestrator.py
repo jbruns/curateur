@@ -233,6 +233,11 @@ class WorkflowOrchestrator:
             except Exception as e:
                 logger.warning(f"Failed to write not-found summary for {system.name}: {e}")
         
+        # Step 8: Reset work queue for next system
+        if self.work_queue:
+            self.work_queue.reset_for_new_system()
+            logger.debug(f"Work queue reset after completing {system.name}")
+        
         return SystemResult(
             system_name=system.fullname,
             total_roms=len(rom_entries),
@@ -251,7 +256,8 @@ class WorkflowOrchestrator:
         rom_info: ROMInfo,
         media_types: List[str],
         preferred_regions: List[str],
-        operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None
+        operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None,
+        shutdown_event: Optional[asyncio.Event] = None
     ) -> ScrapingResult:
         """
         Scrape a single ROM.
@@ -263,6 +269,7 @@ class WorkflowOrchestrator:
             preferred_regions: Region priority list
             operation_callback: Optional callback for UI updates
                                 Signature: callback(task_name, rom_name, operation, details, progress_pct, total_tasks, completed_tasks)
+            shutdown_event: Optional event to check for cancellation
             
         Returns:
             ScrapingResult
@@ -284,9 +291,38 @@ class WorkflowOrchestrator:
                 operation_callback(task_name, rom_name, operation, details, progress, total_tasks, completed_tasks)
         
         try:
-            # Step 1: Hashing (already done in scanner, just increment the counter)
-            if rom_info.hash_value:
-                completed_tasks += 1  # Don't emit - already complete
+            # Step 1: Hash ROM if not already done
+            if not rom_info.hash_value:
+                emit(Operations.HASHING_ROM, "Hashing ROM...")
+                
+                # Determine which file to hash based on ROM type
+                from ..scanner.hash_calculator import calculate_crc32
+                from ..scanner.rom_types import ROMType
+                from ..scanner.m3u_parser import get_disc1_file
+                
+                if rom_info.rom_type == ROMType.STANDARD:
+                    hash_file = rom_info.path
+                elif rom_info.rom_type == ROMType.M3U_PLAYLIST:
+                    hash_file = get_disc1_file(rom_info.path)
+                elif rom_info.rom_type == ROMType.DISC_SUBDIR:
+                    # Use contained file that was stored during scanning
+                    if rom_info.contained_file:
+                        hash_file = rom_info.contained_file
+                    else:
+                        # Fallback: use get_contained_file which doesn't need extensions
+                        from ..scanner.disc_handler import get_contained_file
+                        hash_file = get_contained_file(rom_info.path)
+                else:
+                    hash_file = rom_info.path
+                
+                # Calculate hash
+                rom_info.hash_value = calculate_crc32(hash_file, rom_info.crc_size_limit)
+                
+                # Don't emit completion - move directly to next operation
+                completed_tasks += 1
+            else:
+                # Hash already calculated
+                completed_tasks += 1
             
             # Step 2: Query API (hash-based lookup)
             if self.dry_run:
@@ -372,31 +408,29 @@ class WorkflowOrchestrator:
                         media_list.extend(media_items)
                     
                     if media_list:
+                        # Progress callback for download starts
+                        def download_progress(media_type: str, idx: int, total: int):
+                            from curateur.media.media_types import get_directory_for_media_type
+                            try:
+                                esde_type = get_directory_for_media_type(media_type)
+                            except ValueError:
+                                esde_type = media_type
+                            emit("Downloading media", f"{idx}/{total} ({esde_type})")
+                        
                         # Download media and get filtered count
                         download_results, selected_count = await media_downloader.download_media_for_game(
                             media_list=media_list,
                             rom_path=str(rom_info.path),
-                            system=system.name
+                            system=system.name,
+                            progress_callback=download_progress,
+                            shutdown_event=shutdown_event
                         )
                         
                         # Update total tasks with selected media count
                         total_tasks = completed_tasks + selected_count
                         
-                        # Process results and emit progress for each
-                        for idx, result in enumerate(download_results, 1):
-                            # Get ES-DE media type name
-                            from curateur.media.media_types import get_directory_for_media_type
-                            try:
-                                esde_type = get_directory_for_media_type(result.media_type)
-                            except ValueError:
-                                esde_type = result.media_type
-                            
-                            # Emit progress with media type
-                            emit(
-                                Operations.downloading_media(idx, selected_count, esde_type),
-                                Operations.media_summary(media_downloaded_count + (1 if result.success else 0), selected_count)
-                            )
-                            
+                        # Process results
+                        for result in download_results:
                             if result.success and result.file_path:
                                 media_paths[result.media_type] = result.file_path
                                 media_count += 1
@@ -412,10 +446,6 @@ class WorkflowOrchestrator:
                 # Log but don't fail the entire ROM for media errors
                 logger.warning(f"Media download error for {rom_info.filename}: {e}")
             
-            # Release worker ID so it can be reused for next ROM
-            if operation_callback and self.console_ui:
-                self.console_ui._release_worker_id(task_name)
-            
             return ScrapingResult(
                 rom_path=rom_path,
                 success=True,
@@ -427,10 +457,6 @@ class WorkflowOrchestrator:
             
         except Exception as e:
             logger.error(f"Error scraping {rom_info.filename}: {e}")
-            
-            # Release worker ID on error too
-            if operation_callback and self.console_ui:
-                self.console_ui._release_worker_id(task_name)
             
             return ScrapingResult(
                 rom_path=rom_path,
@@ -457,7 +483,8 @@ class WorkflowOrchestrator:
         """
         async def process_rom(
             rom_info: ROMInfo,
-            operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None
+            operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]] = None,
+            shutdown_event: Optional[asyncio.Event] = None
         ) -> ScrapingResult:
             """
             Process a single ROM end-to-end
@@ -465,6 +492,7 @@ class WorkflowOrchestrator:
             Args:
                 rom_info: ROM information
                 operation_callback: Optional UI callback for progress updates
+                shutdown_event: Optional event to check for cancellation
                 
             Returns:
                 ScrapingResult
@@ -478,7 +506,8 @@ class WorkflowOrchestrator:
                     rom_info=rom_info,
                     media_types=media_types,
                     preferred_regions=preferred_regions,
-                    operation_callback=operation_callback
+                    operation_callback=operation_callback,
+                    shutdown_event=shutdown_event
                 )
                 
                 # Record total ROM processing time for performance metrics
@@ -591,7 +620,10 @@ class WorkflowOrchestrator:
                     'hash_value': rom_info.hash_value,
                     'query_filename': rom_info.query_filename,
                     'basename': rom_info.basename,
-                    'rom_type': rom_info.rom_type.value  # Serialize enum as string
+                    'rom_type': rom_info.rom_type.value,  # Serialize enum as string
+                    'crc_size_limit': rom_info.crc_size_limit,
+                    'disc_files': [str(f) for f in rom_info.disc_files] if rom_info.disc_files else None,
+                    'contained_file': str(rom_info.contained_file) if rom_info.contained_file else None
                 }
                 self.work_queue.add_work(rom_info_dict, 'full_scrape', Priority.NORMAL)
                 successfully_added += 1
@@ -701,92 +733,73 @@ class WorkflowOrchestrator:
                     'error': str(exception)
                 }
         
-        # Work queue consumption - always use parallel processing (async tasks)
-        # Even with max_concurrent=1, this allows dynamic rescaling after first API response
+        # Work queue consumption using producer-consumer pattern with workers
         if self.thread_manager:
-            # Parallel batch processing with per-task UI updates
-            logger.info(f"Using task pool with {self.thread_manager.max_concurrent} concurrent task(s)")
+            logger.info(f"Using task pool with {self.thread_manager.max_concurrent} concurrent worker(s)")
             
             # Create UI callback and ROM processor
             ui_callback = self._create_ui_callback()
             rom_processor = self._create_rom_processor(system, media_types, preferred_regions)
             
-            logger.info(f"Starting work queue processing loop. Queue status: is_empty={self.work_queue.is_empty()}, qsize={self.work_queue.queue.qsize()}, stats={self.work_queue.get_stats()}")
+            # Clear any previous results
+            self.thread_manager.clear_results()
             
-            # Process work continuously, feeding workers as they become available
-            while not self.work_queue.is_empty():
-                # Get larger batch to keep workers continuously fed
-                # Use 2x workers to ensure new work is queued while current work processes
-                batch_size = self.thread_manager.max_concurrent * 2
-                
-                # Get batch of work items and extract ROMInfo objects
-                batch = []
-                work_items = []
-                for _ in range(batch_size):
-                    work_item = self.work_queue.get_work(timeout=0.01)
-                    if work_item:
-                        work_items.append(work_item)
-                        # Reconstruct ROMInfo from work item
-                        rom_info_dict = work_item.rom_info
-                        from ..scanner.rom_types import ROMType
-                        rom_info = ROMInfo(
-                            path=Path(rom_info_dict['path']),
-                            filename=rom_info_dict['filename'],
-                            basename=rom_info_dict['basename'],
-                            rom_type=ROMType(rom_info_dict['rom_type']),
-                            system=rom_info_dict['system'],
-                            query_filename=rom_info_dict['query_filename'],
-                            file_size=rom_info_dict['file_size'],
-                            hash_type=rom_info_dict.get('hash_type', 'crc32'),
-                            hash_value=rom_info_dict.get('hash_value')
-                        )
-                        batch.append(rom_info)
-                    else:
-                        break
-                
-                if not batch:
-                    logger.warning(f"Empty batch retrieved from work queue. Queue status: is_empty={self.work_queue.is_empty()}, qsize={self.work_queue.queue.qsize()}, stats={self.work_queue.get_stats()}")
-                    break
-                
-                # Process batch with end-to-end ROM processing per task
+            # Spawn workers that will continuously process from queue
+            self.thread_manager.spawn_workers(
+                work_queue=self.work_queue,
+                rom_processor=rom_processor,
+                operation_callback=ui_callback,
+                count=self.thread_manager.max_concurrent
+            )
+            
+            logger.info(f"Workers spawned. Waiting for completion...")
+            
+            # Start background task for periodic UI updates (Work Queue + Statistics)
+            ui_update_task = None
+            if self.console_ui:
+                ui_update_task = asyncio.create_task(
+                    self._periodic_ui_update(not_found_items, len(rom_entries))
+                )
+            
+            # Wait for all work to complete and collect results
+            worker_results = await self.thread_manager.wait_for_completion()
+            
+            # Stop periodic UI updates
+            if ui_update_task:
+                ui_update_task.cancel()
                 try:
-                    async for rom_info, result in self.thread_manager.submit_rom_batch(
-                        rom_processor, batch, ui_callback
-                    ):
-                        rom_count += 1
-                        
-                        # Convert ROMInfo to dict for compatibility
-                        rom_info_dict = {
-                            'filename': rom_info.filename,
-                            'path': str(rom_info.path)
-                        }
-                        
-                        # Update UI (footer and queue stats only - tasks update themselves)
-                        # Count skipped ROMs (those with neither success nor error)
-                        skipped = sum(1 for r in results if not r.success and not r.error)
-                        await self._update_ui_progress(
-                            rom_info_dict, rom_count, len(rom_entries),
-                            results, not_found_items, skipped
-                        )
-                        
-                        # Store result
-                        results.append(result)
-                        
-                        # Track not found items
-                        if not result.success and result.error == "No game info found from API":
-                            not_found_items.append({
-                                'filename': rom_info.filename,
-                                'path': str(rom_info.path)
-                            })
-                        
-                        # Mark work item as processed (find matching work item)
-                        for work_item in work_items:
-                            if work_item.rom_info['filename'] == rom_info.filename:
-                                self.work_queue.mark_processed(work_item)
-                                break
-                except Exception as e:
-                    logger.error(f"Error processing batch: {e}", exc_info=True)
-                    raise
+                    await ui_update_task
+                except asyncio.CancelledError:
+                    pass
+            
+            logger.info(f"All workers completed processing ({len(worker_results)} results)")
+            
+            # Convert worker results to our expected format
+            for rom_info, result in worker_results:
+                rom_count += 1
+                results.append(result)
+                
+                # Track not found items
+                if not result.success and result.error == "No game info found from API":
+                    not_found_items.append({
+                        'filename': rom_info.filename,
+                        'path': str(rom_info.path)
+                    })
+            
+            # Final UI update after all results collected
+            if self.console_ui:
+                await self._update_ui_progress(
+                    rom_info_dict={'filename': 'Complete'},
+                    rom_count=rom_count,
+                    total_roms=len(rom_entries),
+                    results=results,
+                    not_found_items=not_found_items
+                )
+            
+            # Mark system complete and stop workers
+            self.work_queue.mark_system_complete()
+            await self.thread_manager.stop_workers()
+            
         else:
             # Fallback: Direct sequential processing (when thread_manager is None)
             # This should rarely/never happen in normal operation
@@ -1101,32 +1114,55 @@ class WorkflowOrchestrator:
             logger.error(f"Failed to write not-found summary: {e}")
             raise
     
+    async def _periodic_ui_update(
+        self,
+        not_found_items: list,
+        total_roms: int
+    ) -> None:
+        """Background task to periodically update UI during parallel processing"""
+        try:
+            while True:
+                await asyncio.sleep(0.5)  # Update every 500ms
+                
+                # Get current results from thread manager (real-time)
+                results = []
+                if self.thread_manager:
+                    worker_results = await self.thread_manager.get_current_results()
+                    # Extract just the result objects (worker_results is list of (rom_info, result) tuples)
+                    results = [result for _, result in worker_results]
+                
+                # Call the main UI update method with real-time results
+                await self._update_ui_progress(
+                    rom_info_dict={'filename': 'Processing...'},
+                    rom_count=len(results),
+                    total_roms=total_roms,
+                    results=results,
+                    not_found_items=not_found_items
+                )
+        except asyncio.CancelledError:
+            # Task cancelled when processing completes - this is expected
+            logger.debug("Periodic UI update task cancelled")
+    
     async def _update_ui_progress(
         self,
         rom_info_dict: dict,
         rom_count: int,
         total_roms: int,
         results: list,
-        not_found_items: list,
-        skipped_count: int = 0
+        not_found_items: list
     ) -> None:
         """Update UI with current progress"""
         if not self.console_ui:
             return
         
-        # Update work queue stats
+        # Get work queue stats for queue pending count
         queue_stats = self.work_queue.get_stats()
-        self.console_ui.update_work_queue_stats(
-            pending=queue_stats['pending'],
-            processed=queue_stats['processed'],
-            failed=queue_stats['failed'],
-            not_found=len(not_found_items),
-            retry_count=sum(item['retry_count'] for item in self.work_queue.get_failed_items())
-        )
         
         # Update footer with current stats and performance metrics
+        # Calculate counts matching the logic in scrape_system()
         successful_count = sum(1 for r in results if r.success)
-        failed_count = sum(1 for r in results if r.error)
+        failed_count = sum(1 for r in results if not r.success and r.error)
+        skipped_count = sum(1 for r in results if not r.success and not r.error)
         
         # Get performance metrics if available
         performance_metrics = None
@@ -1160,7 +1196,8 @@ class WorkflowOrchestrator:
             },
             api_quota=api_quota,
             thread_stats=thread_stats,
-            performance_metrics=performance_metrics
+            performance_metrics=performance_metrics,
+            queue_pending=queue_stats['pending']
         )
     
     def _handle_api_result(

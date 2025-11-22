@@ -154,8 +154,8 @@ def _process_standard_rom(
     """Process a standard ROM file."""
     file_size = rom_file.stat().st_size
     
-    # Calculate CRC32
-    crc32 = calculate_crc32(rom_file, crc_size_limit)
+    # Store crc_size_limit for later hashing by worker
+    # Hash calculation deferred to worker for parallel processing
     
     # Get basename (filename without extension)
     basename = rom_file.stem
@@ -169,7 +169,8 @@ def _process_standard_rom(
         query_filename=rom_file.name,
         file_size=file_size,
         hash_type="crc32",
-        hash_value=crc32
+        hash_value=None,  # Will be calculated by worker
+        crc_size_limit=crc_size_limit
     )
 
 
@@ -189,7 +190,7 @@ def _process_m3u_file(
     
     # Use disc 1 file for identification
     file_size = disc1_file.stat().st_size
-    crc32 = calculate_crc32(disc1_file, crc_size_limit)
+    # Hash calculation deferred to worker
     
     # Basename is M3U filename (not disc 1)
     basename = m3u_file.stem
@@ -203,8 +204,9 @@ def _process_m3u_file(
         query_filename=disc1_file.name,
         file_size=file_size,
         hash_type="crc32",
-        hash_value=crc32,
-        disc_files=disc_files
+        hash_value=None,  # Will be calculated by worker
+        disc_files=disc_files,
+        crc_size_limit=crc_size_limit
     )
 
 
@@ -223,7 +225,7 @@ def _process_disc_subdirectory(
     
     # Use contained file for identification
     file_size = contained_file.stat().st_size
-    crc32 = calculate_crc32(contained_file, crc_size_limit)
+    # Hash calculation deferred to worker
     
     # Basename is directory name (includes extension)
     basename = disc_subdir.name
@@ -237,8 +239,9 @@ def _process_disc_subdirectory(
         query_filename=contained_file.name,
         file_size=file_size,
         hash_type="crc32",
-        hash_value=crc32,
-        contained_file=contained_file
+        hash_value=None,  # Will be calculated by worker
+        contained_file=contained_file,
+        crc_size_limit=crc_size_limit
     )
 
 

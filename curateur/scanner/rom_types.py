@@ -33,6 +33,9 @@ class ROMInfo:
     hash_type: str = "crc32"        # Hash algorithm used (default: crc32)
     hash_value: Optional[str] = None  # Hash value (uppercase hex, or None if skipped)
     
+    # Hash calculation configuration
+    crc_size_limit: int = 1073741824  # Max file size for CRC calculation (1GB default)
+    
     # Deprecated: kept for backward compatibility
     @property
     def crc32(self) -> Optional[str]:

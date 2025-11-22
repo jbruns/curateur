@@ -191,12 +191,12 @@ scraping:
   
   # Rate limit override values (only used if rate_limit_override_enabled=true)
   # Purpose: Manually specify rate limits (capped at API-provided limits)
-  # Valid: max_threads (1-10), requests_per_minute (1-300), daily_quota (1000-50000)
-  # Default: API-provided limits, or 1 thread/60 rpm/10000 daily if API doesn't provide
+  # Valid: max_workers (1-10), requests_per_minute (1-300), daily_quota (1000-50000)
+  # Default: API-provided limits, or 1 worker/60 rpm/10000 daily if API doesn't provide
   # Behavior: Values exceeding API limits will be capped with warning logged
   #           Values below API limits will be honored with warning logged
   rate_limit_override:
-    max_threads: 1                # Parallel API calls (typical API: 4, max: 8)
+    max_workers: 1                # Concurrent workers (typical API: 4, max: 8)
     requests_per_minute: 60       # API calls per minute (typical API: 120-300)
     daily_quota: 10000            # Daily API call limit (typical API: 20000)
 

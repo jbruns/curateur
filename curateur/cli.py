@@ -491,28 +491,37 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 
                 progress.finish_system()
                 
+            except KeyboardInterrupt:
+                logger.info("Interrupted by user, stopping workers gracefully...")
+                if thread_manager:
+                    await thread_manager.stop_workers()
+                
+                # Log work queue state before UI shutdown
+                if work_queue:
+                    queue_stats = work_queue.get_stats()
+                    failed_items = work_queue.get_failed_items()
+                    
+                    if queue_stats['pending'] > 0:
+                        logger.warning(f"Work queue has {queue_stats['pending']} pending items")
+                    
+                    if failed_items:
+                        logger.warning(f"Work queue has {len(failed_items)} failed items (retries exhausted):")
+                        for item in failed_items[:10]:  # Log first 10
+                            logger.warning(f"  - {item['rom_info'].get('filename', 'unknown')}: {item['error']}")
+                
+                raise
             except Exception as e:
                 logger.error(f"Error processing system {system.fullname}: {e}", exc_info=True)
                 print(f"\nError processing system {system.fullname}: {e}")
                 progress.finish_system()
                 continue
     finally:
-        # Phase D & E: Clean up resources and log work queue state
+        # Phase D & E: Clean up resources
+        # Note: Work queue state logging moved to KeyboardInterrupt handler for UI visibility
+        
+        # Stop console UI after all logging is complete
         if console_ui:
             console_ui.stop()
-        
-        # Log work queue state on interrupt
-        if work_queue:
-            queue_stats = work_queue.get_stats()
-            failed_items = work_queue.get_failed_items()
-            
-            if queue_stats['pending'] > 0:
-                logger.warning(f"Work queue has {queue_stats['pending']} pending items")
-            
-            if failed_items:
-                logger.warning(f"Work queue has {len(failed_items)} failed items (retries exhausted):")
-                for item in failed_items[:10]:  # Log first 10
-                    logger.warning(f"  - {item['rom_info'].get('filename', 'unknown')}: {item['error']}")
         
         if thread_manager:
             await thread_manager.shutdown(wait=True)

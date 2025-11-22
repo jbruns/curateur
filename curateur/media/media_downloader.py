@@ -101,7 +101,9 @@ class MediaDownloader:
         self,
         media_list: List[Dict],
         rom_path: str,
-        system: str
+        system: str,
+        progress_callback: Optional[callable] = None,
+        shutdown_event: Optional['asyncio.Event'] = None
     ) -> tuple[List[DownloadResult], int]:
         """
         Download all enabled media for a game concurrently.
@@ -110,6 +112,7 @@ class MediaDownloader:
             media_list: List of media dicts from API response
             rom_path: Path to ROM file (for basename and region detection)
             system: System name (e.g., 'nes', 'snes')
+            progress_callback: Optional callback(media_type, idx, total) called before each download starts
             
         Returns:
             Tuple of (list of DownloadResult objects, count of media to download)
@@ -134,19 +137,27 @@ class MediaDownloader:
         # Select best media URLs
         selected_media = self.url_selector.select_media_urls(media_list, rom_path)
         
-        # Download all media types concurrently using asyncio.gather
-        download_tasks = [
-            self._download_single_media(
+        # Download media sequentially for better UI feedback
+        results = []
+        for idx, (media_type, media_info) in enumerate(selected_media.items(), 1):
+            # Check for shutdown before starting download
+            if shutdown_event and shutdown_event.is_set():
+                # Cancel remaining downloads
+                break
+            
+            # Call progress callback before starting download
+            if progress_callback:
+                progress_callback(media_type, idx, len(selected_media))
+            
+            result = await self._download_single_media(
                 media_type,
                 media_info,
                 system,
                 rom_basename
             )
-            for media_type, media_info in selected_media.items()
-        ]
+            results.append(result)
         
-        results = await asyncio.gather(*download_tasks)
-        return list(results), len(selected_media)
+        return results, len(selected_media)
     
     async def _download_single_media(
         self,

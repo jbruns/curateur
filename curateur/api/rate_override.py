@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class RateLimits(NamedTuple):
     """Rate limit configuration"""
-    max_threads: int
+    max_workers: int
     requests_per_minute: int
     daily_quota: int
 
@@ -32,7 +32,7 @@ class RateLimitOverride:
         scraping:
           rate_limit_override_enabled: false
           rate_limit_override:
-            max_threads: 4
+            max_workers: 4
             requests_per_minute: 120
             daily_quota: 10000
     
@@ -44,18 +44,18 @@ class RateLimitOverride:
         
         # Use limits for rate limiting
         rate_limiter.configure(
-            max_threads=limits.max_threads,
+            max_workers=limits.max_workers,
             requests_per_minute=limits.requests_per_minute
         )
     """
     
     # Default conservative limits (used as fallback)
-    DEFAULT_MAX_THREADS = 1
+    DEFAULT_MAX_WORKERS = 1
     DEFAULT_REQUESTS_PER_MINUTE = 60
     DEFAULT_DAILY_QUOTA = 10000
     
     # Typical API limits (for warning purposes)
-    TYPICAL_MAX_THREADS = 4
+    TYPICAL_MAX_WORKERS = 4
     TYPICAL_REQUESTS_PER_MINUTE = 120
     TYPICAL_DAILY_QUOTA = 20000
     
@@ -103,21 +103,21 @@ class RateLimitOverride:
             # Override: max_threads=8 (too high) - capped at 4 with warning
         """
         # Start with defaults
-        max_threads = self.DEFAULT_MAX_THREADS
+        max_workers = self.DEFAULT_MAX_WORKERS
         requests_per_minute = self.DEFAULT_REQUESTS_PER_MINUTE
         daily_quota = self.DEFAULT_DAILY_QUOTA
         
         # Track API limits for override validation
-        api_max_threads = None
+        api_max_workers = None
         api_max_rpm = None
         api_max_daily = None
         
         # Apply API-provided limits if available
         if api_provided_limits:
             if 'maxthreads' in api_provided_limits:
-                api_max_threads = int(api_provided_limits['maxthreads'])
-                max_threads = api_max_threads
-                logger.debug(f"API max_threads: {max_threads}")
+                api_max_workers = int(api_provided_limits['maxthreads'])
+                max_workers = api_max_workers
+                logger.debug(f"API max_workers: {max_workers}")
             
             if 'maxrequestspermin' in api_provided_limits:
                 api_max_rpm = int(api_provided_limits['maxrequestspermin'])
@@ -131,27 +131,27 @@ class RateLimitOverride:
         
         # Apply user overrides if enabled (with API limit enforcement)
         if self.override_enabled:
-            if 'max_threads' in self.custom_limits:
-                override_threads = int(self.custom_limits['max_threads'])
+            if 'max_workers' in self.custom_limits:
+                override_workers = int(self.custom_limits['max_workers'])
                 
-                if api_max_threads is not None:
-                    if override_threads > api_max_threads:
+                if api_max_workers is not None:
+                    if override_workers > api_max_workers:
                         logger.warning(
-                            f"Override max_threads={override_threads} exceeds API limit={api_max_threads}. "
+                            f"Override max_workers={override_workers} exceeds API limit={api_max_workers}. "
                             f"Capping at API limit to comply with ScreenScraper terms."
                         )
-                        max_threads = api_max_threads
-                    elif override_threads < api_max_threads:
+                        max_workers = api_max_workers
+                    elif override_workers < api_max_workers:
                         logger.warning(
-                            f"Override max_threads={override_threads} is lower than API limit={api_max_threads}. "
+                            f"Override max_workers={override_workers} is lower than API limit={api_max_workers}. "
                             f"Using conservative user setting."
                         )
-                        max_threads = override_threads
+                        max_workers = override_workers
                     else:
-                        max_threads = override_threads
+                        max_workers = override_workers
                 else:
-                    logger.info(f"Using override max_threads: {override_threads} (no API limit available)")
-                    max_threads = override_threads
+                    logger.info(f"Using override max_workers: {override_workers} (no API limit available)")
+                    max_workers = override_workers
             
             if 'requests_per_minute' in self.custom_limits:
                 override_rpm = int(self.custom_limits['requests_per_minute'])
@@ -198,7 +198,7 @@ class RateLimitOverride:
                     daily_quota = override_quota
         
         return RateLimits(
-            max_threads=max_threads,
+            max_workers=max_workers,
             requests_per_minute=requests_per_minute,
             daily_quota=daily_quota
         )
@@ -213,18 +213,18 @@ class RateLimitOverride:
         
         warnings = []
         
-        # Check max_threads
-        if 'max_threads' in self.custom_limits:
-            max_threads = int(self.custom_limits['max_threads'])
+        # Check max_workers
+        if 'max_workers' in self.custom_limits:
+            max_workers = int(self.custom_limits['max_workers'])
             
-            if max_threads < 1:
+            if max_workers < 1:
                 warnings.append(
-                    f"max_threads={max_threads} is invalid. Must be at least 1."
+                    f"max_workers={max_workers} is invalid. Must be at least 1."
                 )
-            elif max_threads > self.TYPICAL_MAX_THREADS:
+            elif max_workers > self.TYPICAL_MAX_WORKERS:
                 warnings.append(
-                    f"max_threads={max_threads} exceeds typical limit of "
-                    f"{self.TYPICAL_MAX_THREADS}. This may result in API bans."
+                    f"max_workers={max_workers} exceeds typical limit of "
+                    f"{self.TYPICAL_MAX_WORKERS}. This may result in API bans."
                 )
         
         # Check requests_per_minute
@@ -287,8 +287,8 @@ class RateLimitOverride:
         
         lines = ["Rate limit overrides: ENABLED"]
         
-        if 'max_threads' in self.custom_limits:
-            lines.append(f"  - max_threads: {self.custom_limits['max_threads']}")
+        if 'max_workers' in self.custom_limits:
+            lines.append(f"  - max_workers: {self.custom_limits['max_workers']}")
         
         if 'requests_per_minute' in self.custom_limits:
             lines.append(

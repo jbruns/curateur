@@ -1,12 +1,11 @@
 """
 Prioritized work queue for ROM processing
 
-Provides priority-based processing with retry handling.
+Provides priority-based processing with retry handling using asyncio.
 """
 
+import asyncio
 import logging
-import queue
-import threading
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Optional, Any
@@ -32,28 +31,32 @@ class WorkItem:
 
 class WorkQueueManager:
     """
-    Manages prioritized work queue for ROM processing
+    Manages prioritized work queue for ROM processing using asyncio.Queue
     
     Features:
     - Priority-based processing
     - Retry handling with exponential backoff
     - Dynamic reordering
     - Progress tracking
+    - System completion tracking for clean worker shutdown
     
     Example:
         manager = WorkQueueManager(max_retries=3)
         
-        # Add work items
+        # Add work items (synchronous)
         for rom in roms:
             manager.add_work(rom, 'full_scrape', Priority.NORMAL)
         
-        # Process queue
-        while not manager.is_empty():
-            item = manager.get_work()
+        # Process queue (async)
+        while not manager.is_system_complete():
+            item = await manager.get_work_async()
             if item:
-                success = process_rom(item)
+                success = await process_rom(item)
                 if not success:
                     manager.retry_failed(item, 'API timeout')
+        
+        # Mark system complete before moving to next
+        manager.mark_system_complete()
         
         # Get statistics
         stats = manager.get_stats()
@@ -66,12 +69,13 @@ class WorkQueueManager:
         Args:
             max_retries: Maximum retry attempts per item
         """
-        self.queue = queue.PriorityQueue()
+        self.queue = asyncio.PriorityQueue()
         self.max_retries = max_retries
         self.processed_count = 0
         self.failed = []
-        self.lock = threading.Lock()
+        self._lock = asyncio.Lock()
         self._item_counter = 0  # For stable sorting when priorities equal
+        self._system_complete = False  # Flag to signal workers that system is done
     
     def add_work(
         self,
@@ -80,7 +84,7 @@ class WorkQueueManager:
         priority: Priority = Priority.NORMAL
     ) -> None:
         """
-        Add work item to queue
+        Add work item to queue (synchronous for scanner compatibility)
         
         Args:
             rom_info: ROM information dict
@@ -90,11 +94,12 @@ class WorkQueueManager:
         item = WorkItem(rom_info, action, priority, retry_count=0)
         
         # Use counter for stable sort (FIFO within same priority)
-        with self.lock:
-            self._item_counter += 1
-            sort_key = (priority.value, self._item_counter)
+        # Note: We can't use async lock here since this is sync method
+        # asyncio.PriorityQueue is thread-safe for put_nowait()
+        self._item_counter += 1
+        sort_key = (priority.value, self._item_counter)
         
-        self.queue.put((sort_key, item))
+        self.queue.put_nowait((sort_key, item))
         # Temporarily disabled to reduce log noise
         # logger.debug(
         #     f"Added work: {rom_info.get('filename', 'unknown')} "
@@ -103,18 +108,40 @@ class WorkQueueManager:
     
     def get_work(self, timeout: Optional[float] = None) -> Optional[WorkItem]:
         """
-        Get next work item from queue
+        Get next work item from queue (legacy synchronous method, non-blocking)
         
         Args:
-            timeout: Maximum time to wait for item (None = no wait)
+            timeout: Ignored for compatibility (use get_work_async for blocking)
         
         Returns:
             WorkItem or None if queue empty
         """
         try:
-            _, item = self.queue.get(timeout=timeout)
+            _, item = self.queue.get_nowait()
             return item
-        except queue.Empty:
+        except asyncio.QueueEmpty:
+            return None
+    
+    async def get_work_async(self) -> Optional[WorkItem]:
+        """
+        Get next work item from queue (async, blocking until available)
+        
+        Workers should use this method to continuously pull work.
+        Returns None when system is marked complete and queue is empty.
+        
+        Returns:
+            WorkItem or None if system complete and queue empty
+        """
+        # If system marked complete and queue empty, return None to signal worker exit
+        if self._system_complete and self.queue.empty():
+            return None
+        
+        try:
+            # Wait for work item (blocks until available)
+            _, item = await self.queue.get()
+            return item
+        except asyncio.CancelledError:
+            # Graceful cancellation
             return None
     
     def retry_failed(self, work_item: WorkItem, error: str) -> None:
@@ -142,11 +169,10 @@ class WorkQueueManager:
             # Update priority to HIGH for retry
             work_item.priority = Priority.HIGH
             
-            with self.lock:
-                self._item_counter += 1
-                sort_key = (Priority.HIGH.value, self._item_counter)
+            self._item_counter += 1
+            sort_key = (Priority.HIGH.value, self._item_counter)
             
-            self.queue.put((sort_key, work_item))
+            self.queue.put_nowait((sort_key, work_item))
         else:
             # Max retries exceeded, add to failed list
             logger.error(
@@ -161,14 +187,14 @@ class WorkQueueManager:
                 'retry_count': work_item.retry_count
             })
     
-    def mark_processed(self, work_item: WorkItem) -> None:
+    async def mark_processed(self, work_item: WorkItem) -> None:
         """
         Mark work item as successfully processed
         
         Args:
             work_item: Completed work item
         """
-        with self.lock:
+        async with self._lock:
             self.processed_count += 1
         filename = work_item.rom_info.get('filename', work_item.rom_info.get('id', 'unknown'))
         logger.debug(f"Marked processed: {filename}")
@@ -182,6 +208,52 @@ class WorkQueueManager:
         """
         return self.queue.qsize() == 0
     
+    def mark_system_complete(self) -> None:
+        """
+        Mark current system as complete
+        
+        Signals to workers that no more work will be added for this system.
+        Workers will exit after draining the queue.
+        """
+        self._system_complete = True
+        logger.debug("System marked as complete - workers will exit after queue drains")
+    
+    def is_system_complete(self) -> bool:
+        """
+        Check if system is marked complete
+        
+        Returns:
+            True if system is complete
+        """
+        return self._system_complete
+    
+    async def drain(self) -> None:
+        """
+        Wait for queue to be empty (async)
+        
+        Use this to wait for all work to be consumed before moving to next system.
+        """
+        while not self.queue.empty():
+            await asyncio.sleep(0.1)
+        logger.debug("Queue drained - all work consumed")
+    
+    def reset_for_new_system(self) -> None:
+        """
+        Reset queue state for a new system
+        
+        Call this before populating queue with a new system's ROMs.
+        """
+        self._system_complete = False
+        self.processed_count = 0
+        self.failed = []
+        # Note: queue should already be empty from drain(), but clear just in case
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        logger.debug("Queue reset for new system")
+    
     def get_stats(self) -> dict:
         """
         Get queue statistics
@@ -189,14 +261,12 @@ class WorkQueueManager:
         Returns:
             dict with pending, processed, failed counts
         """
-        with self.lock:
-            processed = self.processed_count
-        
         return {
             'pending': self.queue.qsize(),
-            'processed': processed,
+            'processed': self.processed_count,
             'failed': len(self.failed),
-            'max_retries': self.max_retries
+            'max_retries': self.max_retries,
+            'system_complete': self._system_complete
         }
     
     def get_failed_items(self) -> list:

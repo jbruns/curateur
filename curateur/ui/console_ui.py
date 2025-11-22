@@ -168,7 +168,7 @@ class ConsoleUI:
         self.last_ui_update: Dict[int, float] = {}  # worker_id -> last update timestamp
         
         # Log panel tracking
-        self.log_buffer: deque = deque(maxlen=8)  # Store last 8 log lines
+        self.log_buffer: deque = deque(maxlen=16)  # Store last 12 log lines
         
         # Animation tracking for interval-based refresh
         self.spinner_state = 0
@@ -183,7 +183,6 @@ class ConsoleUI:
         self.current_operation = {}
         self.current_stats = {}
         self.current_quota = {}
-        self.current_work_queue_stats = {}
         self.worker_stats = {}
         self.performance_metrics = {}
     
@@ -193,8 +192,7 @@ class ConsoleUI:
         layout.split_column(
             Layout(name="header", size=3),
             Layout(name="threads", ratio=1),
-            Layout(name="logs", size=10),  # 8 lines + 2 for borders/title
-            Layout(name="queue", size=3),
+            Layout(name="logs", size=16),  # 14 lines + 2 for borders/title
             Layout(name="footer", size=7)
         )
         return layout
@@ -219,11 +217,6 @@ class ConsoleUI:
         self.layout["logs"].update(
             Panel(Text("Logs will appear here", style="dim"),
                   title="Activity Log", border_style="magenta")
-        )
-        
-        # Initialize work queue stats
-        self.layout["queue"].update(
-            Panel(Text("Work Queue: Ready", style="dim"), border_style="yellow")
         )
         
         # Initialize footer with default stats
@@ -297,61 +290,27 @@ class ConsoleUI:
     
     def _get_or_assign_worker_id(self, worker_name: str) -> int:
         """
-        Get or assign a worker ID from fixed-size pool (1-10) with recycling
+        Get or assign a worker ID using hash-based stable slot assignment
         
-        Note: Works with both threading.current_thread().name and async task identifiers.
-        Rich Live display is async-compatible (Rich 13.0.0+).
+        Workers are identified by ROM name (extracted from worker_name).
+        Each ROM gets a consistent slot via hash(rom_name) % 10.
         
         Args:
-            worker_name: Worker identifier (thread name or task-{id})
+            worker_name: Worker identifier (e.g., "task-12345" or ROM name)
         
         Returns:
             Worker ID from fixed pool (1-10)
         """
+        # Extract ROM name from worker_name if it's in task format
+        # For now, use the worker_name directly as the key
         if worker_name not in self.worker_id_map:
-            # Check if we have available IDs in the pool
-            if not self.available_worker_ids:
-                # Pool exhausted - this shouldn't happen with proper cleanup
-                logger.warning(f"Worker ID pool exhausted, reusing ID 1 for {worker_name}")
-                worker_id = 1
-            else:
-                # Assign next available ID from pool
-                worker_id = min(self.available_worker_ids)
-                self.available_worker_ids.remove(worker_id)
-                
+            # Use hash to assign stable slot (1-10)
+            worker_id = (hash(worker_name) % 10) + 1
             self.worker_id_map[worker_name] = worker_id
-            logger.debug(f"Assigned worker_id={worker_id} to worker_name='{worker_name}'")
+            logger.debug(f"Assigned worker_id={worker_id} to worker_name='{worker_name}' (hash-based)")
             
-            # Initialize worker state
-            self.worker_operations[worker_id] = {
-                'rom_name': '<idle>',
-                'operation': 'idle',
-                'details': 'Waiting for work...',
-                'progress': None,
-                'total_tasks': 0,
-                'completed_tasks': 0,
-                'status': 'idle',
-                'operation_start_time': None,
-                'worker_name': worker_name  # Track for cleanup
-            }
-        
-        return self.worker_id_map[worker_name]
-    
-    def _release_worker_id(self, worker_name: str) -> None:
-        """
-        Mark a worker as idle and ready for reassignment when task completes
-        
-        Args:
-            worker_name: Worker identifier to release
-        """
-        if worker_name in self.worker_id_map:
-            worker_id = self.worker_id_map[worker_name]
-            
-            # Remove the old task name mapping so this worker_id can be reassigned
-            del self.worker_id_map[worker_name]
-            
-            # Mark worker as idle in UI but keep the slot active
-            if worker_id in self.worker_operations:
+            # Initialize worker state if not exists
+            if worker_id not in self.worker_operations:
                 self.worker_operations[worker_id] = {
                     'rom_name': '<idle>',
                     'operation': 'idle',
@@ -361,13 +320,10 @@ class ConsoleUI:
                     'completed_tasks': 0,
                     'status': 'idle',
                     'operation_start_time': None,
-                    'worker_name': None  # No longer associated with a task
+                    'worker_name': worker_name
                 }
-            
-            # Make the worker_id available for reassignment
-            self.available_worker_ids.add(worker_id)
-            
-            logger.debug(f"Released worker_id={worker_id} from worker_name='{worker_name}', marked idle and available for reassignment")
+        
+        return self.worker_id_map[worker_name]
     
     def display_system_operation(self, system_name: str, operation: str, details: str) -> None:
         """
@@ -483,8 +439,14 @@ class ConsoleUI:
             completed_tasks: Number of completed tasks
         """
         # Check 10ms throttling (100 updates/sec max per worker)
+        # BUT: always allow updates when operation changes (critical user feedback)
         now = time.time()
-        if worker_id in self.last_ui_update:
+        operation_changed = (
+            worker_id in self.worker_operations and 
+            self.worker_operations[worker_id].get('operation') != operation
+        )
+        
+        if not operation_changed and worker_id in self.last_ui_update:
             if now - self.last_ui_update[worker_id] < 0.01:
                 return  # Skip this update
         
@@ -730,9 +692,12 @@ class ConsoleUI:
                         except (ZeroDivisionError, TypeError):
                             pass  # Skip progress display if calculation fails
                     
+                    # Add operation name
+                    operation_parts.append(operation)
+                    
                     # Add operation details
                     if details:
-                        operation_parts.append(details)
+                        operation_parts.append(f"- {details}")
                     
                     # Add elapsed time if >5s
                     elapsed_str = self._format_elapsed_time(op.get('operation_start_time'))
@@ -787,7 +752,8 @@ class ConsoleUI:
         stats: Dict[str, int],
         api_quota: Dict[str, Any],
         thread_stats: Optional[Dict[str, Any]] = None,
-        performance_metrics: Optional[Dict[str, Any]] = None
+        performance_metrics: Optional[Dict[str, Any]] = None,
+        queue_pending: int = 0
     ) -> None:
         """
         Update footer panel with statistics, quota, thread stats, and performance metrics
@@ -797,6 +763,7 @@ class ConsoleUI:
             api_quota: API quota dict (requests_today, max_requests_per_day)
             thread_stats: Optional thread pool stats (active_threads, max_threads)
             performance_metrics: Optional performance metrics (avg_api_time, avg_rom_time, eta)
+            queue_pending: Number of pending items in work queue
         """
         try:
             self.current_stats = stats
@@ -822,12 +789,13 @@ class ConsoleUI:
             )
             footer_table.add_row(
                 "Skipped:", Text(str(skipped), style="yellow"),
-                "", ""
+                "Queue:", Text(str(queue_pending), style="blue")
             )
             
             # API quota row (with bad requests on same row)
-            requests_today = api_quota.get('requests_today', 0)
-            max_requests = api_quota.get('max_requests_per_day', 0)
+            # Note: Keys match ScreenScraper API field names (lowercase, no underscores)
+            requests_today = api_quota.get('requeststoday', 0)
+            max_requests = api_quota.get('maxrequestsperday', 0)
             bad_requests_today = api_quota.get('requestskotoday', 0)
             max_bad_requests = api_quota.get('maxrequestskoperday', 0)
             
@@ -936,64 +904,6 @@ class ConsoleUI:
             error_text = Text(f"Error rendering statistics: {str(e)[:50]}", style="red")
             self.layout["footer"].update(
                 Panel(error_text, title="Statistics", border_style="red")
-            )
-    
-    def update_work_queue_stats(
-        self,
-        pending: int,
-        processed: int,
-        failed: int,
-        not_found: int,
-        retry_count: int
-    ) -> None:
-        """
-        Update work queue statistics display
-        
-        Args:
-            pending: Number of pending work items
-            processed: Number of processed items
-            failed: Number of failed items (retries exhausted)
-            not_found: Number of not-found items (404)
-            retry_count: Total number of retry attempts
-        """
-        try:
-            self.current_work_queue_stats = {
-                'pending': pending,
-                'processed': processed,
-                'failed': failed,
-                'not_found': not_found,
-                'retry_count': retry_count
-            }
-            
-            # Create work queue stats display
-            queue_table = Table.grid(padding=(0, 2))
-            queue_table.add_column(style="bold")
-            queue_table.add_column()
-            queue_table.add_column(style="bold")
-            queue_table.add_column()
-            queue_table.add_column(style="bold")
-            queue_table.add_column()
-            
-            queue_table.add_row(
-                "Queue:", Text(str(pending), style="blue"),
-                "Processed:", Text(str(processed), style="green"),
-                "Failed:", Text(str(failed), style="red" if failed > 0 else "dim")
-            )
-            queue_table.add_row(
-                "Not Found:", Text(str(not_found), style="yellow"),
-                "Retries:", Text(str(retry_count), style="cyan"),
-                "", ""
-            )
-            
-            self.layout["queue"].update(
-                Panel(queue_table, title="Work Queue", border_style="cyan")
-            )
-        except Exception as e:
-            logger.error(f"Error updating work queue stats: {e}", exc_info=True)
-            # Show error state in panel
-            error_text = Text(f"Error: {str(e)[:40]}", style="red")
-            self.layout["queue"].update(
-                Panel(error_text, title="Work Queue", border_style="red")
             )
     
     def show_error(self, message: str) -> None:
