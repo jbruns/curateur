@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from curateur.scanner.hash_calculator import calculate_crc32, format_file_size
+from curateur.scanner.hash_calculator import calculate_hash, format_file_size
 from curateur.scanner.m3u_parser import parse_m3u, get_disc1_file
 from curateur.scanner.disc_handler import is_disc_subdirectory, get_contained_file
 from curateur.scanner.rom_scanner import scan_system
@@ -29,7 +29,7 @@ def test_hash_calculator():
         print(f"  ⚠ Test file not found: {test_file}")
     
     # Calculate hash
-    crc = calculate_crc32(test_file, size_limit=10*1024*1024)  # 10MB limit
+    crc = calculate_hash(test_file, 'crc32', size_limit=10*1024*1024)  # 10MB limit
     
     assert crc and len(crc) == 8 and all(c in '0123456789ABCDEF' for c in crc), "Test failed"
     print(f"  ✓ Test passed")

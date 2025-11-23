@@ -7,7 +7,7 @@ from typing import List, Dict, Optional, Set, Tuple
 
 from curateur.config.es_systems import SystemDefinition
 from curateur.scanner.rom_types import ROMInfo, ROMType
-from curateur.scanner.hash_calculator import calculate_crc32
+from curateur.scanner.hash_calculator import calculate_hash
 from curateur.scanner.m3u_parser import parse_m3u, get_disc1_file, M3UError
 from curateur.scanner.disc_handler import (
     is_disc_subdirectory,

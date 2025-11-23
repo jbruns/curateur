@@ -1079,6 +1079,7 @@ class WorkflowOrchestrator:
                 try:
                     await ui_update_task
                 except asyncio.CancelledError:
+                    # Expected when cancelling periodic task
                     pass
             
             logger.info(f"All workers completed processing ({len(worker_results)} results)")

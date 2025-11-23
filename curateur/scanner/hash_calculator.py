@@ -66,23 +66,6 @@ def calculate_hash(
         return hasher.hexdigest().upper()
 
 
-def calculate_crc32(file_path: Path, size_limit: int = 1073741824) -> Optional[str]:
-    """
-    Calculate CRC32 hash for a file (backward compatibility wrapper).
-    
-    Args:
-        file_path: Path to file to hash
-        size_limit: Maximum file size to hash (default 1GB). Set 0 to skip hashing.
-        
-    Returns:
-        Uppercase hex CRC32 string (8 characters), or None if file exceeds limit
-        
-    Raises:
-        IOError: If file cannot be read
-    """
-    return calculate_hash(file_path, 'crc32', size_limit)
-
-
 def format_file_size(size_bytes: int) -> str:
     """
     Format file size in human-readable format.

@@ -229,6 +229,7 @@ class GamelistGenerator:
             try:
                 existing_entries = self.parser.parse_gamelist(self.gamelist_path)
             except Exception:
+                # Ignore parse errors - treat as empty gamelist and overwrite
                 pass
         
         # Merge

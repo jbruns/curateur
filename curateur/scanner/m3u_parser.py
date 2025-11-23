@@ -88,32 +88,3 @@ def get_disc1_file(m3u_path: Path) -> Path:
         )
     
     return disc1_path
-
-
-def validate_m3u_discs(m3u_path: Path) -> List[Path]:
-    """
-    Validate that all disc files referenced in M3U exist.
-    
-    Args:
-        m3u_path: Path to M3U file
-        
-    Returns:
-        List of validated disc file paths
-        
-    Raises:
-        M3UError: If any disc file is missing
-    """
-    disc_files = parse_m3u(m3u_path)
-    missing = []
-    
-    for disc_path in disc_files:
-        if not disc_path.exists():
-            missing.append(disc_path)
-    
-    if missing:
-        raise M3UError(
-            f"Missing disc files in M3U: {m3u_path}\n" +
-            "\n".join(f"  - {p}" for p in missing)
-        )
-    
-    return disc_files

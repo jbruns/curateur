@@ -356,6 +356,7 @@ class ScreenScraperClient:
                         try:
                             await request_task
                         except asyncio.CancelledError:
+                            # Expected when cancelling task during shutdown
                             pass
                         raise asyncio.CancelledError("Shutdown requested during API search")
                     
@@ -365,6 +366,7 @@ class ScreenScraperClient:
                     response = await request_task
                     
             except asyncio.CancelledError:
+                            # Expected when cancelling task during shutdown
                 raise
             except httpx.TimeoutException:
                 raise Exception("Request timeout")
@@ -583,6 +585,7 @@ class ScreenScraperClient:
                         try:
                             await request_task
                         except asyncio.CancelledError:
+                            # Expected when cancelling task during shutdown
                             pass
                         raise asyncio.CancelledError("Shutdown requested during API search")
                     
@@ -592,6 +595,7 @@ class ScreenScraperClient:
                     response = await request_task
                     
             except asyncio.CancelledError:
+                            # Expected when cancelling task during shutdown
                 raise
             except httpx.TimeoutException:
                 raise Exception("Request timeout")

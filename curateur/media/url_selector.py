@@ -134,27 +134,3 @@ class MediaURLSelector:
             return [None]
         
         return regions
-    
-    def filter_by_quality(
-        self,
-        media_list: List[Dict],
-        media_type: str,
-        region: str
-    ) -> Optional[Dict]:
-        """
-        Select highest quality media for a type and region.
-        
-        For MVP, simply returns the first match. Future enhancement
-        could prioritize by resolution, file size, or format.
-        
-        Args:
-            media_list: List of media dicts from API response
-            media_type: Media type to find
-            region: Region code
-            
-        Returns:
-            Best quality media dict, or None
-        """
-        # MVP: Return first match
-        # Milestone 2: Could add quality scoring based on resolution/size
-        return get_media_for_region(media_list, media_type, region)

@@ -74,7 +74,8 @@ def mock_rom_info():
         basename='Super Mario Bros',
         query_filename='Super Mario Bros',
         file_size=40960,
-        crc32='3b0c3c09',
+        hash_value='3b0c3c09',
+        hash_type='crc32',
         system='nes',
         rom_type=ROMType.STANDARD
     )

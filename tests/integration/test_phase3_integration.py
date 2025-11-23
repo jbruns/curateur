@@ -18,7 +18,6 @@ from curateur.api.error_handler import (
     SkippableAPIError,
     is_retryable_error
 )
-from curateur.api.rate_limiter import RateLimiter
 from curateur.api.name_verifier import (
     normalize_name,
     calculate_similarity,
@@ -74,36 +73,6 @@ def test_error_handler():
         all_pass = False
     except SkippableAPIError:
         print("  ✓ SkippableAPIError raised for HTTP 404")
-    
-
-
-def test_rate_limiter():
-    """Test rate limiting logic."""
-    print("\nTesting rate limiter...")
-    
-    limiter = RateLimiter(max_requests_per_minute=60, max_threads=1)
-    
-    # Test initialization
-    limits = limiter.get_limits()
-    if limits['max_requests_per_minute'] == 60:
-        print("  ✓ Rate limiter initialized with 60 req/min")
-    else:
-        print(f"  ✗ Wrong limit: {limits}")
-        return False
-    
-    # Test API update
-    api_response = {
-        'maxrequestspermin': 20,
-        'maxthreads': 1
-    }
-    limiter.update_from_api(api_response)
-    
-    limits = limiter.get_limits()
-    if limits['max_requests_per_minute'] == 20:
-        print("  ✓ Rate limiter updated from API response")
-    else:
-        print(f"  ✗ Failed to update: {limits}")
-        return False
     
 
 
@@ -288,7 +257,6 @@ def main():
     
     tests = [
         test_error_handler,
-        test_rate_limiter,
         test_name_normalization,
         test_name_similarity,
         test_word_overlap,

@@ -153,6 +153,7 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
         try:
             game_data['rating'] = float(note.text)
         except ValueError:
+            # Invalid rating format - skip this field
             pass
     
     # Media URLs
