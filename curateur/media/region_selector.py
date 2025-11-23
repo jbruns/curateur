@@ -5,8 +5,11 @@ Handles detecting regions from ROM filenames and selecting the best
 media based on region preferences.
 """
 
+import logging
 import re
 from typing import List, Optional, Dict
+
+logger = logging.getLogger(__name__)
 
 
 # ScreenScraper region codes
@@ -105,6 +108,7 @@ def select_best_region(
         Result: 'us' (first match in priority order)
     """
     if not available_regions:
+        logger.debug(f"    select_best_region: no available regions")
         return None
     
     # Default region preferences
@@ -113,6 +117,7 @@ def select_best_region(
     
     # Detect regions from ROM filename
     rom_regions = detect_region_from_filename(rom_filename)
+    logger.debug(f"    select_best_region: ROM regions = {rom_regions}, preferred = {preferred_regions}")
     
     # Build priority list:
     # 1. ROM regions, ordered by preferred_regions
@@ -129,17 +134,22 @@ def select_best_region(
         if region not in priority_list:
             priority_list.append(region)
     
+    logger.debug(f"    select_best_region: priority list = {priority_list}")
+    
     # Find first match in priority list
     for region in priority_list:
         if region in available_regions:
+            logger.debug(f"    select_best_region: matched region '{region}'")
             return region
     
     # No match in priority list - check if any ROM region is available
     # (handles case where ROM has region not in preferred_regions)
     for region in rom_regions:
         if region in available_regions:
+            logger.debug(f"    select_best_region: matched ROM region '{region}' (not in preferred list)")
             return region
     
+    logger.debug(f"    select_best_region: no match found")
     return None
 
 

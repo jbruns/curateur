@@ -5,6 +5,7 @@ Selects the best media URLs from ScreenScraper API responses based on
 media type, region preferences, and quality.
 """
 
+import logging
 from typing import List, Dict, Optional
 from .region_selector import (
     select_best_region,
@@ -12,6 +13,8 @@ from .region_selector import (
     should_use_region_filtering
 )
 from .media_types import is_supported_media_type
+
+logger = logging.getLogger(__name__)
 
 
 class MediaURLSelector:
@@ -70,9 +73,14 @@ class MediaURLSelector:
         """
         selected_media = {}
         
+        logger.debug(f"Selecting media for {rom_filename}")
+        logger.debug(f"Enabled media types: {self.enabled_media_types}")
+        logger.debug(f"Total media items in API response: {len(media_list)}")
+        
         for media_type in self.enabled_media_types:
             # Skip if not supported in MVP
             if not is_supported_media_type(media_type):
+                logger.debug(f"  Skipping {media_type}: not supported")
                 continue
             
             # Get all available regions for this media type
@@ -80,7 +88,10 @@ class MediaURLSelector:
             
             if not available_regions:
                 # No media available for this type
+                logger.debug(f"  {media_type}: no media available")
                 continue
+            
+            logger.debug(f"  {media_type}: available regions = {available_regions}")
             
             # Select best region
             if should_use_region_filtering(media_type):
@@ -89,16 +100,22 @@ class MediaURLSelector:
                     rom_filename,
                     self.preferred_regions
                 )
+                logger.debug(f"  {media_type}: selected region = {best_region} (region filtering enabled)")
             else:
                 # No region filtering - use first available
                 best_region = None
+                logger.debug(f"  {media_type}: no region filtering, using first available")
             
             # Get media for selected region
             media_info = get_media_for_region(media_list, media_type, best_region)
             
             if media_info:
                 selected_media[media_type] = media_info
+                logger.debug(f"  {media_type}: selected media with region={media_info.get('region', 'N/A')}")
+            else:
+                logger.debug(f"  {media_type}: no media found for region {best_region}")
         
+        logger.debug(f"Final selection: {len(selected_media)} media types: {list(selected_media.keys())}")
         return selected_media
     
     def _get_available_regions(
