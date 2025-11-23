@@ -126,8 +126,8 @@ def test_nes_scanner():
         
         # Show sample
         for rom in roms[:3]:
-            has_crc = "CRC" if rom.crc32 else "no CRC"
-            print(f"    - {rom.filename} ({has_crc})")
+            has_hash = f"{rom.hash_type.upper()}" if rom.hash_value else "no hash"
+            print(f"    - {rom.filename} ({has_hash})")
         
     except Exception as e:
         print(f"  ✗ Failed to scan: {e}")

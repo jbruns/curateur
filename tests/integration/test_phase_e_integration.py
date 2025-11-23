@@ -130,7 +130,8 @@ class TestNotFoundHandling:
         from curateur.scanner.rom_types import ROMInfo
         rom_info = Mock(spec=ROMInfo)
         rom_info.filename = 'test.rom'
-        rom_info.crc32 = 'abc123'
+        rom_info.hash_value = 'abc123'
+        rom_info.hash_type = 'crc32'
         rom_info.file_size = 1024
         
         not_found_items.append({
@@ -155,7 +156,8 @@ class TestNotFoundHandling:
         
         rom_info = Mock(spec=ROMInfo)
         rom_info.filename = 'test.rom'
-        rom_info.crc32 = 'abc123'
+        rom_info.hash_value = 'abc123'
+        rom_info.hash_type = 'crc32'
         rom_info.file_size = 1024
         
         not_found_items = [

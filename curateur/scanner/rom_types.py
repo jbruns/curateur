@@ -36,12 +36,6 @@ class ROMInfo:
     # Hash calculation configuration
     crc_size_limit: int = 1073741824  # Max file size for CRC calculation (1GB default)
     
-    # Deprecated: kept for backward compatibility
-    @property
-    def crc32(self) -> Optional[str]:
-        """Backward compatibility: use hash_value instead."""
-        return self.hash_value if self.hash_type == "crc32" else None
-    
     # M3U-specific data
     disc_files: Optional[List[Path]] = None  # List of disc files in M3U
     

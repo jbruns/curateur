@@ -112,7 +112,7 @@ def fetch_game_data(client: ScreenScraperClient, game: Dict[str, Any]) -> Dict[s
         system='nes',
         query_filename=game['filename'],
         file_size=game['size'],
-        crc32=game['crc']
+        hash_value=game['crc']
     )
     
     print(f"Fetching: {game['name']}...")

@@ -67,12 +67,13 @@ class TestLiveAPIQueries:
         rom_info = ROMInfo(
             path=Path("/fake/Super Mario Bros. (World).nes"),
             filename="Super Mario Bros. (World).nes",
-            basename="Super Mario Bros. (World)",
-            rom_type=ROMType.STANDARD,
-            system="nes",
-            query_filename="Super Mario Bros. (World).nes",
-            file_size=40976,
-            crc32="3337ec46"
+            basename="Super Mario Bros",
+                rom_type=ROMType.STANDARD,
+                system="nes",
+                query_filename="Super Mario Bros. (World).nes",
+                file_size=40976,
+                hash_value="3337ec46"
+            ),ec46"
         )
         
         print(f"\n  Querying: {rom_info.filename}")
@@ -102,15 +103,13 @@ class TestLiveAPIQueries:
         rom_info = ROMInfo(
             path=Path("/fake/Legend of Zelda, The (USA).nes"),
             filename="Legend of Zelda, The (USA).nes",
-            basename="Legend of Zelda, The (USA)",
+            basename="Zelda",
             rom_type=ROMType.STANDARD,
             system="nes",
             query_filename="Legend of Zelda, The (USA).nes",
             file_size=131088,
-            crc32="38027b14"
-        )
-        
-        print(f"\n  Querying: {rom_info.filename}")
+            hash_value="3577ab04"
+        )   )        print(f"\n  Querying: {rom_info.filename}")
         game_data = live_client.query_game(rom_info)
         
         assert game_data is not None
@@ -154,12 +153,12 @@ class TestLiveRateLimiting:
         rom_info = ROMInfo(
             path=Path("/fake/1942 (Japan, USA) (En).nes"),
             filename="1942 (Japan, USA) (En).nes",
-            basename="1942 (Japan, USA) (En)",
+            basename="Street Fighter II",
             rom_type=ROMType.STANDARD,
-            system="nes",
-            query_filename="1942 (Japan, USA) (En).nes",
-            file_size=40976,
-            crc32="74d7bae1"
+            system="snes",
+            query_filename="Street Fighter II (Europe).smc",
+            file_size=3145728,
+            hash_value="74d7bae1"
         )
         
         print(f"\n  Querying to test rate limit initialization...")
@@ -235,12 +234,12 @@ class TestLiveResponseStructure:
         rom_info = ROMInfo(
             path=Path("/fake/Mega Man (USA).nes"),
             filename="Mega Man (USA).nes",
-            basename="Mega Man (USA)",
+            basename="Totally Made Up Game",
             rom_type=ROMType.STANDARD,
             system="nes",
-            query_filename="Mega Man (USA).nes",
-            file_size=131088,
-            crc32="d2c305ae"
+            query_filename="Totally Made Up Game That Does Not Exist (USA).nes",
+            file_size=32768,
+            hash_value="d2c305ae"
         )
         
         print(f"\n  Querying: {rom_info.filename}")
@@ -291,10 +290,10 @@ class TestLiveErrorHandling:
             system="nes",
             query_filename="Nonexistent Game.nes",
             file_size=1024,
-            crc32="00000000"
+            hash_value="00000000"
         )
         
-        print(f"\n  Querying with invalid CRC: {rom_info.crc32}")
+        print(f"\n  Querying with invalid CRC: {rom_info.hash_value}")
         
         # Should raise SkippableAPIError (game not found)
         with pytest.raises(SkippableAPIError):
