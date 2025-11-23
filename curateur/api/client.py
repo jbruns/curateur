@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from curateur.scanner.rom_types import ROMInfo
 from curateur.api.system_map import get_systemeid
+from curateur.api.cache import MetadataCache
 from curateur.api.error_handler import (
     handle_http_status,
     retry_with_backoff,
@@ -46,7 +47,7 @@ class ScreenScraperClient:
     
     BASE_URL = "https://api.screenscraper.fr/api2"
     
-    def __init__(self, config: Dict[str, Any], throttle_manager: ThrottleManager, client: Optional[httpx.AsyncClient] = None):
+    def __init__(self, config: Dict[str, Any], throttle_manager: ThrottleManager, client: Optional[httpx.AsyncClient] = None, cache: Optional[MetadataCache] = None):
         """
         Initialize API client.
         
@@ -54,6 +55,7 @@ class ScreenScraperClient:
             config: Configuration dictionary with screenscraper credentials
             throttle_manager: ThrottleManager instance for rate limiting
             client: Optional httpx.AsyncClient for connection pooling
+            cache: Optional MetadataCache for response caching
         """
         # Authentication
         self.devid = config['screenscraper']['devid']
@@ -68,12 +70,16 @@ class ScreenScraperClient:
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
         self._quota_warning_threshold = config.get('scraping', {}).get('quota_warning_threshold', 0.95)
+        self.update_policy = config.get('scraping', {}).get('update_policy', 'changed_only')
         
         # HTTP client (use provided or None - caller must provide)
         self.client = client
         
         # Throttle manager for rate limiting
         self.throttle_manager = throttle_manager
+        
+        # Metadata cache (optional)
+        self.cache = cache
         
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
@@ -288,6 +294,14 @@ class ScreenScraperClient:
             Various API errors
             asyncio.CancelledError: If shutdown is requested
         """
+        # Check cache first (unless update_policy is 'always')
+        use_cache = self.cache and self.update_policy != 'always'
+        if use_cache and crc:
+            cached_entry = self.cache.get(crc, rom_size=romtaille)
+            if cached_entry is not None:
+                logger.debug(f"Cache hit for {romnom} (hash={crc})")
+                return cached_entry.get('response')
+        
         # Wait for rate limit
         await self.throttle_manager.wait_if_needed(APIEndpoint.JEU_INFOS.value)
         
@@ -433,6 +447,11 @@ class ScreenScraperClient:
                 game_data = parse_game_info(root)
             except ResponseError as e:
                 raise SkippableAPIError(str(e))
+            
+            # Store in cache if enabled and we have a hash
+            if use_cache and crc and game_data:
+                self.cache.put(crc, game_data, rom_size=romtaille)
+                logger.debug(f"Cached response for {romnom} (hash={crc}, size={romtaille})")
             
             return game_data
     

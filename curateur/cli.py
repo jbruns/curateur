@@ -97,6 +97,12 @@ For more information, see IMPLEMENTATION_PLAN.md
         help='Enable interactive prompts for selecting search matches. Overrides config.'
     )
     
+    parser.add_argument(
+        '--clear-cache',
+        action='store_true',
+        help='Clear metadata cache before scraping. Forces fresh API queries.'
+    )
+    
     return parser
 
 
@@ -266,18 +272,14 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     else:
         systems = all_systems
     
-    # Phase D: Create simple httpx client
-    timeout = config.get('api', {}).get('request_timeout', 30)
-    client = httpx.AsyncClient(
-        timeout=httpx.Timeout(
-            connect=10.0,
-            read=timeout,
-            write=30.0,
-            pool=None
-        ),
-        follow_redirects=True
-    )
-    logger.info(f"HTTP client created with {timeout}s timeout")
+    # Phase D: Create connection pool manager
+    from curateur.api.connection_pool import ConnectionPoolManager
+    
+    pool_manager = ConnectionPoolManager(config)
+    
+    # Create initial client with conservative pool size (will be updated after auth)
+    client = pool_manager.create_client(max_connections=10)
+    logger.info(f"HTTP connection pool created (initial size: 10, will scale after authentication)")
     
     # Phase E: Validate API configuration
     max_retries = config.get('api', {}).get('max_retries', 3)
@@ -331,33 +333,42 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     
     # Authenticate with ScreenScraper and get user limits
     logger.debug(f"Starting authentication, console_ui={'active' if console_ui else 'disabled'}")
-    if console_ui:
-        console_ui.update_worker_operation(
-            worker_id=1,
-            rom_name="Authentication",
-            operation="login",
-            details="Logging in to ScreenScraper..."
-        )
+    # Authentication UI update removed - now handled by pipeline stages
     
     try:
         logger.debug("Calling api_client.get_user_info()")
         user_limits = await api_client.get_user_info()
         logger.debug(f"Authentication successful: {user_limits}")
         
-        # Clear the authentication worker display
-        if console_ui:
-            console_ui.clear_worker_operation(worker_id=1)
-        
         # Initialize thread pool with actual API limits
         thread_manager.initialize_pools(user_limits)
-        logger.debug(f"Thread pool initialized with {thread_manager.max_concurrent} workers")
+        logger.debug(f"Thread pool initialized with {thread_manager.max_concurrent} concurrent tasks")
+        
+        # Scale connection pool to match concurrency limitlimit
+        if 'maxthreads' in user_limits:
+            max_concurrent = user_limits['maxthreads']
+            # Close old client and create new one with scaled pool
+            await client.aclose()
+            client = pool_manager.create_client(max_connections=max_concurrent * 2)
+            api_client.client = client  # Update API client's reference
+            logger.info(f"Scaled connection pool to {max_concurrent * 2} connections (2x concurrency limit)")
+        
+        # Update throttle manager concurrency limit to match API maxthreads
+        if 'maxthreads' in user_limits:
+            throttle_manager.update_concurrency_limit(user_limits['maxthreads'])
         
         # Update throttle manager with initial quota
         await throttle_manager.update_quota(user_limits)
         
+        # Set throttle manager UI callback for rate limit status
+        if console_ui:
+            throttle_manager.ui_callback = console_ui.set_throttle_status
+        
         # Update footer with initial quota/thread stats
         if console_ui and thread_manager.is_initialized():
             max_workers = thread_manager.max_concurrent
+            logger.debug(f"Updating console UI with max_concurrent={max_workers}")
+            console_ui.update_pipeline_concurrency(max_workers)
             console_ui.update_footer(
                 stats={'successful': 0, 'failed': 0, 'skipped': 0},
                 api_quota=throttle_manager.get_quota_stats(),
@@ -415,7 +426,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         thread_manager=thread_manager,
         performance_monitor=performance_monitor,
         console_ui=console_ui,
-        throttle_manager=throttle_manager
+        throttle_manager=throttle_manager,
+        clear_cache=args.clear_cache
     )
     
     progress = ProgressTracker()
@@ -490,7 +502,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 progress.finish_system()
                 
             except KeyboardInterrupt:
-                logger.info("Interrupted by user, stopping workers gracefully...")
+                logger.info("Interrupted by user, stopping pipeline tasks gracefully...")
                 if thread_manager:
                     await thread_manager.stop_workers()
                 

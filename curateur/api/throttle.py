@@ -6,6 +6,7 @@ Implements sliding window rate limiting with adaptive backoff.
 
 import asyncio
 import logging
+import random
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -53,7 +54,7 @@ class ThrottleManager:
         self,
         default_limit: RateLimit,
         adaptive: bool = True,
-        max_concurrent: int = 3
+        max_concurrent: Optional[int] = None
     ):
         """
         Initialize throttle manager
@@ -61,7 +62,7 @@ class ThrottleManager:
         Args:
             default_limit: Default rate limit for endpoints
             adaptive: Enable adaptive backoff on rate limit errors
-            max_concurrent: Maximum concurrent API requests (default: 3)
+            max_concurrent: Maximum concurrent API requests (default: None, will be set from API limits)
         """
         self.default_limit = default_limit
         self.adaptive = adaptive
@@ -72,10 +73,10 @@ class ThrottleManager:
         self.backoff_multiplier = {}  # endpoint -> current multiplier
         self.global_lock = asyncio.Lock()
         
-        # Concurrency limiting
-        self.max_concurrent = max_concurrent
-        self.concurrency_semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info(f"Throttle manager initialized with max {max_concurrent} concurrent requests")
+        # Concurrency limiting (will be updated from API limits)
+        self.max_concurrent = max_concurrent or 3  # Default fallback
+        self.concurrency_semaphore = asyncio.Semaphore(self.max_concurrent)
+        logger.info(f"Throttle manager initialized with max {self.max_concurrent} concurrent requests")
         
         # Quota tracking from ScreenScraper API
         self.requeststoday = 0
@@ -87,6 +88,9 @@ class ThrottleManager:
         self._quota_threshold_warned = False
         self._bad_quota_threshold_warned = False
         self._quota_lock = asyncio.Lock()
+        
+        # UI callback for throttle status
+        self.ui_callback = None
     
     async def _get_endpoint_lock(self, endpoint: str) -> asyncio.Lock:
         """Get or create lock for endpoint"""
@@ -97,6 +101,24 @@ class ThrottleManager:
                 self.consecutive_429s[endpoint] = 0
                 self.backoff_multiplier[endpoint] = 1
             return self.locks[endpoint]
+    
+    def update_concurrency_limit(self, max_concurrent: int) -> None:
+        """
+        Update maximum concurrent request limit.
+        
+        Creates a new semaphore with the updated limit. This should be called
+        after getting API limits from the user info endpoint.
+        
+        Args:
+            max_concurrent: New maximum concurrent requests
+        """
+        if max_concurrent != self.max_concurrent:
+            old_limit = self.max_concurrent
+            self.max_concurrent = max_concurrent
+            self.concurrency_semaphore = asyncio.Semaphore(max_concurrent)
+            logger.info(
+                f"Updated throttle concurrency limit: {old_limit} -> {max_concurrent} concurrent requests"
+            )
     
     async def wait_if_needed(self, endpoint: str) -> float:
         """
@@ -121,13 +143,27 @@ class ThrottleManager:
                         f"Rate limit backoff for {endpoint}: "
                         f"waiting {wait_time:.1f}s"
                     )
+                    
+                    # Notify UI: Throttling active
+                    if self.ui_callback:
+                        self.ui_callback(True)
+                    
                     # Async sleep - UI stays responsive
                     await asyncio.sleep(wait_time)
+                    
+                    # Notify UI: Throttling ended
+                    if self.ui_callback:
+                        self.ui_callback(False)
+                    
                     return wait_time
                 else:
                     # Backoff period ended
                     del self.backoff_until[endpoint]
                     logger.info(f"Rate limit backoff ended for {endpoint}")
+                    
+                    # Notify UI: Throttling ended
+                    if self.ui_callback:
+                        self.ui_callback(False)
             
             # Clean old calls outside window
             history = self.call_history[endpoint]
@@ -149,8 +185,17 @@ class ThrottleManager:
                         f"Rate limit throttle for {endpoint}: "
                         f"waiting {wait_time:.1f}s"
                     )
+                    
+                    # Notify UI: Throttling active
+                    if self.ui_callback:
+                        self.ui_callback(True)
+                    
                     # Async sleep - UI stays responsive
                     await asyncio.sleep(wait_time)
+                    
+                    # Notify UI: Throttling ended
+                    if self.ui_callback:
+                        self.ui_callback(False)
                     
                     # Clean expired call
                     history.popleft()
@@ -169,8 +214,9 @@ class ThrottleManager:
         """
         Handle 429 rate limit response
         
-        Implements adaptive backoff with exponential multiplier if enabled.
-        Consecutive 429s increase backoff: 1x -> 2x -> 4x -> 8x (capped at 8x)
+        Implements adaptive backoff with progressive multiplier if enabled.
+        Consecutive 429s increase backoff: 1x → 1.5x → 2x → 3x (capped at 3x)
+        Includes ±10% random jitter to prevent thundering herd on recovery.
         
         Note: This is synchronous as it only updates internal state.
         Use await wait_if_needed() to actually wait for the backoff period.
@@ -192,11 +238,19 @@ class ThrottleManager:
             # Default backoff: 60 seconds
             retry_after = 60
         
-        # Track consecutive 429s and calculate exponential backoff multiplier
+        # Track consecutive 429s and calculate progressive backoff multiplier
         self.consecutive_429s[endpoint] += 1
         
-        # Calculate multiplier: 1x, 2x, 4x, 8x (capped at 8x)
-        multiplier = min(2 ** (self.consecutive_429s[endpoint] - 1), 8)
+        # Calculate multiplier: 1x → 1.5x → 2x → 3x (capped at 3x)
+        # More conservative than exponential to avoid excessive backoff
+        multipliers = [1.0, 1.5, 2.0, 3.0]
+        multiplier_index = min(self.consecutive_429s[endpoint] - 1, len(multipliers) - 1)
+        base_multiplier = multipliers[multiplier_index]
+        
+        # Add ±10% random jitter to prevent thundering herd when multiple concurrent requests recover
+        jitter = random.uniform(0.9, 1.1)
+        multiplier = base_multiplier * jitter
+        
         self.backoff_multiplier[endpoint] = multiplier
         
         # Apply multiplier to retry_after
@@ -206,8 +260,9 @@ class ThrottleManager:
         
         logger.warning(
             f"Rate limit hit for {endpoint}: "
-            f"backing off for {actual_backoff}s "
-            f"(base={retry_after}s, multiplier={multiplier}x, consecutive_429s={self.consecutive_429s[endpoint]})"
+            f"backing off for {actual_backoff:.1f}s "
+            f"(base={retry_after}s, multiplier={base_multiplier:.1f}x+jitter={jitter:.2f}, "
+            f"consecutive_429s={self.consecutive_429s[endpoint]})"
         )
         
         # Clear recent call history to be conservative

@@ -198,33 +198,23 @@ class WorkflowEvaluator:
             # No gamelist entry
             return False
         
-        stored_hash = self._get_stored_hash(gamelist_entry)
-        if stored_hash is None:
-            # No stored hash
-            return False
-        
-        # Compare (case-insensitive)
-        return calculated_hash.upper() == stored_hash.upper()
+        # Hash validation is now handled by cache layer
+        # If we got here without a cache hit, assume ROM changed
+        return False
     
     def _get_stored_hash(self, gamelist_entry: Optional[GameEntry]) -> Optional[str]:
         """
-        Extract stored hash for configured algorithm from gamelist entry.
+        Extract stored hash from gamelist entry.
+        
+        NOTE: Deprecated - hashes now stored in cache, not gamelist.xml.
         
         Args:
             gamelist_entry: Gamelist entry
         
         Returns:
-            Stored hash value, or None if not present
+            None (hashes no longer in gamelist)
         """
-        if gamelist_entry is None:
-            return None
-        
-        # Hash structure: {'rom': {'crc32': 'ABC123', ...}, 'media': {...}}
-        if not hasattr(gamelist_entry, 'hash') or gamelist_entry.hash is None:
-            return None
-        
-        rom_hashes = gamelist_entry.hash.get('rom', {})
-        return rom_hashes.get(self.hash_algorithm)
+        return None
     
     def _determine_media_operations(
         self,
@@ -276,20 +266,15 @@ class WorkflowEvaluator:
         """
         Extract stored media hashes from gamelist entry.
         
+        NOTE: Deprecated - media hashes now stored in cache, not gamelist.xml.
+        
         Args:
             gamelist_entry: Gamelist entry
         
         Returns:
-            Dict mapping singular media type to hash value
+            Empty dict (media hashes no longer in gamelist)
         """
-        if gamelist_entry is None:
-            return {}
-        
-        # Hash structure: {'rom': {...}, 'media': {'cover': 'ABC123', ...}}
-        if not hasattr(gamelist_entry, 'hash') or gamelist_entry.hash is None:
-            return {}
-        
-        return gamelist_entry.hash.get('media', {})
+        return {}
     
     def should_clean_media(self, media_type: str) -> bool:
         """

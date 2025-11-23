@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 class ThreadPoolManager:
     """
-    Manages parallel operations within ScreenScraper worker limits using producer-consumer pattern
+    Manages parallel operations within ScreenScraper limits using producer-consumer pattern
     
-    Workers continuously pull work from queue until system completion.
+    Concurrent tasks continuously pull work from queue until system completion.
     
     Features:
-    - Respects API-provided maxthreads limit (worker count)
-    - Concurrent worker execution with asyncio
+    - Respects API-provided maxthreads limit (concurrency limit)
+    - Concurrent task execution with asyncio
     - Dynamic pool sizing based on API quota
     - Active work tracking for UI display
     - Graceful shutdown with completion waiting
@@ -30,7 +30,7 @@ class ThreadPoolManager:
         # Initialize based on API limits
         manager.initialize_pools({'maxthreads': 4})
         
-        # Spawn workers with staggered startup
+        # Spawn concurrent tasks with staggered startup
         await manager.spawn_workers(work_queue, process_rom, ui_callback, count=4, stagger_delay=5.0)
         
         # Wait for all work to complete
@@ -57,7 +57,7 @@ class ThreadPoolManager:
         self._lock = asyncio.Lock()
         self._shutdown_event = asyncio.Event()
         
-        # Worker management
+        # Task management
         self._worker_tasks: list = []
         self._work_queue = None
         self._rom_processor = None
@@ -92,7 +92,7 @@ class ThreadPoolManager:
     
     def _determine_max_threads(self, api_limits: Optional[Dict[str, Any]]) -> int:
         """
-        Determine max workers considering:
+        Determine max concurrency considering:
         1. API-provided maxthreads (authoritative upper bound)
         2. User override (if enabled) - clamped to API limit
         3. Conservative default (1)
@@ -101,7 +101,7 @@ class ThreadPoolManager:
             api_limits: API-provided limits dict
         
         Returns:
-            Maximum worker count to use (1 <= result <= API maxthreads)
+            Maximum concurrent task count to use (1 <= result <= API maxthreads)
         """
         # Get API-provided limit (authoritative upper bound)
         api_maxthreads = None
@@ -116,9 +116,9 @@ class ThreadPoolManager:
             from curateur.api.rate_override import RateLimitOverride
             override = RateLimitOverride(self.config)
             limits = override.get_effective_limits(api_limits)
-            workers = limits.max_workers
-            logger.info(f"Using rate_limit_override max_workers: {workers}")
-            return workers
+            concurrency = limits.max_threads
+            logger.info(f"Using rate_limit_override max_threads: {concurrency}")
+            return concurrency
         
         # Use API-provided limit (no override)
         if api_maxthreads is not None:
@@ -202,12 +202,12 @@ class ThreadPoolManager:
         rom_processor: Callable[[Any, Optional[Callable]], Awaitable[Any]],
         operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]],
         count: int,
-        stagger_delay: float = 5.0
+        stagger_delay: float = 0.0
     ) -> None:
         """
-        Spawn worker coroutines that continuously process items from work queue
+        Spawn concurrent task coroutines that continuously process items from work queue
         
-        Workers pull work items from queue, process them, and repeat until:
+        Tasks pull work items from queue, process them, and repeat until:
         - Queue is empty AND system marked complete
         - Shutdown event is set
         
@@ -215,8 +215,8 @@ class ThreadPoolManager:
             work_queue: WorkQueueManager instance to pull work from
             rom_processor: Async function to process each ROM
             operation_callback: Optional UI callback for progress updates
-            count: Number of workers to spawn
-            stagger_delay: Delay in seconds between starting each worker (default: 5.0)
+            count: Number of concurrent tasks to spawn
+            stagger_delay: Delay in seconds between starting each task (default: 0.0, deprecated)
         """
         if not self._initialized:
             self.initialize_pools()
@@ -226,38 +226,32 @@ class ThreadPoolManager:
         self._rom_processor = rom_processor
         self._operation_callback = operation_callback
         
-        if count > 1:
-            logger.info(f"Spawning {count} worker(s) with {stagger_delay}s stagger")
-        else:
-            logger.info(f"Spawning {count} worker(s)")
+        logger.info(f"Spawning {count} concurrent task(s)")
         
+        # Spawn all tasks concurrently for maximum throughput
         for i in range(count):
             worker_task = asyncio.create_task(self._worker_loop(i + 1))
             self._worker_tasks.append(worker_task)
-            logger.debug(f"Started worker {i + 1}")
-            
-            # Stagger the startup (except for the last worker)
-            if i < count - 1:
-                await asyncio.sleep(stagger_delay)
+            logger.debug(f"Started task {i + 1}")
     
-    async def _worker_loop(self, worker_id: int) -> None:
+    async def _worker_loop(self, task_id: int) -> None:
         """
-        Worker coroutine that continuously processes work items
+        Task coroutine that continuously processes work items
         
         Args:
-            worker_id: Numeric identifier for this worker (for logging)
+            task_id: Numeric identifier for this task (for logging)
         """
-        logger.debug(f"Worker {worker_id} started")
+        logger.debug(f"Task {task_id} started")
         
         while not self._shutdown_event.is_set():
             # Check if work queue is done
             if self._work_queue.is_system_complete() and self._work_queue.is_empty():
-                logger.debug(f"Worker {worker_id} exiting - system complete and queue empty")
+                logger.debug(f"Task {task_id} exiting - system complete and queue empty")
                 break
             
             # Check for shutdown before getting new work
             if self._shutdown_event.is_set():
-                logger.info(f"Worker {worker_id} shutting down - not starting new work")
+                logger.info(f"Task {task_id} shutting down - not starting new work")
                 break
             
             # Get next work item
@@ -270,17 +264,17 @@ class ThreadPoolManager:
                 # No work available, check again
                 continue
             except asyncio.CancelledError:
-                logger.debug(f"Worker {worker_id} cancelled")
+                logger.debug(f"Task {task_id} cancelled")
                 break
             
             if work_item is None:
                 # System complete
-                logger.debug(f"Worker {worker_id} received None - system complete")
+                logger.debug(f"Task {task_id} received None - system complete")
                 break
             
             # Check shutdown again before starting work
             if self._shutdown_event.is_set():
-                logger.info(f"Worker {worker_id} not starting {work_item.rom_info.get('filename', 'unknown')} - shutdown requested")
+                logger.info(f"Task {task_id} not starting {work_item.rom_info.get('filename', 'unknown')} - shutdown requested")
                 # Put work back in queue for graceful handling
                 self._work_queue.queue.put_nowait((work_item.priority, work_item))
                 break
@@ -306,7 +300,7 @@ class ThreadPoolManager:
                     'contained_file': Path(rom_info_dict['contained_file']) if rom_info_dict.get('contained_file') else None
                 })()
             except Exception as e:
-                logger.error(f"Worker {worker_id} failed to reconstruct ROMInfo: {e}")
+                logger.error(f"Task {task_id} failed to reconstruct ROMInfo: {e}")
                 await self._work_queue.mark_processed(work_item)
                 continue
             
@@ -316,9 +310,9 @@ class ThreadPoolManager:
                 self._active_work_count += 1
             
             try:
-                logger.debug(f"Worker {worker_id} starting {rom_info.filename}")
+                logger.debug(f"Task {task_id} starting {rom_info.filename}")
                 
-                # Update UI to show worker is waiting if semaphore is locked
+                # Update UI to show task is waiting if semaphore is locked
                 if self._operation_callback and self.semaphore.locked():
                     task_name = f"task-{id(asyncio.current_task())}"
                     self._operation_callback(
@@ -332,7 +326,7 @@ class ThreadPoolManager:
                 async with self.semaphore:
                     result = await self._rom_processor(rom_info, self._operation_callback, self._shutdown_event)
                     
-                logger.debug(f"Worker {worker_id} completed {rom_info.filename}")
+                logger.debug(f"Task {task_id} completed {rom_info.filename}")
                 
                 # Store result
                 async with self._results_lock:
@@ -349,39 +343,39 @@ class ThreadPoolManager:
                 
             except asyncio.CancelledError:
                 # Shutdown requested during processing, mark as incomplete
-                logger.debug(f"Worker {worker_id} cancelled {rom_info.filename} (shutdown)")
+                logger.debug(f"Task {task_id} cancelled {rom_info.filename} (shutdown)")
                 await self._work_queue.mark_processed(work_item)
             except Exception as e:
-                logger.error(f"Worker {worker_id} failed processing {rom_info.filename}: {e}")
+                logger.error(f"Task {task_id} failed processing {rom_info.filename}: {e}")
                 await self._work_queue.mark_processed(work_item)
             finally:
                 async with self._lock:
                     self._active_work_count = max(0, self._active_work_count - 1)
         
-        logger.debug(f"Worker {worker_id} finished")
+        logger.debug(f"Task {task_id} finished")
     
     async def wait_for_completion(self) -> list:
         """
-        Wait for all workers to finish processing and return results
+        Wait for all tasks to finish processing and return results
         
         This waits for:
         1. Work queue to drain (all items processed)
-        2. All worker tasks to complete
+        2. All task coroutines to complete
         
         Returns:
             List of (rom_info, result) tuples
         """
-        logger.debug("Waiting for workers to complete...")
+        logger.debug("Waiting for tasks to complete...")
         
         # Wait for queue to drain
         if self._work_queue:
             await self._work_queue.drain()
         
-        # Wait for all workers to finish
+        # Wait for all tasks to finish
         if self._worker_tasks:
             await asyncio.gather(*self._worker_tasks, return_exceptions=True)
         
-        logger.info("All workers completed")
+        logger.info("All pipeline tasks completed")
         
         # Return collected results
         async with self._results_lock:
@@ -398,38 +392,38 @@ class ThreadPoolManager:
     
     async def stop_workers(self, timeout: float = 30.0) -> None:
         """
-        Gracefully stop all workers
+        Gracefully stop all pipeline tasks
         
         Sets shutdown event to prevent new work from starting, then waits for
         in-flight tasks to complete. Any work not yet started is left in the queue.
         
         Args:
-            timeout: Maximum time to wait for workers to finish in-flight work (seconds)
+            timeout: Maximum time to wait for tasks to finish in-flight work (seconds)
         """
         if not self._worker_tasks:
-            logger.debug("No workers to stop")
+            logger.debug("No tasks to stop")
             return
         
         active_count = self._active_work_count
-        total_workers = len(self._worker_tasks)
+        total_tasks = len(self._worker_tasks)
         
-        logger.info(f"Stopping {total_workers} worker(s) - {active_count} currently active...")
-        logger.info("Workers will finish in-flight tasks but not start new ones")
+        logger.info(f"Stopping {total_tasks} pipeline task(s) - {active_count} currently active...")
+        logger.info("Tasks will finish in-flight work but not start new ones")
         
-        # Set shutdown event to stop workers from starting new work
+        # Set shutdown event to stop tasks from starting new work
         self._shutdown_event.set()
         
-        # Wait for workers to finish in-flight work (with timeout)
+        # Wait for tasks to finish in-flight work (with timeout)
         try:
             await asyncio.wait_for(
                 asyncio.gather(*self._worker_tasks, return_exceptions=True),
                 timeout=timeout
             )
-            logger.info(f"All {total_workers} workers stopped gracefully")
+            logger.info(f"All {total_tasks} tasks stopped gracefully")
         except asyncio.TimeoutError:
-            logger.warning(f"Workers did not complete in-flight work within {timeout}s, cancelling...")
+            logger.warning(f"Tasks did not complete in-flight work within {timeout}s, cancelling...")
             incomplete_count = sum(1 for task in self._worker_tasks if not task.done())
-            logger.warning(f"Cancelling {incomplete_count} worker(s) still in progress")
+            logger.warning(f"Cancelling {incomplete_count} task(s) still in progress")
             
             for task in self._worker_tasks:
                 if not task.done():
@@ -437,7 +431,7 @@ class ThreadPoolManager:
             
             # Wait for cancellations
             await asyncio.gather(*self._worker_tasks, return_exceptions=True)
-            logger.info("Workers cancelled")
+            logger.info("Tasks cancelled")
         
         # Report queue status
         if self._work_queue:
@@ -473,13 +467,13 @@ class ThreadPoolManager:
         Get task pool statistics
         
         Returns:
-            Dictionary with pool statistics including active workers
+            Dictionary with pool statistics including active tasks
         """
         async with self._lock:
             return {
-                'active_workers': self._active_work_count,
-                'total_workers': len(self._worker_tasks),
-                'max_workers': self.max_concurrent,
+                'active_tasks': self._active_work_count,
+                'total_tasks': len(self._worker_tasks),
+                'max_tasks': self.max_concurrent,
                 'initialized': self._initialized
             }
     

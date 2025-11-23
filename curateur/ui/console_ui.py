@@ -160,12 +160,20 @@ class ConsoleUI:
         self.system_task: Optional[TaskID] = None
         self.rom_task: Optional[TaskID] = None
         
-        # Worker operation tracking (async tasks) with fixed-size pool
-        self.worker_operations: Dict[int, Dict[str, Any]] = {}  # worker_id -> operation state
-        self.worker_id_map: Dict[str, int] = {}  # worker_name -> worker_id
-        self.max_workers = 10  # Fixed pool size
-        self.available_worker_ids: Set[int] = set(range(1, self.max_workers + 1))  # Pool of available IDs
-        self.last_ui_update: Dict[int, float] = {}  # worker_id -> last update timestamp
+        # Pipeline stage tracking
+        self.pipeline_stages = {
+            'hashing': {'active': False, 'current': 0, 'total': 0, 'details': ''},
+            'api_fetch': {'active_roms': [], 'max_concurrent': 3, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0},
+            'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'by_type': {}},
+            'completed': {'count': 0},
+            'system_operation': {'active': False, 'operation': '', 'details': ''}
+        }
+        
+        # Additional tracking
+        self.unmatched_count = 0
+        self.integrity_score = None  # Gamelist integrity percentage
+        self.is_throttled = False  # Whether currently rate limited
+        self.last_pipeline_update = 0.0
         
         # Log panel tracking
         self.log_buffer: deque = deque(maxlen=16)  # Store last 12 log lines
@@ -191,8 +199,8 @@ class ConsoleUI:
         layout = Layout()
         layout.split_column(
             Layout(name="header", size=3),
-            Layout(name="threads", ratio=1),
-            Layout(name="logs", size=16),  # 14 lines + 2 for borders/title
+            Layout(name="threads", size=9),  # 5 stages + 4 for borders/title/padding
+            Layout(name="logs", ratio=1),  # Take remaining space
             Layout(name="footer", size=7)
         )
         return layout
@@ -280,79 +288,192 @@ class ConsoleUI:
                 # Increment spinner state
                 self.spinner_state = (self.spinner_state + 1) % len(self.spinner_frames)
                 
-                # Update workers panel to refresh spinners
-                self._render_threads_panel()
+                # Update pipeline panel to refresh spinners
+                self._render_pipeline_panel()
         except asyncio.CancelledError:
             # Task was cancelled (UI stopped) - this is expected
             logger.debug("Background refresh task cancelled")
         except Exception as e:
             logger.error(f"Error in background refresh task: {e}", exc_info=True)
     
-    def _get_or_assign_worker_id(self, worker_name: str) -> int:
+    def update_hashing_progress(self, current: int, total: int, details: str = '') -> None:
         """
-        Get or assign a worker ID using hash-based stable slot assignment
-        
-        Workers are identified by ROM name (extracted from worker_name).
-        Each ROM gets a consistent slot via hash(rom_name) % 10.
+        Update batch hashing stage progress
         
         Args:
-            worker_name: Worker identifier (e.g., "task-12345" or ROM name)
-        
-        Returns:
-            Worker ID from fixed pool (1-10)
+            current: Number of ROMs hashed so far
+            total: Total ROMs to hash
+            details: Optional details (e.g., 'batch 1/5')
         """
-        # Extract ROM name from worker_name if it's in task format
-        # For now, use the worker_name directly as the key
-        if worker_name not in self.worker_id_map:
-            # Use hash to assign stable slot (1-10)
-            worker_id = (hash(worker_name) % 10) + 1
-            self.worker_id_map[worker_name] = worker_id
-            logger.debug(f"Assigned worker_id={worker_id} to worker_name='{worker_name}' (hash-based)")
-            
-            # Initialize worker state if not exists
-            if worker_id not in self.worker_operations:
-                self.worker_operations[worker_id] = {
-                    'rom_name': '<idle>',
-                    'operation': 'idle',
-                    'details': 'Waiting for work...',
-                    'progress': None,
-                    'total_tasks': 0,
-                    'completed_tasks': 0,
-                    'status': 'idle',
-                    'operation_start_time': None,
-                    'worker_name': worker_name
-                }
+        self.pipeline_stages['hashing']['active'] = current < total
+        self.pipeline_stages['hashing']['current'] = current
+        self.pipeline_stages['hashing']['total'] = total
+        self.pipeline_stages['hashing']['details'] = details
+        self._render_pipeline_panel()
+    
+    def update_api_fetch_stage(self, rom_name: str, action: str, cache_hit: bool = False) -> None:
+        """
+        Update API fetch stage (add/remove ROM)
         
-        return self.worker_id_map[worker_name]
+        Args:
+            rom_name: ROM being processed
+            action: 'start' or 'complete'
+            cache_hit: Whether this was a cache hit (only for 'complete')
+        """
+        active_roms = self.pipeline_stages['api_fetch']['active_roms']
+        if action == 'start' and rom_name not in active_roms:
+            active_roms.append(rom_name)
+        elif action == 'complete':
+            if rom_name in active_roms:
+                active_roms.remove(rom_name)
+            # Track cache stats
+            if cache_hit:
+                self.pipeline_stages['api_fetch']['cache_hits'] += 1
+            else:
+                self.pipeline_stages['api_fetch']['cache_misses'] += 1
+        self._render_pipeline_panel()
+    
+    def update_media_download_stage(self, rom_name: str, media_type: str, action: str) -> None:
+        """
+        Update media download stage
+        
+        Args:
+            rom_name: ROM being processed
+            media_type: Media type being downloaded
+            action: 'start' or 'complete'
+        """
+        active_items = self.pipeline_stages['media_download']['active_roms']
+        item = (rom_name, media_type)
+        if action == 'start' and item not in active_items:
+            active_items.append(item)
+        elif action == 'complete' and item in active_items:
+            active_items.remove(item)
+        self._render_pipeline_panel()
+    
+    def increment_media_validated(self, media_type: Optional[str] = None) -> None:
+        """
+        Increment media validation counter
+        
+        Args:
+            media_type: Optional media type (box, screenshot, video, etc.) for breakdown tracking
+        """
+        self.pipeline_stages['media_download']['validated'] += 1
+        
+        # Track by type for detailed breakdown
+        if media_type:
+            by_type = self.pipeline_stages['media_download']['by_type']
+            by_type[media_type] = by_type.get(media_type, 0) + 1
+        
+        self._render_pipeline_panel()
+    
+    def increment_search_fallback(self) -> None:
+        """
+        Increment search fallback counter when hash lookup fails and search is used
+        """
+        self.pipeline_stages['api_fetch']['search_fallback'] += 1
+        self._render_pipeline_panel()
+    
+    def increment_unmatched(self) -> None:
+        """
+        Increment unmatched ROM counter when no API match is found
+        """
+        self.unmatched_count += 1
+    
+    def set_integrity_score(self, score: float) -> None:
+        """
+        Set gamelist integrity score (0.0 to 1.0)
+        
+        Args:
+            score: Integrity score as decimal (e.g., 0.95 for 95%)
+        """
+        self.integrity_score = score
+        self._render_pipeline_panel()
+    
+    def set_throttle_status(self, is_throttled: bool) -> None:
+        """
+        Set whether currently being rate limited
+        
+        Args:
+            is_throttled: True if rate limiting is active
+        """
+        self.is_throttled = is_throttled
+        self._render_pipeline_panel()
+    
+    def update_pipeline_concurrency(self, max_threads: int) -> None:
+        """
+        Update pipeline stage concurrency limits
+        
+        Args:
+            max_threads: Maximum concurrent API threads from ScreenScraper
+        """
+        logger.debug(f"Updating pipeline concurrency limits to {max_threads}")
+        self.pipeline_stages['api_fetch']['max_concurrent'] = max_threads
+        self.pipeline_stages['media_download']['max_concurrent'] = max_threads
+        logger.debug(f"Pipeline stages updated: api_fetch={self.pipeline_stages['api_fetch']['max_concurrent']}, media={self.pipeline_stages['media_download']['max_concurrent']}")
+        self._render_pipeline_panel()
+    
+    def increment_completed(self) -> None:
+        """
+        Increment completed ROM counter
+        """
+        self.pipeline_stages['completed']['count'] += 1
+        self._render_pipeline_panel()
+    
+    def set_system_operation(self, operation: str, details: str) -> None:
+        """
+        Set active system-level operation (writing gamelist, validation, etc.)
+        
+        Args:
+            operation: Operation name (e.g., 'Writing gamelist', 'Validating')
+            details: Operation details
+        """
+        self.pipeline_stages['system_operation']['active'] = True
+        self.pipeline_stages['system_operation']['operation'] = operation
+        self.pipeline_stages['system_operation']['details'] = details
+        self._render_pipeline_panel()
+    
+    def clear_system_operation(self) -> None:
+        """
+        Clear system-level operation
+        """
+        self.pipeline_stages['system_operation']['active'] = False
+        self.pipeline_stages['system_operation']['operation'] = ''
+        self.pipeline_stages['system_operation']['details'] = ''
+        self._render_pipeline_panel()
+    
+    def reset_pipeline_stages(self) -> None:
+        """
+        Reset pipeline stage tracking for new system
+        """
+        # Preserve max_concurrent values from previous system
+        current_max_concurrent = self.pipeline_stages['api_fetch']['max_concurrent']
+        
+        self.pipeline_stages = {
+            'hashing': {'active': False, 'current': 0, 'total': 0, 'details': ''},
+            'api_fetch': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0},
+            'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'by_type': {}},
+            'completed': {'count': 0},
+            'system_operation': {'active': False, 'operation': '', 'details': ''}
+        }
+        
+        # Reset additional tracking for new system
+        self.unmatched_count = 0
+        self.integrity_score = None
+        
+        self._render_pipeline_panel()
     
     def display_system_operation(self, system_name: str, operation: str, details: str) -> None:
         """
         Display a system-level blocking operation (writing gamelist, validating, etc.)
-        
-        This repurposes worker ID 1 to show system-level operations that block further processing.
         
         Args:
             system_name: System name to display
             operation: Operation name (e.g., Operations.WRITING_GAMELIST)
             details: Operation details
         """
-        # Use worker ID 1 for system operations
-        worker_id = 1
-        
-        # Update worker 1's state
-        self.update_worker_operation(
-            worker_id=worker_id,
-            rom_name=system_name.upper(),
-            operation=operation,
-            details=details,
-            progress_pct=None,
-            total_tasks=1,
-            completed_tasks=0
-        )
-    
-    def clear_system_operation(self) -> None:
-        """Clear system-level blocking operation from worker ID 1"""
-        self.clear_worker_operation(worker_id=1)
+        # Show in pipeline UI
+        self.set_system_operation(operation, details)
+        logger.info(f"[{system_name.upper()}] {operation}: {details}")
     
     
     def _format_elapsed_time(self, start_time: Optional[float]) -> str:
@@ -373,19 +494,20 @@ class ConsoleUI:
             return f" ({int(elapsed)}s)"
         return ""
     
-    def _truncate_rom_name(self, rom_name: str) -> str:
+    def _truncate_rom_name(self, rom_name: str, max_length: int = 35) -> str:
         """
-        Truncate ROM name to 40 characters with ellipsis
+        Truncate ROM name for display
         
         Args:
-            rom_name: Full ROM name
+            rom_name: ROM filename
+            max_length: Maximum length before truncation
         
         Returns:
-            Truncated name
+            Truncated ROM name
         """
-        if len(rom_name) <= 40:
+        if len(rom_name) <= max_length:
             return rom_name
-        return rom_name[:37] + "..."
+        return rom_name[:max_length-3] + "..."
     
     def _sanitize_details(self, details: str, max_length: int = 60) -> str:
         """
@@ -412,153 +534,20 @@ class ConsoleUI:
         
         return safe_details
     
-    def update_worker_operation(
-        self,
-        worker_id: int,
-        rom_name: str,
-        operation: str,
-        details: str,
-        progress_pct: Optional[float] = None,
-        total_tasks: Optional[int] = None,
-        completed_tasks: Optional[int] = None
-    ) -> None:
+    def _truncate_rom_name(self, rom_name: str, max_length: int = 35) -> str:
         """
-        Update worker operation status (async-compatible, synchronous update)
-        
-        Note: This method is intentionally synchronous. It's safe to call from async code
-        as it only updates internal state and triggers Rich Live re-renders, which are
-        handled by Rich's async-compatible rendering system.
+        Truncate ROM name for display
         
         Args:
-            worker_id: Sequential worker ID (1, 2, 3, ...)
             rom_name: ROM filename
-            operation: Operation type ('hashing', 'api_fetch', 'downloading', 'verifying', 'idle', 'skipped', 'disabled')
-            details: Operation details text
-            progress_pct: Optional progress percentage (0-100) for downloads
-            total_tasks: Total number of tasks for current ROM
-            completed_tasks: Number of completed tasks
+            max_length: Maximum length before truncation
+        
+        Returns:
+            Truncated ROM name
         """
-        # Check 10ms throttling (100 updates/sec max per worker)
-        # BUT: always allow updates when operation changes (critical user feedback)
-        now = time.time()
-        operation_changed = (
-            worker_id in self.worker_operations and 
-            self.worker_operations[worker_id].get('operation') != operation
-        )
-        
-        if not operation_changed and worker_id in self.last_ui_update:
-            if now - self.last_ui_update[worker_id] < 0.01:
-                return  # Skip this update
-        
-        self.last_ui_update[worker_id] = now
-        
-        # Initialize if needed
-        if worker_id not in self.worker_operations:
-            logger.debug(f"Initializing worker display for worker_id={worker_id}")
-            self.worker_operations[worker_id] = {
-                'rom_name': '<idle>',
-                'operation': 'idle',
-                'details': 'Waiting for work...',
-                'progress': None,
-                'total_tasks': 0,
-                'completed_tasks': 0,
-                'status': 'idle',
-                'operation_start_time': None,
-                'worker_name': None  # Will be set if we know it
-            }
-        
-        # Safely update operation state
-        try:
-            # Sanitize details to prevent Rich markup issues
-            safe_details = self._sanitize_details(details, max_length=60)
-            
-            # Preserve worker_name when updating
-            worker_name = self.worker_operations[worker_id].get('worker_name')
-            
-            # Update operation state
-            self.worker_operations[worker_id].update({
-                'rom_name': self._truncate_rom_name(rom_name),
-                'operation': operation,
-                'details': safe_details,
-                'progress': progress_pct,
-                'status': 'active' if operation not in ['idle', 'disabled', 'skipped'] else operation,
-                'worker_name': worker_name
-            })
-            
-            # Update task progress if provided
-            if total_tasks is not None:
-                self.worker_operations[worker_id]['total_tasks'] = total_tasks
-            if completed_tasks is not None:
-                self.worker_operations[worker_id]['completed_tasks'] = completed_tasks
-            
-            # Track operation start time for elapsed time display
-            if operation not in ['idle', 'disabled']:
-                # Reset timer when operation changes or if not set
-                if operation_changed or self.worker_operations[worker_id]['operation_start_time'] is None:
-                    self.worker_operations[worker_id]['operation_start_time'] = now
-            else:
-                # Clear timer for idle/disabled states
-                self.worker_operations[worker_id]['operation_start_time'] = None
-            
-            self._render_threads_panel()
-        except Exception as e:
-            logger.error(f"Error updating worker {worker_id}: {e}", exc_info=True)
-    
-    def clear_worker_operation(self, worker_id: int) -> None:
-        """
-        Clear worker operation and reset to idle state (async-compatible)
-        
-        Args:
-            worker_id: Worker ID from fixed pool
-        """
-        try:
-            if worker_id not in self.worker_operations:
-                return
-            
-            # Get worker name for potential cleanup
-            worker_name = self.worker_operations[worker_id].get('worker_name')
-            
-            self.worker_operations[worker_id].update({
-                'rom_name': '<idle>',
-                'operation': 'idle',
-                'details': 'Waiting for work...',
-                'progress': None,
-                'total_tasks': 0,
-                'completed_tasks': 0,
-                'status': 'idle',
-                'operation_start_time': None,
-                'worker_name': worker_name
-            })
-            
-            self._render_threads_panel()
-        except Exception as e:
-            logger.error(f"Error clearing worker {worker_id}: {e}", exc_info=True)
-    
-    def disable_worker(self, worker_id: int) -> None:
-        """
-        Mark worker as disabled (for pool rescaling)
-        
-        Args:
-            worker_id: Sequential worker ID
-        """
-        try:
-            if worker_id not in self.worker_operations:
-                return
-            
-            self.worker_operations[worker_id].update({
-                'rom_name': '<disabled>',
-                'operation': 'disabled',
-                'details': 'Pool rescaled',
-                'progress': None,
-                'total_tasks': 0,
-                'completed_tasks': 0,
-                'status': 'disabled',
-                'operation_start_time': None
-            })
-            
-            self._render_threads_panel()
-        except Exception as e:
-            logger.error(f"Error disabling worker {worker_id}: {e}", exc_info=True)
+        if len(rom_name) <= max_length:
+            return rom_name
+        return rom_name[:max_length-3] + "..."
     
     def add_log_entry(self, level: str, message: str) -> None:
         """
@@ -622,97 +611,154 @@ class ConsoleUI:
                       title="Activity Log", border_style="magenta")
             )
     
-    def _render_threads_panel(self) -> None:
-        """Render the workers panel with current operations"""
+    def _render_pipeline_panel(self) -> None:
+        """Render the pipeline stages panel showing concurrent activities"""
         try:
-            if not self.worker_operations:
+            # Throttle updates to every 100ms
+            now = time.time()
+            if now - self.last_pipeline_update < 0.1:
                 return
+            self.last_pipeline_update = now
             
-            # Create table for worker operations (without worker ID column)
-            workers_table = Table(show_header=True, show_edge=False, padding=(0, 1), box=None)
-            workers_table.add_column("ROM", style="yellow", width=35, no_wrap=True)
-            workers_table.add_column("Operation", max_width=76, overflow="ellipsis")
+            pipeline_table = Table(show_header=False, show_edge=False, padding=(0, 1), box=None, expand=True)
+            pipeline_table.add_column("Stage", style="bold", width=20, no_wrap=True)
+            pipeline_table.add_column("Status", overflow="fold", no_wrap=False)
             
-            # Sort by worker ID (for consistent display order)
-            for worker_id in sorted(self.worker_operations.keys()):
-                op = self.worker_operations[worker_id]
+            spinner = self.spinner_frames[self.spinner_state]
+            
+            # 1. HASHING stage
+            hashing = self.pipeline_stages['hashing']
+            if hashing['active']:
+                current = hashing['current']
+                total = hashing['total']
+                pct = int((current / total * 100)) if total > 0 else 0
+                bar_width = 20
+                filled = int(bar_width * current / total) if total > 0 else 0
+                bar = '█' * filled + '░' * (bar_width - filled)
+                details = f" {hashing['details']}" if hashing['details'] else ""
+                status_text = f"[cyan]{spinner} [{bar}] {pct}% ({current}/{total} ROMs){details}[/cyan]"
+            else:
+                status_text = "[dim]Ready[/dim]"
+            pipeline_table.add_row("⚡ HASHING", status_text)
+            
+            # 2. API FETCH stage
+            api_fetch = self.pipeline_stages['api_fetch']
+            active_roms = api_fetch['active_roms']
+            cache_hits = api_fetch.get('cache_hits', 0)
+            cache_misses = api_fetch.get('cache_misses', 0)
+            search_fallback = api_fetch.get('search_fallback', 0)
+            total_requests = cache_hits + cache_misses
+            
+            if active_roms:
+                # Show up to 3 ROM names
+                rom_names = ', '.join([self._truncate_rom_name(r, 25) for r in active_roms[:3]])
+                if len(active_roms) > 3:
+                    rom_names += f" +{len(active_roms) - 3} more"
                 
-                # ROM name column
-                rom_display = op.get('rom_name', '<unknown>')
-                if len(rom_display) > 33:
-                    rom_display = rom_display[:30] + "..."
+                # Build info string with cache and search fallback stats
+                info_parts = []
+                if total_requests > 0:
+                    hit_rate = int(cache_hits / total_requests * 100)
+                    info_parts.append(f"Cache: {cache_hits} hits ({hit_rate}%)")
+                if search_fallback > 0:
+                    info_parts.append(f"{search_fallback} fallback")
                 
-                # Operation column - two-line format
-                operation_text = ""
-                status = op.get('status', 'idle')
-                operation = op.get('operation', 'idle')
-                details = self._sanitize_details(op.get('details', ''), max_length=50)
+                cache_info = f" | {', '.join(info_parts)}" if info_parts else ""
+                status_text = f"[yellow]{spinner} [{len(active_roms)}/{api_fetch['max_concurrent']}] {rom_names}{cache_info}[/yellow]"
+            elif total_requests > 0 or search_fallback > 0:
+                # Show stats even when idle
+                info_parts = []
+                if total_requests > 0:
+                    hit_rate = int(cache_hits / total_requests * 100)
+                    info_parts.append(f"Cache: {cache_hits}/{total_requests} hits ({hit_rate}%)")
+                if search_fallback > 0:
+                    info_parts.append(f"{search_fallback} fallback")
+                status_text = f"[dim]Idle | {', '.join(info_parts)}[/dim]"
+            else:
+                status_text = "[dim]Idle[/dim]"
+            pipeline_table.add_row("🔍 API FETCH", status_text)
+            
+            # 3. MEDIA DOWNLOAD stage
+            media_dl = self.pipeline_stages['media_download']
+            active_items = media_dl['active_roms']
+            validated_count = media_dl.get('validated', 0)
+            
+            if active_items:
+                # Group by ROM and show media types
+                rom_media = {}
+                for rom, media_type in active_items:
+                    if rom not in rom_media:
+                        rom_media[rom] = []
+                    rom_media[rom].append(media_type)
                 
-                if status == 'idle':
-                    operation_text = f"[dim]{details}[/dim]"
-                elif status == 'disabled':
-                    operation_text = f"[dim]{details}[/dim]"
-                elif status == 'skipped':
-                    operation_text = f"[dim]⊘ {details}[/dim]"
+                # Show first ROM with its media types
+                if rom_media:
+                    first_rom = list(rom_media.keys())[0]
+                    media_types = ', '.join(rom_media[first_rom][:3])
+                    display = f"{self._truncate_rom_name(first_rom, 20)}: {media_types}"
+                    if len(rom_media) > 1:
+                        display += f" +{len(rom_media) - 1} more"
+                    
+                    # Build validated info with breakdown by type
+                    validated_info = ""
+                    if validated_count > 0:
+                        by_type = media_dl.get('by_type', {})
+                        if by_type:
+                            # Show counts by type (e.g., "2 box, 3 screenshot")
+                            type_counts = [f"{count} {mtype}" for mtype, count in sorted(by_type.items())]
+                            validated_info = f" | {', '.join(type_counts)}"
+                        else:
+                            validated_info = f" | {validated_count} validated"
+                    
+                    status_text = f"[green]{spinner} [{len(active_items)}/{media_dl['max_concurrent']}] {display}{validated_info}[/green]"
                 else:
-                    # Color coding by operation type - match full names and partial names
-                    color = 'white'  # Default
-                    op_lower = operation.lower()
-                    if 'hash' in op_lower:
-                        color = 'cyan'
-                    elif 'fetch' in op_lower or 'metadata' in op_lower or 'api' in op_lower:
-                        color = 'yellow'
-                    elif 'download' in op_lower:
-                        color = 'green'
-                    elif 'verif' in op_lower:
-                        color = 'blue'
-                    elif 'complete' in op_lower:
-                        color = 'green'
-                    elif 'prepar' in op_lower:
-                        color = 'cyan'
-                    
-                    # Build operation text with progress and details on single line
-                    operation_parts = []
-                    
-                    # Add task progress bar if we have task counts
-                    total_tasks = op.get('total_tasks', 0)
-                    completed_tasks = op.get('completed_tasks', 0)
-                    if total_tasks > 0:
-                        try:
-                            progress_ratio = completed_tasks / total_tasks
-                            percentage = int(progress_ratio * 100)
-                            # Compact progress: just percentage
-                            operation_parts.append(f"[{percentage}%]")
-                        except (ZeroDivisionError, TypeError):
-                            pass  # Skip progress display if calculation fails
-                    
-                    # Add operation name
-                    operation_parts.append(operation)
-                    
-                    # Add operation details
-                    if details:
-                        operation_parts.append(f"- {details}")
-                    
-                    # Add elapsed time if >5s
-                    elapsed_str = self._format_elapsed_time(op.get('operation_start_time'))
-                    if elapsed_str:
-                        operation_parts.append(f"{elapsed_str}")
-                    
-                    # Combine on single line with color
-                    parts_text = ' '.join(operation_parts)
-                    
-                    # Use animated spinner from background refresh
-                    spinner = self.spinner_frames[self.spinner_state]
-                    operation_text = f"[{color}]{spinner} {parts_text}[/{color}]"
+                    status_text = "[dim]Idle[/dim]"
+            elif validated_count > 0:
+                # Show breakdown by type when idle
+                by_type = media_dl.get('by_type', {})
+                if by_type:
+                    type_counts = [f"{count} {mtype}" for mtype, count in sorted(by_type.items())]
+                    status_text = f"[dim]Idle | {', '.join(type_counts)}[/dim]"
+                else:
+                    status_text = f"[dim]Idle | {validated_count} validated[/dim]"
+            else:
+                status_text = "[dim]Idle[/dim]"
+            pipeline_table.add_row("📥 MEDIA", status_text)
+            
+            # 4. COMPLETED counter
+            completed_count = self.pipeline_stages['completed']['count']
+            if completed_count > 0:
+                status_text = f"[bold green]✓ {completed_count} ROMs processed[/bold green]"
+            else:
+                status_text = "[dim]0 ROMs[/dim]"
+            pipeline_table.add_row("✅ COMPLETE", status_text)
+            
+            # 5. SYSTEM OPERATION (always shown)
+            sys_op = self.pipeline_stages['system_operation']
+            if sys_op['active']:
+                operation = sys_op['operation']
+                details = sys_op['details']
+                status_text = f"[cyan]{spinner} {operation}: {details}[/cyan]"
+            else:
+                # Show persistent info when idle
+                info_parts = []
+                if self.integrity_score is not None:
+                    integrity_pct = int(self.integrity_score * 100)
+                    info_parts.append(f"Integrity: {integrity_pct}%")
+                if self.is_throttled:
+                    info_parts.append("[yellow]⚠ Rate limited[/yellow]")
                 
-                workers_table.add_row(rom_display, operation_text)
+                if info_parts:
+                    status_text = f"[dim]Idle | {' | '.join(info_parts)}[/dim]"
+                else:
+                    status_text = "[dim]Idle[/dim]"
+            pipeline_table.add_row("💾 SYSTEM", status_text)
             
             self.layout["threads"].update(
-                Panel(workers_table, title="Worker Operations", border_style="green")
+                Panel(pipeline_table, title="Pipeline Stages", border_style="green")
             )
         except Exception as e:
-            logger.error(f"Error rendering workers panel: {e}", exc_info=True)
-            # Don't crash - just skip this render
+            logger.error(f"Error rendering pipeline panel: {e}", exc_info=True)
     
     def update_header(self, system_name: str, system_num: int, total_systems: int) -> None:
         """
@@ -783,7 +829,11 @@ class ConsoleUI:
             )
             footer_table.add_row(
                 "Skipped:", Text(str(skipped), style="yellow"),
-                "Queue:", Text(str(queue_pending), style="blue")
+                "Unmatched:", Text(str(self.unmatched_count), style="red" if self.unmatched_count > 0 else "dim")
+            )
+            footer_table.add_row(
+                "Queue:", Text(str(queue_pending), style="blue"),
+                "", Text("")  # Empty cell for alignment
             )
             
             # API quota row (with bad requests on same row)
@@ -844,7 +894,7 @@ class ConsoleUI:
                 active_threads = thread_stats.get('active_threads', 0)
                 max_threads = thread_stats.get('max_threads', 0)
                 footer_table.add_row(
-                    "ScreenScraper:", Text(f"{active_threads} active / {max_threads} max workers", style="cyan"),
+                    "API Threads:", Text(f"{active_threads} active / {max_threads} max", style="cyan"),
                     "", ""
                 )
             

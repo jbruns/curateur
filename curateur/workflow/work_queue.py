@@ -38,7 +38,7 @@ class WorkQueueManager:
     - Retry handling with exponential backoff
     - Dynamic reordering
     - Progress tracking
-    - System completion tracking for clean worker shutdown
+    - System completion tracking for clean task shutdown
     
     Example:
         manager = WorkQueueManager(max_retries=3)
@@ -75,7 +75,7 @@ class WorkQueueManager:
         self.failed = []
         self._lock = asyncio.Lock()
         self._item_counter = 0  # For stable sorting when priorities equal
-        self._system_complete = False  # Flag to signal workers that system is done
+        self._system_complete = False  # Flag to signal tasks that system is done
     
     def add_work(
         self,
@@ -108,15 +108,14 @@ class WorkQueueManager:
     
     async def get_work_async(self) -> Optional[WorkItem]:
         """
-        Get next work item from queue (async, blocking until available)
+        Get next ROM from queue (blocking if empty).
         
-        Workers should use this method to continuously pull work.
-        Returns None when system is marked complete and queue is empty.
+        Pipeline tasks should use this method to continuously pull work.
         
         Returns:
-            WorkItem or None if system complete and queue empty
+            ROMInfo or None if system complete and queue empty
         """
-        # If system marked complete and queue empty, return None to signal worker exit
+        # If system marked complete and queue empty, return None to signal task exit
         if self._system_complete and self.queue.empty():
             return None
         
@@ -196,11 +195,11 @@ class WorkQueueManager:
         """
         Mark current system as complete
         
-        Signals to workers that no more work will be added for this system.
-        Workers will exit after draining the queue.
+        Signals to tasks that no more work will be added for this system.
+        Tasks will exit after draining the queue.
         """
         self._system_complete = True
-        logger.debug("System marked as complete - workers will exit after queue drains")
+        logger.debug("System marked as complete - pipeline tasks will exit after queue drains")
     
     def is_system_complete(self) -> bool:
         """

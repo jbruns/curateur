@@ -26,6 +26,7 @@ from ..scanner.rom_scanner import scan_system
 from ..scanner.rom_types import ROMInfo
 from ..scanner.hash_calculator import calculate_hash
 from ..api.client import ScreenScraperClient
+from ..api.cache import MetadataCache
 from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
 from ..api.match_scorer import calculate_match_confidence
 from ..ui.prompts import prompt_for_search_match
@@ -100,7 +101,8 @@ class WorkflowOrchestrator:
         thread_manager: Optional['ThreadPoolManager'] = None,
         performance_monitor: Optional['PerformanceMonitor'] = None,
         console_ui: Optional['ConsoleUI'] = None,
-        throttle_manager: Optional['ThrottleManager'] = None
+        throttle_manager: Optional['ThrottleManager'] = None,
+        clear_cache: bool = False
     ):
         """
         Initialize workflow orchestrator.
@@ -122,6 +124,7 @@ class WorkflowOrchestrator:
             performance_monitor: Optional PerformanceMonitor for metrics tracking
             console_ui: Optional ConsoleUI for rich display
             throttle_manager: Optional ThrottleManager for quota tracking
+            clear_cache: Whether to clear metadata cache before scraping
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
@@ -135,6 +138,7 @@ class WorkflowOrchestrator:
         self.search_max_results = search_max_results
         self.interactive_search = interactive_search
         self.preferred_regions = preferred_regions or ['us', 'wor', 'eu']
+        self.clear_cache = clear_cache
         
         # Phase D components (optional)
         self.thread_manager = thread_manager
@@ -192,6 +196,10 @@ class WorkflowOrchestrator:
         logger.info(f"Platform: {system.platform}")
         logger.info(f"Path: {system.path}")
         
+        # Reset pipeline stages UI for new system
+        if self.console_ui:
+            self.console_ui.reset_pipeline_stages()
+        
         # Initialize checkpoint manager for this system
         gamelist_dir = self.paths['gamelists'] / system.name
         self.checkpoint_manager = CheckpointManager(
@@ -199,6 +207,35 @@ class WorkflowOrchestrator:
             system.name,
             self.config
         )
+        
+        # Initialize metadata cache for this system
+        cache_enabled = self.config.get('scraping', {}).get('enable_metadata_cache', True)
+        cache = MetadataCache(
+            gamelist_directory=gamelist_dir,
+            ttl_days=7,
+            enabled=cache_enabled
+        )
+        
+        # Handle cache operations
+        if self.clear_cache:
+            cleared_count = cache.clear()
+            logger.info(f"Cleared metadata cache: {cleared_count} entries removed")
+        else:
+            # Cleanup expired entries on startup
+            expired_count = cache.cleanup_expired()
+            if expired_count > 0:
+                logger.info(f"Cleaned up {expired_count} expired cache entries")
+        
+        # Log cache stats
+        cache_stats = cache.get_stats()
+        if cache_stats['enabled'] and cache_stats['valid_entries'] > 0:
+            logger.info(
+                f"Metadata cache: {cache_stats['valid_entries']} valid entries, "
+                f"{cache_stats['expired_entries']} expired"
+            )
+        
+        # Update API client with cache for this system
+        self.api_client.cache = cache
         
         # Try to load existing checkpoint
         checkpoint = self.checkpoint_manager.load_checkpoint()
@@ -259,6 +296,10 @@ class WorkflowOrchestrator:
                 
                 logger.info(f"Gamelist validation: {validation_result.match_ratio:.1%} match ratio")
                 
+                # Update UI: Set integrity score
+                if self.console_ui:
+                    self.console_ui.set_integrity_score(validation_result.match_ratio)
+                
                 if not validation_result.is_valid:
                     logger.warning(
                         f"Gamelist integrity check failed for {system.name}: "
@@ -293,7 +334,7 @@ class WorkflowOrchestrator:
         failed_count = 0
         skipped_count = 0
         
-        # Step 2-4: Process ROMs (parallel with 1-N workers)
+        # Step 2-4: Process ROMs through concurrent pipeline
         results, not_found_items = await self._scrape_roms_parallel(
             system,
             rom_entries,
@@ -319,11 +360,23 @@ class WorkflowOrchestrator:
                     self.console_ui.display_system_operation(
                         system_name=system.name,
                         operation=Operations.WRITING_GAMELIST,
-                        details="Generating gamelist.xml..."
+                        details=f"Generating gamelist.xml ({scraped_count} entries)..."
                     )
                 
                 logger.info(f"Committing gamelist: {scraped_count} entries")
-                self._generate_gamelist(system, results)
+                integrity_result = self._generate_gamelist(system, results)
+                
+                # Show validation result
+                if self.console_ui and integrity_result:
+                    validation_status = "passed" if integrity_result.get('valid', False) else "failed"
+                    integrity_pct = int(integrity_result.get('integrity_score', 0) * 100)
+                    self.console_ui.set_system_operation(
+                        "Gamelist validation",
+                        f"{validation_status} ({integrity_pct}% integrity)"
+                    )
+                    # Brief pause to show result
+                    import asyncio
+                    await asyncio.sleep(1)
                 
                 # Clear system operation from UI
                 if self.console_ui:
@@ -420,50 +473,15 @@ class WorkflowOrchestrator:
                 operation_callback(task_name, rom_name, operation, details, progress, total_tasks, completed_tasks)
         
         try:
-            # Step 1: Hash ROM if not already done
-            if not rom_info.hash_value:
-                emit(Operations.HASHING_ROM, "Hashing ROM...")
-                
-                # Determine which file to hash based on ROM type
-                from ..scanner.rom_types import ROMType
-                from ..scanner.m3u_parser import get_disc1_file
-                
-                if rom_info.rom_type == ROMType.STANDARD:
-                    hash_file = rom_info.path
-                elif rom_info.rom_type == ROMType.M3U_PLAYLIST:
-                    hash_file = get_disc1_file(rom_info.path)
-                elif rom_info.rom_type == ROMType.DISC_SUBDIR:
-                    # Use contained file that was stored during scanning
-                    if rom_info.contained_file:
-                        hash_file = rom_info.contained_file
-                    else:
-                        # Fallback: use get_contained_file which doesn't need extensions
-                        from ..scanner.disc_handler import get_contained_file
-                        hash_file = get_contained_file(rom_info.path)
-                else:
-                    hash_file = rom_info.path
-                
-                # Calculate hash using configured algorithm
-                hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
-                logger.info(f"[{rom_info.filename}] Hashing ROM ({hash_algorithm.upper()})")
-                rom_info.hash_value = calculate_hash(
-                    hash_file,
-                    algorithm=hash_algorithm,
-                    size_limit=rom_info.crc_size_limit
-                )
-                
-                if rom_info.hash_value:
-                    logger.info(f"[{rom_info.filename}] ROM hash calculated {hash_algorithm.upper()}={rom_info.hash_value}")
-                else:
-                    logger.info(f"[{rom_info.filename}] Hash calculation skipped (file size exceeds limit)")
-                
-                # Don't emit completion - move directly to next operation
+            # Step 1: ROM hash (already calculated during batch pre-processing)
+            rom_hash = rom_info.hash_value
+            
+            if not rom_hash:
+                logger.debug(f"[{rom_info.filename}] No hash value available (skipped or failed during batch hashing)")
                 completed_tasks += 1
             else:
-                # Hash already calculated
+                logger.debug(f"[{rom_info.filename}] Using pre-calculated hash: {rom_hash}")
                 completed_tasks += 1
-            
-            rom_hash = rom_info.hash_value
             
             # Step 2: Look up existing gamelist entry for this ROM
             gamelist_entry = None
@@ -515,9 +533,15 @@ class WorkflowOrchestrator:
             game_info = None
             
             if decision.fetch_metadata:
-                # Emit UI event
-                if operation_callback:
-                    emit(Operations.FETCHING_METADATA, f"(hash={rom_hash}, size={rom_info.path.stat().st_size})")
+                # Update UI: Start API fetch for this ROM
+                if self.console_ui:
+                    self.console_ui.update_api_fetch_stage(rom_info.filename, 'start')
+                
+                # Check if we have cached data
+                from_cache = False
+                if self.api_client.cache:
+                    cached_data = self.api_client.cache.get(rom_hash, rom_size=rom_info.path.stat().st_size)
+                    from_cache = cached_data is not None
                 
                 logger.info(
                     f"[{rom_info.filename}] Fetching metadata "
@@ -559,6 +583,10 @@ class WorkflowOrchestrator:
                     # Increment task counter but don't emit completion status
                     completed_tasks += 1
                     
+                    # Update UI: Complete API fetch (report if it was a cache hit)
+                    if self.console_ui:
+                        self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete', cache_hit=from_cache)
+                    
                 except asyncio.CancelledError:
                     # Shutdown requested during API call
                     logger.info(f"[{rom_info.filename}] API request cancelled (shutdown)")
@@ -572,7 +600,6 @@ class WorkflowOrchestrator:
                     
                     # Try search fallback if enabled
                     if self.enable_search_fallback:
-                        emit(Operations.SEARCH_FALLBACK, "Trying text search...")
                         logger.info(f"[{rom_info.filename}] Attempting search fallback")
                         game_info = await self._search_fallback(rom_info, preferred_regions, shutdown_event=shutdown_event)
                         
@@ -584,11 +611,15 @@ class WorkflowOrchestrator:
                                 self.performance_monitor.record_api_call(api_duration)
                             
                             logger.info(f"[{rom_info.filename}] Search fallback successful")
+                            
+                            # Update UI: Search fallback used
+                            if self.console_ui:
+                                self.console_ui.increment_search_fallback()
+                            
                             # Increment task counter but don't emit completion status
                             completed_tasks += 1
                         else:
                             logger.info(f"[{rom_info.filename}] Search fallback: no matches found")
-                            emit(Operations.NO_MATCHES, "Game not found in database")
                     else:
                         raise
             
@@ -598,6 +629,10 @@ class WorkflowOrchestrator:
                 if system_name not in self.unmatched_roms:
                     self.unmatched_roms[system_name] = []
                 self.unmatched_roms[system_name].append(rom_info.filename)
+                
+                # Update UI: Unmatched ROM count
+                if self.console_ui:
+                    self.console_ui.increment_unmatched()
                 
                 return ScrapingResult(
                     rom_path=rom_info.path,
@@ -612,11 +647,16 @@ class WorkflowOrchestrator:
             hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
             
             if game_info:
+                # Use throttle manager's semaphore for unified concurrency control
+                # This ensures metadata API calls and media downloads share the same limit
+                global_semaphore = self.throttle_manager.concurrency_semaphore if self.throttle_manager else None
+                
                 media_downloader = MediaDownloader(
                     media_root=self.media_directory,
                     client=self.api_client.client,
                     preferred_regions=preferred_regions,
-                    enabled_media_types=media_types
+                    enabled_media_types=media_types,
+                    download_semaphore=global_semaphore
                 )
                 
                 # Get media list from game_info
@@ -633,72 +673,110 @@ class WorkflowOrchestrator:
                     f"media_types_in_api={list(media_dict.keys()) if media_dict else []}"
                 )
                 
-                # Download media files (from decision.media_to_download)
+                # Download all media files concurrently (from decision.media_to_download)
                 if decision.media_to_download and media_list:
-                    for idx, media_type_singular in enumerate(decision.media_to_download, 1):
-                        # Emit UI event
-                        if operation_callback:
-                            emit("Downloading media", f"{media_type_singular} ({idx}/{len(decision.media_to_download)})")
-                        
+                    # Convert singular media types to plural for filtering
+                    from ..media.media_types import to_plural
+                    plural_types = [to_plural(t) for t in decision.media_to_download]
+                    
+                    # Filter media list to only include types we want to download
+                    filtered_media_list = [
+                        m for m in media_list 
+                        if m.get('type') in plural_types
+                    ]
+                    
+                    if filtered_media_list:
                         logger.info(
-                            f"[{rom_info.filename}] Downloading media {idx}/{len(decision.media_to_download)}: "
-                            f"{media_type_singular}"
-                        )
-                        logger.debug(
-                            f"Media selection preferences: regions={preferred_regions}, "
-                            f"language={self.config.get('scraping', {}).get('preferred_language', 'en')}"
+                            f"[{rom_info.filename}] Downloading {len(decision.media_to_download)} media types concurrently: "
+                            f"{', '.join(decision.media_to_download)}"
                         )
                         
-                        # Convert singular to plural for MediaDownloader
-                        from ..media.media_types import to_plural
-                        media_type_plural = to_plural(media_type_singular)
+                        # Create progress callback to update UI during download
+                        def media_progress_callback(media_type: str, current_idx: int, total_count: int):
+                            # Update pipeline UI
+                            if self.console_ui:
+                                self.console_ui.update_media_download_stage(
+                                    rom_info.filename,
+                                    media_type,
+                                    'start'
+                                )
                         
-                        # Filter media list for this type
-                        type_media_list = [m for m in media_list if m.get('type') == media_type_plural]
+                        # Download all media concurrently
+                        download_results, _ = await media_downloader.download_media_for_game(
+                            media_list=filtered_media_list,
+                            rom_path=str(rom_info.path),
+                            system=system.name,
+                            progress_callback=media_progress_callback,
+                            shutdown_event=shutdown_event
+                        )
                         
-                        if type_media_list:
-                            # Create progress callback to update UI during download
-                            def media_progress_callback(media_type: str, current_idx: int, total_count: int):
-                                if operation_callback:
-                                    emit(
-                                        "Downloading media",
-                                        f"{media_type} ({current_idx}/{total_count})",
-                                        progress=(current_idx / total_count * 100) if total_count > 0 else None
+                        # Process results
+                        for result in download_results:
+                            if result.success and result.file_path:
+                                # Update UI: Media download complete
+                                if self.console_ui:
+                                    self.console_ui.update_media_download_stage(
+                                        rom_info.filename,
+                                        result.media_type,
+                                        'complete'
                                     )
-                            
-                            # Download using existing MediaDownloader logic
-                            download_results, _ = await media_downloader.download_media_for_game(
-                                media_list=type_media_list,
-                                rom_path=str(rom_info.path),
-                                system=system.name,
-                                progress_callback=media_progress_callback,
-                                shutdown_event=shutdown_event
-                            )
-                            
-                            for result in download_results:
-                                if result.success and result.file_path:
-                                    media_paths[media_type_singular] = result.file_path
-                                    media_count += 1
-                                    completed_tasks += 1
-                                    
-                                    # Calculate hash for downloaded media
-                                    media_path = Path(result.file_path)
-                                    if media_path.exists():
-                                        media_hash = calculate_hash(
-                                            media_path,
-                                            algorithm=hash_algorithm,
-                                            size_limit=0  # No size limit for media
+                                
+                                # Map back to singular type for tracking
+                                media_type_singular = result.media_type
+                                media_paths[media_type_singular] = result.file_path
+                                media_count += 1
+                                completed_tasks += 1
+                                
+                                # Calculate hash for downloaded media
+                                media_path = Path(result.file_path)
+                                if media_path.exists():
+                                    media_hash = calculate_hash(
+                                        media_path,
+                                        algorithm=hash_algorithm,
+                                        size_limit=0  # No size limit for media
+                                    )
+                                    if media_hash:
+                                        media_hashes[media_type_singular] = media_hash
+                                        logger.info(
+                                            f"Media downloaded: {media_type_singular}, "
+                                            f"hash={media_hash}"
                                         )
-                                        if media_hash:
-                                            media_hashes[media_type_singular] = media_hash
-                                            logger.info(
-                                                f"Media downloaded: {media_type_singular}, "
-                                                f"hash={media_hash}"
-                                            )
                 
                 # Validate existing media (from decision.media_to_validate)
                 if decision.media_to_validate:
                     for media_type_singular in decision.media_to_validate:
+                        # Check if media file exists and matches expected hash
+                        media_path = self._get_media_path(system, media_type_singular, rom_info.path)
+                        if media_path and media_path.exists():
+                            # Get expected hash from cache
+                            expected_hash = None
+                            if self.api_client.cache and rom_hash:
+                                expected_hash = self.api_client.cache.get_media_hash(rom_hash, media_type_singular)
+                            
+                            if expected_hash:
+                                # Calculate current hash
+                                current_hash = calculate_hash(
+                                    media_path,
+                                    algorithm=hash_algorithm,
+                                    size_limit=0
+                                )
+                                
+                                if current_hash == expected_hash:
+                                    logger.debug(f"[{rom_info.filename}] Media validated: {media_type_singular}")
+                                    media_paths[media_type_singular] = str(media_path)
+                                    
+                                    # Update UI: Media validated with type
+                                    if self.console_ui:
+                                        self.console_ui.increment_media_validated(media_type_singular)
+                                else:
+                                    logger.debug(
+                                        f"[{rom_info.filename}] Media hash mismatch: {media_type_singular} "
+                                        f"(expected: {expected_hash}, got: {current_hash})"
+                                    )
+                            else:
+                                # No hash to validate against, just use existing file
+                                logger.debug(f"[{rom_info.filename}] Media exists (no hash): {media_type_singular}")
+                                media_paths[media_type_singular] = str(media_path)
                         # Emit UI event
                         if operation_callback:
                             emit(Operations.HASHING_MEDIA, media_type_singular)
@@ -795,7 +873,7 @@ class WorkflowOrchestrator:
                                 f"[{rom_info.filename}] Would clean disabled media: {media_type_singular}"
                             )
             
-            # Step 6: Create or update GameEntry with hashes
+            # Step 6: Create or update GameEntry (without hash - using cache instead)
             if decision.update_metadata and game_info:
                 # Create entry from API response
                 game_entry = GameEntry.from_api_response(
@@ -804,21 +882,12 @@ class WorkflowOrchestrator:
                     media_paths=media_paths
                 )
                 
-                # Add hash information
-                game_entry.hash = {
-                    'rom': {hash_algorithm: rom_hash} if rom_hash else {},
-                    'media': media_hashes
-                }
-                
                 # Merge with existing entry if present
                 if gamelist_entry and decision.update_metadata:
                     merge_strategy = self.config.get('scraping', {}).get('merge_strategy', 'preserve_user_edits')
                     merger = MetadataMerger(merge_strategy=merge_strategy)
                     
                     merge_result = merger.merge_entries(gamelist_entry, game_entry)
-                    
-                    # Update hash in merged entry
-                    merge_result.merged_entry.hash = game_entry.hash
                     
                     game_entry = merge_result.merged_entry
                     
@@ -827,12 +896,14 @@ class WorkflowOrchestrator:
                         f"{len(merge_result.updated_fields)} updated"
                     )
                 
-                # Store hash in checkpoint for resume capability
-                if self.checkpoint_manager and game_entry.hash:
-                    self.checkpoint_manager.add_game_entry_hash(
-                        game_entry.path,
-                        game_entry.hash
-                    )
+                # Update cache with media hashes (if cache enabled and we have hashes)
+                if self.api_client.cache and rom_hash and media_hashes:
+                    self.api_client.cache.update_media_hashes(rom_hash, media_hashes)
+                    logger.debug(f"Updated cache with {len(media_hashes)} media hashes for {rom_info.filename}")
+                
+                # Update UI: ROM complete
+                if self.console_ui:
+                    self.console_ui.increment_completed()
                 
                 return ScrapingResult(
                     rom_path=rom_info.path,
@@ -844,6 +915,10 @@ class WorkflowOrchestrator:
                 )
             
             # Return success even if no updates made
+            # Update UI: ROM complete
+            if self.console_ui:
+                self.console_ui.increment_completed()
+            
             return ScrapingResult(
                 rom_path=rom_info.path,
                 success=True,
@@ -928,52 +1003,116 @@ class WorkflowOrchestrator:
         
         return process_rom
     
-    def _create_ui_callback(self) -> Optional[Callable]:
+    async def _batch_hash_roms(
+        self,
+        rom_entries: List[ROMInfo],
+        hash_algorithm: str,
+        batch_size: int = 100
+    ) -> List[ROMInfo]:
         """
-        Create a UI callback for worker operation updates
+        Hash ROMs in concurrent batches to feed the pipeline.
         
+        Processes ROMs in batches using asyncio.gather() with asyncio.to_thread()
+        to maximize CPU utilization while preventing memory exhaustion.
+        
+        Args:
+            rom_entries: List of ROM entries to hash
+            hash_algorithm: Hash algorithm to use (crc32, md5, sha1, etc)
+            batch_size: Number of ROMs to hash concurrently per batch
+            
         Returns:
-            Callback function or None if no ConsoleUI
+            List of ROMInfo objects with hash_value populated
         """
-        if not self.console_ui:
-            return None
+        from ..scanner.rom_types import ROMType
+        from ..scanner.m3u_parser import get_disc1_file
+        from ..scanner.disc_handler import get_contained_file
         
-        def ui_callback(
-            worker_name: str,
-            rom_name: str,
-            operation: str,
-            details: str,
-            progress_pct: Optional[float] = None,
-            total_tasks: Optional[int] = None,
-            completed_tasks: Optional[int] = None
-        ) -> None:
-            """
-            Bridge operation events to ConsoleUI
-            
-            Args:
-                worker_name: Name of the worker (e.g., "task-12345")
-                rom_name: Name of the ROM being processed
-                operation: Operation description (e.g., "Hashing ROM", "Fetching metadata")
-                details: Additional details
-                progress_pct: Optional progress percentage (0.0-100.0)
-                total_tasks: Total number of tasks for current ROM
-                completed_tasks: Number of completed tasks
-            """
-            # Get or assign worker ID
-            worker_id = self.console_ui._get_or_assign_worker_id(worker_name)
-            
-            # Update worker operation
-            self.console_ui.update_worker_operation(
-                worker_id=worker_id,
-                rom_name=rom_name,
-                operation=operation,
-                details=details,
-                progress_pct=progress_pct,
-                total_tasks=total_tasks,
-                completed_tasks=completed_tasks
-            )
+        total = len(rom_entries)
+        hashed_count = 0
         
-        return ui_callback
+        # Update UI: Start hashing stage
+        if self.console_ui:
+            self.console_ui.update_hashing_progress(0, total, 'Starting...')
+        
+        for i in range(0, total, batch_size):
+            batch = rom_entries[i:i + batch_size]
+            
+            # Create hash tasks for this batch
+            hash_tasks = []
+            for rom_info in batch:
+                # Skip if hash already calculated
+                if rom_info.hash_value:
+                    continue
+                
+                # Determine which file to hash based on ROM type
+                hash_file = None
+                if rom_info.rom_type == ROMType.STANDARD:
+                    hash_file = rom_info.path
+                elif rom_info.rom_type == ROMType.M3U_PLAYLIST:
+                    try:
+                        hash_file = get_disc1_file(rom_info.path)
+                    except Exception as e:
+                        logger.warning(f"Failed to get disc1 file for {rom_info.name}: {e}")
+                        continue
+                elif rom_info.rom_type == ROMType.DISC_SUBDIR:
+                    # Use contained file that was stored during scanning
+                    if rom_info.contained_file:
+                        hash_file = rom_info.contained_file
+                    else:
+                        try:
+                            hash_file = get_contained_file(rom_info.path)
+                        except Exception as e:
+                            logger.warning(f"Failed to get contained file for {rom_info.name}: {e}")
+                            continue
+                else:
+                    hash_file = rom_info.path
+                
+                if not hash_file:
+                    logger.warning(f"No hash file determined for {rom_info.name}")
+                    continue
+                
+                # Wrap calculate_hash in asyncio.to_thread for concurrent execution
+                size_limit = rom_info.crc_size_limit
+                task = asyncio.to_thread(
+                    calculate_hash,
+                    hash_file,
+                    algorithm=hash_algorithm,
+                    size_limit=size_limit
+                )
+                hash_tasks.append((rom_info, task))
+            
+            # Execute batch concurrently
+            if hash_tasks:
+                results = await asyncio.gather(*[task for _, task in hash_tasks], return_exceptions=True)
+                
+                # Assign hash values to ROM entries
+                for (rom_info, _), result in zip(hash_tasks, results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"Failed to hash {rom_info.name}: {result}")
+                    else:
+                        rom_info.hash_value = result
+                        hashed_count += 1
+            
+            # Progress logging every 1000 ROMs
+            if (i + batch_size) % 1000 == 0 or (i + batch_size) >= total:
+                logger.debug(f"Hashed {min(i + batch_size, total)}/{total} ROMs ({hashed_count} successful)")
+                
+                # Update UI with current progress
+                if self.console_ui:
+                    current_count = min(i + batch_size, total)
+                    batch_num = (i // batch_size) + 1
+                    total_batches = (total + batch_size - 1) // batch_size
+                    self.console_ui.update_hashing_progress(
+                        current_count, 
+                        total, 
+                        f'batch {batch_num}/{total_batches}'
+                    )
+        
+        # Mark hashing complete
+        if self.console_ui:
+            self.console_ui.update_hashing_progress(total, total, 'Complete')
+        
+        return rom_entries
     
     async def _scrape_roms_parallel(
         self,
@@ -1001,6 +1140,12 @@ class WorkflowOrchestrator:
         results = []
         not_found_items = []  # Track 404 errors separately
         rom_count = 0
+        
+        # Pre-hash ROMs in batches for better throughput (feeds pipeline efficiently)
+        logger.info(f"Pre-hashing {len(rom_entries)} ROMs in concurrent batches of 100")
+        hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
+        rom_entries = await self._batch_hash_roms(rom_entries, hash_algorithm, batch_size=100)
+        logger.info(f"ROM hashing complete: {sum(1 for r in rom_entries if r.hash_value)} hashed, {sum(1 for r in rom_entries if not r.hash_value)} skipped")
         
         # Populate work queue with all ROM entries
         logger.info(f"Populating work queue with {len(rom_entries)} ROM entries")
@@ -1039,29 +1184,25 @@ class WorkflowOrchestrator:
         
         logger.info(f"Work queue populated: successfully added {successfully_added}/{len(rom_entries)}, queue reports {self.work_queue.get_stats()['pending']} items queued")
         
-        # Work queue consumption using producer-consumer pattern with workers
+        # Work queue consumption using producer-consumer pattern with concurrent tasks
         if self.thread_manager and self.thread_manager.is_initialized() and not self.dry_run:
-            logger.info(f"Using task pool with {self.thread_manager.max_concurrent} concurrent worker(s)")
+            logger.info(f"Using task pool with {self.thread_manager.max_concurrent} concurrent task(s)")
             
-            # Create UI callback and ROM processor (with existing_entries)
-            ui_callback = self._create_ui_callback()
+            # Create ROM processor (no UI callback needed for pipeline UI)
             rom_processor = self._create_rom_processor(system, media_types, preferred_regions, existing_entries)
             
             # Clear any previous results
             self.thread_manager.clear_results()
             
-            # Spawn workers that will continuously process from queue (with staggered startup)
-            # Use shorter stagger for larger worker counts to improve utilization
-            stagger_delay = 2.0 if self.thread_manager.max_concurrent > 3 else 5.0
+            # Spawn concurrent tasks that will continuously process from queue
             await self.thread_manager.spawn_workers(
                 work_queue=self.work_queue,
                 rom_processor=rom_processor,
-                operation_callback=ui_callback,
-                count=self.thread_manager.max_concurrent,
-                stagger_delay=stagger_delay
+                operation_callback=None,
+                count=self.thread_manager.max_concurrent
             )
             
-            logger.info(f"Workers spawned. Waiting for completion...")
+            logger.info(f"Pipeline tasks spawned. Waiting for completion...")
             
             # Start background task for periodic UI updates (Work Queue + Statistics)
             ui_update_task = None
@@ -1071,7 +1212,7 @@ class WorkflowOrchestrator:
                 )
             
             # Wait for all work to complete and collect results
-            worker_results = await self.thread_manager.wait_for_completion()
+            task_results = await self.thread_manager.wait_for_completion()
             
             # Stop periodic UI updates
             if ui_update_task:
@@ -1082,10 +1223,10 @@ class WorkflowOrchestrator:
                     # Expected when cancelling periodic task
                     pass
             
-            logger.info(f"All workers completed processing ({len(worker_results)} results)")
+            logger.info(f"All pipeline tasks completed ({len(task_results)} results)")
             
-            # Convert worker results to our expected format and record in checkpoint
-            for rom_info, result in worker_results:
+            # Convert task results to our expected format and record in checkpoint
+            for rom_info, result in task_results:
                 rom_count += 1
                 results.append(result)
                 
@@ -1118,14 +1259,14 @@ class WorkflowOrchestrator:
                     not_found_items=not_found_items
                 )
             
-            # Mark system complete and stop workers
+            # Mark system complete and stop pipeline tasks
             self.work_queue.mark_system_complete()
             await self.thread_manager.stop_workers()
             
         else:
             # Fallback: Simple sequential processing
             # Used when: dry-run mode, thread_manager not initialized, or no thread_manager
-            logger.info("Using simple sequential processing (no worker pool)")
+            logger.info("Using simple sequential processing (no concurrent tasks)")
             
             # Sequential processing using _scrape_rom
             for rom_info in rom_entries:
@@ -1275,13 +1416,16 @@ class WorkflowOrchestrator:
         self,
         system: SystemDefinition,
         results: List[ScrapingResult]
-    ) -> None:
+    ) -> Optional[dict]:
         """
         Generate gamelist.xml for system.
         
         Args:
             system: System definition
             results: Scraping results
+            
+        Returns:
+            Integrity validation result dict or None
         """
         generator = GamelistGenerator(
             system_name=system.name,
@@ -1305,12 +1449,15 @@ class WorkflowOrchestrator:
         # Generate gamelist (merge with existing if present)
         if scraped_games:
             try:
-                generator.generate_gamelist(
+                integrity_result = generator.generate_gamelist(
                     scraped_games=scraped_games,
                     merge_existing=True
                 )
+                return integrity_result
             except Exception as e:
                 raise Exception(f"Failed to generate gamelist: {e}")
+        
+        return None
     
     def _write_unmatched_roms(self, system_name: str) -> None:
         """
@@ -1406,9 +1553,9 @@ class WorkflowOrchestrator:
                 # Get current results from thread manager (real-time)
                 results = []
                 if self.thread_manager:
-                    worker_results = await self.thread_manager.get_current_results()
-                    # Extract just the result objects (worker_results is list of (rom_info, result) tuples)
-                    results = [result for _, result in worker_results]
+                    task_results = await self.thread_manager.get_current_results()
+                    # Extract just the result objects (task_results is list of (rom_info, result) tuples)
+                    results = [result for _, result in task_results]
                 
                 # Call the main UI update method with real-time results
                 await self._update_ui_progress(
@@ -1458,8 +1605,8 @@ class WorkflowOrchestrator:
         if self.thread_manager and self.thread_manager.is_initialized():
             stats = await self.thread_manager.get_stats()
             thread_stats = {
-                'active_threads': stats.get('active_workers', 0),
-                'max_threads': stats.get('max_workers', 1)
+                'active_threads': stats.get('active_tasks', 0),
+                'max_threads': stats.get('max_tasks', 1)
             }
         
         # Get API quota from throttle manager

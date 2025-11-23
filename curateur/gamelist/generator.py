@@ -10,6 +10,7 @@ from .game_entry import GameEntry, GamelistMetadata
 from .xml_writer import GamelistWriter
 from .parser import GamelistParser, GamelistMerger
 from .path_handler import PathHandler
+from .integrity_validator import IntegrityValidator
 
 
 class GamelistGenerator:
@@ -46,6 +47,7 @@ class GamelistGenerator:
         self.system_name = system_name
         self.full_system_name = full_system_name
         self.software_name = software_name
+        self.rom_directory = rom_directory
         
         # Initialize components
         self.path_handler = PathHandler(
@@ -56,6 +58,7 @@ class GamelistGenerator:
         
         self.parser = GamelistParser()
         self.merger = GamelistMerger()
+        self.validator = IntegrityValidator(threshold=0.90)
         
         self.metadata = GamelistMetadata(
             system=full_system_name,
@@ -70,8 +73,9 @@ class GamelistGenerator:
         self,
         scraped_games: List[Dict],
         media_results: Dict[str, List] = None,
-        merge_existing: bool = True
-    ) -> Path:
+        merge_existing: bool = True,
+        validate: bool = True
+    ) -> Optional[Dict]:
         """
         Generate or update gamelist.xml.
         
@@ -79,9 +83,10 @@ class GamelistGenerator:
             scraped_games: List of dicts with game info and ROM paths
             media_results: Dict mapping ROM path to media download results
             merge_existing: Whether to merge with existing gamelist
+            validate: Whether to run integrity validation after writing
             
         Returns:
-            Path to generated gamelist.xml
+            Integrity validation result dict or None
             
         Example scraped_games format:
         [
@@ -115,7 +120,24 @@ class GamelistGenerator:
         # Write gamelist
         self.writer.write_gamelist(final_entries, self.gamelist_path)
         
-        return self.gamelist_path
+        # Run integrity validation if requested
+        if validate:
+            # Get list of ROM files in the directory
+            rom_files = list(self.rom_directory.glob('*'))
+            # Filter out non-ROM files (directories, hidden files, etc.)
+            rom_files = [f for f in rom_files if f.is_file() and not f.name.startswith('.')]
+            
+            validation_result = self.validator.validate(final_entries, rom_files)
+            
+            return {
+                'valid': validation_result.is_valid,
+                'integrity_score': validation_result.match_ratio,
+                'total_entries': len(final_entries),
+                'missing_roms': len(validation_result.missing_roms),
+                'orphaned_entries': len(validation_result.orphaned_entries)
+            }
+        
+        return None
     
     def _create_game_entries(
         self,

@@ -151,9 +151,6 @@ class GamelistWriter:
         for tag, text in sorted(entry.extra_fields.items()):
             self._add_element(game, tag, text)
         
-        # Add hash element with ROM and media hashes
-        self._add_hash_element(game, entry)
-        
         return game
     
     def _add_element(
@@ -172,37 +169,6 @@ class GamelistWriter:
         """
         elem = etree.SubElement(parent, tag)
         elem.text = text
-    
-    def _add_hash_element(self, parent: etree.Element, entry: GameEntry) -> None:
-        """
-        Add hash element with ROM and media hashes.
-        
-        Structure:
-            <hash crc32="ABC123" md5="..." sha1="...">
-                <cover>DEF456</cover>
-                <miximage>789ABC</miximage>
-            </hash>
-        
-        If no hash data present, adds empty element for ES-DE compatibility.
-        
-        Args:
-            parent: Parent game element
-            entry: GameEntry with hash data
-        """
-        hash_elem = etree.SubElement(parent, "hash")
-        
-        if entry.hash:
-            # Add ROM hash attributes
-            rom_hashes = entry.hash.get('rom', {})
-            for algorithm in ['crc32', 'md5', 'sha1']:
-                if algorithm in rom_hashes:
-                    hash_elem.set(algorithm, rom_hashes[algorithm])
-            
-            # Add media hash child elements (singular media types)
-            media_hashes = entry.hash.get('media', {})
-            for media_type, hash_value in sorted(media_hashes.items()):
-                media_elem = etree.SubElement(hash_elem, media_type)
-                media_elem.text = hash_value
     
     def validate_output(self, output_path: Path) -> bool:
         """

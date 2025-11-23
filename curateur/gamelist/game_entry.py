@@ -48,11 +48,6 @@ class GameEntry:
     # Hidden field (not shown in UI)
     hidden: bool = False
     
-    # Hash information for ROM and media files
-    # Structure: {'rom': {'crc32': 'ABC123', 'md5': '...', 'sha1': '...'}, 
-    #             'media': {'cover': 'DEF456', 'miximage': '...', ...}}
-    hash: Optional[Dict[str, Dict[str, str]]] = None
-    
     # Preserve unknown XML fields (sortname, kidgame, altemulator, etc.)
     extra_fields: Dict[str, str] = field(default_factory=dict)
     
