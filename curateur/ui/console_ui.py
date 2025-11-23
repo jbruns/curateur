@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, Tuple, Set
 from datetime import timedelta
 
 from curateur import __version__
+from curateur.ui.keyboard_listener import KeyboardListener
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -186,8 +187,14 @@ class ConsoleUI:
         # Logging handler tracking (for cleanup)
         self.log_handler: Optional['RichUILogHandler'] = None
         
+        # Keyboard listener for controls
+        self.keyboard_listener = KeyboardListener()
+        self.keyboard_listener_enabled = False
+        
         # Current state
         self.current_system = ""
+        self.current_system_num = 0
+        self.total_systems = 0
         self.current_operation = {}
         self.current_stats = {}
         self.current_quota = {}
@@ -207,13 +214,8 @@ class ConsoleUI:
     
     def _initialize_panels(self) -> None:
         """Initialize all panels with default content"""
-        # Initialize header
-        header_text = Text(f"curateur v{__version__}", style="bold magenta")
-        header_text.append(" | ", style="dim")
-        header_text.append("Initializing...", style="dim")
-        self.layout["header"].update(
-            Panel(header_text, border_style="cyan")
-        )
+        # Initialize header with keyboard controls
+        self._render_header()
         
         # Initialize workers panel
         self.layout["threads"].update(
@@ -248,6 +250,19 @@ class ConsoleUI:
             self.live.start()
             logger.debug("Console UI started")
             
+            # Start keyboard listener for controls
+            logger.debug("Attempting to start keyboard listener...")
+            try:
+                if self.keyboard_listener.start():
+                    self.keyboard_listener_enabled = True
+                    logger.info("Keyboard controls enabled: [P]ause [S]kip [Q]uit")
+                    # Re-render header to show controls
+                    self._render_header()
+                else:
+                    logger.warning("Keyboard controls unavailable (press Ctrl-C to exit)")
+            except Exception as e:
+                logger.warning(f"Failed to start keyboard listener: {e}")
+            
             # Start background refresh task for spinner animation
             try:
                 loop = asyncio.get_running_loop()
@@ -258,21 +273,40 @@ class ConsoleUI:
     
     def stop(self) -> None:
         """Stop live display and background refresh task"""
+        # Stop keyboard listener
+        if self.keyboard_listener_enabled:
+            self.keyboard_listener.stop()
+            self.keyboard_listener_enabled = False
+        
         # Cancel background refresh task
         if self.refresh_task and not self.refresh_task.done():
             self.refresh_task.cancel()
             self.refresh_task = None
         
-        # Remove the RichUILogHandler from root logger to prevent logs going to stopped UI
+        # Keep log handler active to capture shutdown messages
+        # Give time for any pending log messages to be processed and rendered
+        # This is especially important for logs from async shutdown tasks
+        if self.live:
+            # Sleep to allow log messages to propagate through handlers
+            time.sleep(0.2)  # 200ms delay to capture final logs
+            
+            # Force one final render to ensure all buffered logs are visible
+            self._render_logs_panel()
+            self.live.refresh()
+            
+            # Brief pause to let the render complete
+            time.sleep(0.05)  # 50ms for render to complete
+        
+        # Now stop the Live display with logs visible
+        if self.live:
+            self.live.stop()
+            self.live = None
+        
+        # Remove the RichUILogHandler from root logger after UI is stopped
         if self.log_handler:
             root_logger = logging.getLogger()
             root_logger.removeHandler(self.log_handler)
             self.log_handler = None
-        
-        if self.live:
-            self.live.stop()
-            self.live = None
-            logger.debug("Console UI stopped")
     
     async def _background_refresh(self) -> None:
         """
@@ -287,6 +321,9 @@ class ConsoleUI:
                 
                 # Increment spinner state
                 self.spinner_state = (self.spinner_state + 1) % len(self.spinner_frames)
+                
+                # Update header to refresh pause badge
+                self._render_header()
                 
                 # Update pipeline panel to refresh spinners
                 self._render_pipeline_panel()
@@ -611,6 +648,76 @@ class ConsoleUI:
                       title="Activity Log", border_style="magenta")
             )
     
+    def _render_header(self) -> None:
+        """Render the header panel with system progress, pause state, and keyboard controls"""
+        try:
+            # Build header with version prefix
+            header_text = Text(f"curateur v{__version__}", style="bold magenta")
+            header_text.append(" | ", style="dim")
+            
+            # System progress
+            if self.current_system:
+                progress_text = f"System: {self.current_system.upper()} ({self.current_system_num}/{self.total_systems})"
+                percentage = (self.current_system_num - 1) / self.total_systems * 100 if self.total_systems > 0 else 0
+                
+                header_text.append(progress_text, style="bold cyan")
+                header_text.append(f" — {percentage:.0f}% complete", style="dim")
+            else:
+                header_text.append("Initializing...", style="dim")
+            
+            # Add pause badge if paused
+            if self.keyboard_listener_enabled and self.keyboard_listener.is_paused:
+                header_text.append(" ", style="dim")
+                header_text.append("⏸ PAUSED", style="bold yellow")
+            
+            # Add keyboard controls on right side
+            if self.keyboard_listener_enabled:
+                header_text.append("  |  ", style="dim")
+                header_text.append("Controls: ", style="dim")
+                header_text.append("[P]", style="bold cyan")
+                header_text.append("ause ", style="dim")
+                header_text.append("[S]", style="bold yellow")
+                header_text.append("kip ", style="dim")
+                header_text.append("[Q]", style="bold red")
+                header_text.append("uit", style="dim")
+            
+            self.layout["header"].update(
+                Panel(header_text, border_style="cyan")
+            )
+        except Exception as e:
+            logger.error(f"Error rendering header: {e}", exc_info=True)
+    
+    @property
+    def is_paused(self) -> bool:
+        """Check if processing is paused via keyboard control"""
+        if self.keyboard_listener_enabled:
+            return self.keyboard_listener.is_paused
+        return False
+    
+    @property
+    def skip_requested(self) -> bool:
+        """Check if skip system requested via keyboard control"""
+        if self.keyboard_listener_enabled:
+            return self.keyboard_listener.skip_requested
+        return False
+    
+    @property
+    def quit_requested(self) -> bool:
+        """Check if quit requested via keyboard control"""
+        if self.keyboard_listener_enabled:
+            return self.keyboard_listener.quit_requested
+        return False
+    
+    def clear_skip_request(self) -> None:
+        """Clear skip request flag after handling"""
+        if self.keyboard_listener_enabled:
+            self.keyboard_listener.clear_skip_request()
+    
+    def clear_quit_request(self) -> None:
+        """Clear quit request flag after handling"""
+        if self.keyboard_listener_enabled:
+            self.keyboard_listener.clear_quit_request()
+    
     def _render_pipeline_panel(self) -> None:
         """Render the pipeline stages panel showing concurrent activities"""
         try:
@@ -770,20 +877,10 @@ class ConsoleUI:
             total_systems: Total number of systems
         """
         self.current_system = system_name
+        self.current_system_num = system_num
+        self.total_systems = total_systems
         
-        # Build header with version prefix
-        header_text = Text(f"curateur v{__version__}", style="bold magenta")
-        header_text.append(" | ", style="dim")
-        
-        progress_text = f"System: {system_name.upper()} ({system_num}/{total_systems})"
-        percentage = (system_num - 1) / total_systems * 100 if total_systems > 0 else 0
-        
-        header_text.append(progress_text, style="bold cyan")
-        header_text.append(f" — {percentage:.0f}% complete", style="dim")
-        
-        self.layout["header"].update(
-            Panel(header_text, border_style="cyan")
-        )
+        self._render_header()
         
         logger.debug(f"Header updated: {system_name} ({system_num}/{total_systems})")
     
@@ -950,6 +1047,83 @@ class ConsoleUI:
                 Panel(error_text, title="Statistics", border_style="red")
             )
     
+    def prompt_confirm(self, message: str, default: str = 'n') -> bool:
+        """
+        Show confirmation prompt with y/n response
+        
+        Temporarily stops Live display to show styled prompt panel,
+        captures user input with thread-safe locking, then restarts display.
+        
+        Args:
+            message: Prompt message to display
+            default: Default response ('y' or 'n')
+        
+        Returns:
+            True if user confirms (y/yes), False otherwise
+        
+        Example:
+            if ui.prompt_confirm("Skip this system?", default='n'):
+                # User confirmed
+                skip_system()
+        """
+        # Import prompt lock for thread safety
+        from curateur.ui.prompts import _prompt_lock
+        
+        # Build prompt string
+        if default.lower() == 'y':
+            prompt_str = f"{message} [Y/n]: "
+        elif default.lower() == 'n':
+            prompt_str = f"{message} [y/N]: "
+        else:
+            prompt_str = f"{message} [y/n]: "
+        
+        # Stop Live display for prompt
+        if self.live:
+            self.live.stop()
+        
+        try:
+            # Use thread-safe prompt lock
+            with _prompt_lock:
+                # Show styled prompt panel
+                prompt_panel = Panel(
+                    Text(prompt_str, style="bold yellow"),
+                    title="Confirmation Required",
+                    border_style="yellow"
+                )
+                self.console.print(prompt_panel)
+                
+                # Get user input
+                while True:
+                    try:
+                        response = input().strip().lower()
+                        
+                        # Handle empty response (use default)
+                        if not response:
+                            if default is None:
+                                self.console.print("[yellow]Please enter 'y' or 'n'[/yellow]")
+                                continue
+                            response = default.lower()
+                        
+                        # Validate response
+                        if response in ('y', 'yes'):
+                            logger.debug(f"User confirmed: {message}")
+                            return True
+                        elif response in ('n', 'no'):
+                            logger.debug(f"User declined: {message}")
+                            return False
+                        else:
+                            self.console.print("[yellow]Please enter 'y' or 'n'[/yellow]")
+                    
+                    except (KeyboardInterrupt, EOFError):
+                        logger.info("User interrupted prompt")
+                        self.console.print("\n[yellow]Cancelled[/yellow]")
+                        return False
+        
+        finally:
+            # Restart Live display
+            if self.live:
+                self.live.start()
+    
     def show_error(self, message: str) -> None:
         """
         Display error message (pauses live display)
@@ -1042,14 +1216,11 @@ class RichUILogHandler(logging.Handler):
             record: Log record to emit
         """
         try:
-            # Don't emit if UI is stopped (live is None)
-            if not self.console_ui.live:
-                return
-            
             # Format the message
             message = self.format(record)
             
             # Send to console UI's log buffer
+            # Note: We keep emitting even after live is stopped to capture shutdown logs
             self.console_ui.add_log_entry(record.levelname, message)
         except Exception:
             # Don't let logging errors crash the application

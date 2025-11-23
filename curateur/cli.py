@@ -180,6 +180,10 @@ def _setup_logging(config: dict, console_ui=None) -> None:
     # Also suppress httpcore (underlying transport layer)
     httpcore_logger = logging.getLogger('httpcore')
     httpcore_logger.setLevel(logging.WARNING)
+    
+    # Suppress PIL/Pillow debug logging (verbose chunk parsing messages)
+    pil_logger = logging.getLogger('PIL')
+    pil_logger.setLevel(logging.INFO)  # Only show info and above
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -311,10 +315,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Initialize API client with throttle_manager
     api_client = ScreenScraperClient(config, throttle_manager=throttle_manager, client=client)
     
-    # Phase D: Initialize thread pool manager
-    from curateur.workflow.thread_pool import ThreadPoolManager
-    thread_manager = ThreadPoolManager(config)
-    
     # Phase D: Initialize console UI early for login message
     from curateur.ui.console_ui import ConsoleUI
     console_ui = None
@@ -330,6 +330,10 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         except Exception as e:
             logger.error(f"Could not initialize console UI: {e}", exc_info=True)
             console_ui = None
+    
+    # Phase E: Initialize thread pool manager (after console_ui for pause state access)
+    from curateur.workflow.thread_pool import ThreadPoolManager
+    thread_manager = ThreadPoolManager(config, console_ui=console_ui)
     
     # Authenticate with ScreenScraper and get user limits
     logger.debug(f"Starting authentication, console_ui={'active' if console_ui else 'disabled'}")
@@ -460,6 +464,29 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         
         for system in systems:
             try:
+                # Check for quit request from keyboard controls
+                if console_ui and console_ui.quit_requested:
+                    if console_ui.prompt_confirm("Quit after current ROMs complete? [Y/n]: ", default='y'):
+                        logger.info("Graceful shutdown initiated - completing in-flight ROMs")
+                        # Stop workers gracefully
+                        if thread_manager:
+                            await thread_manager.stop_workers()
+                        break
+                    else:
+                        # User declined quit
+                        console_ui.clear_quit_request()
+                
+                # Check for skip request from keyboard controls
+                if console_ui and console_ui.skip_requested:
+                    if console_ui.prompt_confirm(f"Skip system {system.name}? [y/N]: ", default='n'):
+                        logger.info(f"Skipping system: {system.name}")
+                        console_ui.clear_skip_request()
+                        progress.finish_system()
+                        continue
+                    else:
+                        # User declined skip
+                        console_ui.clear_skip_request()
+                
                 # Update UI header
                 if console_ui:
                     console_ui.update_header(
@@ -527,21 +554,22 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 continue
     finally:
         # Phase D & E: Clean up resources
-        # Note: Work queue state logging moved to KeyboardInterrupt handler for UI visibility
-        
-        # Stop console UI after all logging is complete
-        if console_ui:
-            console_ui.stop()
-        
+        # Shutdown thread manager first to allow logging to UI
         if thread_manager:
             await thread_manager.shutdown(wait=True)
         
+        # Close HTTP client
         if client:
             await client.aclose()
         
         # Reset throttle manager state
         if throttle_manager:
             throttle_manager.reset()
+        
+        # Stop console UI LAST after all other cleanup is complete
+        # This ensures shutdown logs are captured in the Activity Log
+        if console_ui:
+            console_ui.stop()
     
     # Print final summary (unless using console UI)
     if not console_ui:

@@ -675,14 +675,27 @@ class WorkflowOrchestrator:
                 
                 # Download all media files concurrently (from decision.media_to_download)
                 if decision.media_to_download and media_list:
-                    # Convert singular media types to plural for filtering
-                    from ..media.media_types import to_plural
-                    plural_types = [to_plural(t) for t in decision.media_to_download]
+                    # Convert singular ES-DE types to ScreenScraper media types for filtering
+                    # E.g., 'cover' -> 'covers' -> 'box-2D'
+                    from ..media.media_types import to_plural, convert_directory_names_to_media_types
+                    
+                    # First convert singular to plural directory names
+                    plural_dirs = [to_plural(t) for t in decision.media_to_download]
+                    
+                    # Then convert directory names to ScreenScraper media types
+                    screenscraper_types = convert_directory_names_to_media_types(plural_dirs)
+                    
+                    logger.debug(
+                        f"[{rom_info.filename}] Media type conversion: "
+                        f"singular={decision.media_to_download} -> "
+                        f"plural_dirs={plural_dirs} -> "
+                        f"screenscraper={screenscraper_types}"
+                    )
                     
                     # Filter media list to only include types we want to download
                     filtered_media_list = [
                         m for m in media_list 
-                        if m.get('type') in plural_types
+                        if m.get('type') in screenscraper_types
                     ]
                     
                     if filtered_media_list:
@@ -1357,7 +1370,7 @@ class WorkflowOrchestrator:
                 'path': str(rom_info.path),
                 'filename': rom_info.filename,
                 'size': rom_info.file_size,
-                'crc32': rom_info.crc32,
+                'crc32': rom_info.hash_value,  # For backward compatibility with scorer
                 'system': rom_info.system,
             }
             
@@ -1529,8 +1542,8 @@ class WorkflowOrchestrator:
                     rom_info = item['rom_info']
                     error = item['error']
                     f.write(f"ROM: {rom_info.filename}\n")
-                    if hasattr(rom_info, 'crc32') and rom_info.crc32:
-                        f.write(f"  CRC32: {rom_info.crc32}\n")
+                    if rom_info.hash_value:
+                        f.write(f"  {rom_info.hash_type.upper()}: {rom_info.hash_value}\n")
                     f.write(f"  Size: {rom_info.file_size} bytes\n")
                     f.write(f"  Error: {error}\n")
                     f.write("\n")
@@ -1546,9 +1559,23 @@ class WorkflowOrchestrator:
         total_roms: int
     ) -> None:
         """Background task to periodically update UI during parallel processing"""
+        paused_logged = False  # Track whether we've logged pause state
+        
         try:
             while True:
                 await asyncio.sleep(0.5)  # Update every 500ms
+                
+                # Check for pause state from keyboard controls
+                if self.console_ui and self.console_ui.is_paused:
+                    if not paused_logged:
+                        logger.info("Processing paused - waiting for resume (press P to resume)")
+                        paused_logged = True
+                    # Continue loop but skip work processing
+                    continue
+                elif paused_logged:
+                    # Transitioned from paused to resumed
+                    logger.info("Processing resumed")
+                    paused_logged = False
                 
                 # Get current results from thread manager (real-time)
                 results = []
