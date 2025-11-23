@@ -3,6 +3,7 @@
 import sys
 import logging
 import argparse
+import httpx
 from pathlib import Path
 from typing import Optional
 from rich.logging import RichHandler
@@ -265,10 +266,18 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     else:
         systems = all_systems
     
-    # Phase D: Initialize async connection pool manager
-    from curateur.api.connection_pool import ConnectionPoolManager
-    conn_manager = ConnectionPoolManager(config)
-    client = await conn_manager.get_client(max_connections=10)
+    # Phase D: Create simple httpx client
+    timeout = config.get('api', {}).get('request_timeout', 30)
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            connect=10.0,
+            read=timeout,
+            write=30.0,
+            pool=None
+        ),
+        follow_redirects=True
+    )
+    logger.info(f"HTTP client created with {timeout}s timeout")
     
     # Phase E: Validate API configuration
     max_retries = config.get('api', {}).get('max_retries', 3)
@@ -335,6 +344,10 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         user_limits = await api_client.get_user_info()
         logger.debug(f"Authentication successful: {user_limits}")
         
+        # Clear the authentication worker display
+        if console_ui:
+            console_ui.clear_worker_operation(worker_id=1)
+        
         # Initialize thread pool with actual API limits
         thread_manager.initialize_pools(user_limits)
         logger.debug(f"Thread pool initialized with {thread_manager.max_concurrent} workers")
@@ -342,13 +355,9 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         # Update throttle manager with initial quota
         await throttle_manager.update_quota(user_limits)
         
-        # Initialize all workers in UI as "Waiting for work..."
+        # Update footer with initial quota/thread stats
         if console_ui and thread_manager.is_initialized():
             max_workers = thread_manager.max_concurrent
-            for i in range(1, max_workers + 1):
-                console_ui.clear_worker_operation(i)
-            
-            # Immediately update footer with initial quota/thread stats
             console_ui.update_footer(
                 stats={'successful': 0, 'failed': 0, 'skipped': 0},
                 api_quota=throttle_manager.get_quota_stats(),
@@ -515,8 +524,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         if thread_manager:
             await thread_manager.shutdown(wait=True)
         
-        if conn_manager:
-            await conn_manager.close_client()
+        if client:
+            await client.aclose()
         
         # Reset throttle manager state
         if throttle_manager:
@@ -600,8 +609,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         error_logger.write_summary('scraping_errors.log')
     
     # Cleanup: close async client
-    if conn_manager:
-        await conn_manager.close_client()
+    if client:
+        await client.aclose()
     
     return 0
 

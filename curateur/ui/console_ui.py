@@ -493,8 +493,12 @@ class ConsoleUI:
             
             # Track operation start time for elapsed time display
             if operation not in ['idle', 'disabled']:
-                if self.worker_operations[worker_id]['operation_start_time'] is None:
+                # Reset timer when operation changes or if not set
+                if operation_changed or self.worker_operations[worker_id]['operation_start_time'] is None:
                     self.worker_operations[worker_id]['operation_start_time'] = now
+            else:
+                # Clear timer for idle/disabled states
+                self.worker_operations[worker_id]['operation_start_time'] = None
             
             self._render_threads_panel()
         except Exception as e:
@@ -564,9 +568,6 @@ class ConsoleUI:
             level: Log level (INFO, WARNING, ERROR, etc.)
             message: Log message
         """
-        # Sanitize message to prevent Rich markup issues
-        safe_message = str(message).replace('[', '\\[').replace(']', '\\]')
-        
         # Color code by level
         level_colors = {
             'DEBUG': 'dim',
@@ -577,17 +578,14 @@ class ConsoleUI:
         }
         color = level_colors.get(level, 'white')
         
-        # Format: [LEVEL] message and create Text object with markup
-        formatted_entry = f"[{color}][{level:8}][/{color}] {safe_message}"
+        # Create Text object with styled level prefix and plain message
+        # This avoids escaping issues - level uses markup, message is plain text
+        text_entry = Text()
+        text_entry.append(f"[{level:8}] ", style=color)
+        text_entry.append(str(message))
         
-        # Add to buffer as Text object (automatically removes oldest if full)
-        try:
-            text_entry = Text.from_markup(formatted_entry)
-            self.log_buffer.append(text_entry)
-        except Exception as e:
-            # Fallback to plain text if markup parsing fails
-            logger.debug(f"Failed to parse log markup: {e}")
-            self.log_buffer.append(Text(f"[{level:8}] {safe_message}"))
+        # Add to buffer (automatically removes oldest if full)
+        self.log_buffer.append(text_entry)
         
         # Update log panel
         self._render_logs_panel()
@@ -630,18 +628,14 @@ class ConsoleUI:
             if not self.worker_operations:
                 return
             
-            # Create table for worker operations
+            # Create table for worker operations (without worker ID column)
             workers_table = Table(show_header=True, show_edge=False, padding=(0, 1), box=None)
-            workers_table.add_column("Worker", style="bold", width=6, no_wrap=True)
             workers_table.add_column("ROM", style="yellow", width=35, no_wrap=True)
-            workers_table.add_column("Operation", max_width=70, overflow="ellipsis")
+            workers_table.add_column("Operation", max_width=76, overflow="ellipsis")
             
-            # Sort by worker ID
+            # Sort by worker ID (for consistent display order)
             for worker_id in sorted(self.worker_operations.keys()):
                 op = self.worker_operations[worker_id]
-                
-                # Worker ID column - just the number
-                worker_label = str(worker_id)
                 
                 # ROM name column
                 rom_display = op.get('rom_name', '<unknown>')
@@ -711,7 +705,7 @@ class ConsoleUI:
                     spinner = self.spinner_frames[self.spinner_state]
                     operation_text = f"[{color}]{spinner} {parts_text}[/{color}]"
                 
-                workers_table.add_row(worker_label, rom_display, operation_text)
+                workers_table.add_row(rom_display, operation_text)
             
             self.layout["threads"].update(
                 Panel(workers_table, title="Worker Operations", border_style="green")

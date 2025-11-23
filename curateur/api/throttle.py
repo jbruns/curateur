@@ -52,7 +52,8 @@ class ThrottleManager:
     def __init__(
         self,
         default_limit: RateLimit,
-        adaptive: bool = True
+        adaptive: bool = True,
+        max_concurrent: int = 3
     ):
         """
         Initialize throttle manager
@@ -60,6 +61,7 @@ class ThrottleManager:
         Args:
             default_limit: Default rate limit for endpoints
             adaptive: Enable adaptive backoff on rate limit errors
+            max_concurrent: Maximum concurrent API requests (default: 3)
         """
         self.default_limit = default_limit
         self.adaptive = adaptive
@@ -69,6 +71,11 @@ class ThrottleManager:
         self.consecutive_429s = {}  # endpoint -> count for exponential backoff
         self.backoff_multiplier = {}  # endpoint -> current multiplier
         self.global_lock = asyncio.Lock()
+        
+        # Concurrency limiting
+        self.max_concurrent = max_concurrent
+        self.concurrency_semaphore = asyncio.Semaphore(max_concurrent)
+        logger.info(f"Throttle manager initialized with max {max_concurrent} concurrent requests")
         
         # Quota tracking from ScreenScraper API
         self.requeststoday = 0

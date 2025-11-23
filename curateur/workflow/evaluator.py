@@ -110,7 +110,7 @@ class WorkflowEvaluator:
             if gamelist_entry is not None and rom_info.path.exists():
                 decision.skip_reason = "update_policy is 'never'; ROM exists in gamelist"
                 logger.info(
-                    f"Skipping {rom_info.name}: {decision.skip_reason}"
+                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
                 )
                 return decision
         
@@ -137,7 +137,7 @@ class WorkflowEvaluator:
                 decision.update_metadata = True
                 decision.update_media = True
                 logger.debug(
-                    f"ROM hash changed for {rom_info.name}: "
+                    f"ROM hash changed for {rom_info.filename}: "
                     f"stored={self._get_stored_hash(gamelist_entry)}, "
                     f"calculated={rom_hash}"
                 )
@@ -152,20 +152,20 @@ class WorkflowEvaluator:
                 else:
                     decision.skip_reason = "ROM hash matches; updates disabled"
                     logger.info(
-                        f"Skipping {rom_info.name}: {decision.skip_reason}"
+                        f"Skipping {rom_info.filename}: {decision.skip_reason}"
                     )
                     return decision
         
         # Step 4: Determine media operations
         if decision.fetch_metadata:
             decision.media_to_download, decision.media_to_validate = \
-                self._determine_media_operations(gamelist_entry, hash_matches)
+                self._determine_media_operations(gamelist_entry, hash_matches, decision.update_media)
             
             # Set cleanup flag
             decision.clean_disabled_media = self.clean_mismatched_media
         
         logger.debug(
-            f"Decision for {rom_info.name}: "
+            f"Decision for {rom_info.filename}: "
             f"fetch_metadata={decision.fetch_metadata}, "
             f"update_metadata={decision.update_metadata}, "
             f"update_media={decision.update_media}, "
@@ -229,7 +229,8 @@ class WorkflowEvaluator:
     def _determine_media_operations(
         self,
         gamelist_entry: Optional[GameEntry],
-        hash_matches: bool
+        hash_matches: bool,
+        should_update_media: bool = None
     ) -> tuple[List[str], List[str]]:
         """
         Determine which media to download and which to validate.
@@ -237,6 +238,7 @@ class WorkflowEvaluator:
         Args:
             gamelist_entry: Existing gamelist entry (None if not in gamelist)
             hash_matches: Whether ROM hash matches
+            should_update_media: Override for update_media decision (None uses config)
         
         Returns:
             Tuple of (media_to_download, media_to_validate)
@@ -244,7 +246,10 @@ class WorkflowEvaluator:
         media_to_download = []
         media_to_validate = []
         
-        if not self.update_media:
+        # Use decision override if provided, otherwise use config
+        update_media = should_update_media if should_update_media is not None else self.update_media
+        
+        if not update_media:
             # Media updates disabled - skip all media work
             return media_to_download, media_to_validate
         

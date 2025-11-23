@@ -90,12 +90,13 @@ class ScreenScraperClient:
         query_string = urlencode(redacted_params)
         return f"{url}?{query_string}"
     
-    async def query_game(self, rom_info: ROMInfo) -> Optional[Dict[str, Any]]:
+    async def query_game(self, rom_info: ROMInfo, shutdown_event: Optional[asyncio.Event] = None) -> Optional[Dict[str, Any]]:
         """
         Query ScreenScraper for game information.
         
         Args:
             rom_info: ROM information from scanner
+            shutdown_event: Optional event to check for cancellation
             
         Returns:
             Game data dictionary or None if not found
@@ -103,7 +104,12 @@ class ScreenScraperClient:
         Raises:
             FatalAPIError: For fatal errors requiring stop
             SkippableAPIError: For skippable errors (game not found, etc.)
+            asyncio.CancelledError: If shutdown is requested
         """
+        # Check for shutdown before starting
+        if shutdown_event and shutdown_event.is_set():
+            raise asyncio.CancelledError("Shutdown requested")
+        
         # Get system ID
         try:
             systemeid = get_systemeid(rom_info.system)
@@ -116,7 +122,8 @@ class ScreenScraperClient:
                 systemeid=systemeid,
                 romnom=rom_info.query_filename,
                 romtaille=rom_info.file_size,
-                crc=rom_info.hash_value
+                crc=rom_info.hash_value,
+                shutdown_event=shutdown_event
             )
         
         # Execute with retry
@@ -261,7 +268,8 @@ class ScreenScraperClient:
         systemeid: int,
         romnom: str,
         romtaille: int,
-        crc: Optional[str] = None
+        crc: Optional[str] = None,
+        shutdown_event: Optional[asyncio.Event] = None
     ) -> Dict[str, Any]:
         """
         Query jeuInfos.php endpoint.
@@ -271,12 +279,14 @@ class ScreenScraperClient:
             romnom: ROM filename
             romtaille: File size in bytes
             crc: CRC32 hash (optional)
+            shutdown_event: Optional event to check for cancellation
             
         Returns:
             Parsed game data
             
         Raises:
             Various API errors
+            asyncio.CancelledError: If shutdown is requested
         """
         # Wait for rate limit
         await self.throttle_manager.wait_if_needed(APIEndpoint.JEU_INFOS.value)
@@ -304,86 +314,130 @@ class ScreenScraperClient:
         # Log request URL with redacted credentials
         if logger.isEnabledFor(logging.DEBUG):
             redacted_url = self._build_redacted_url(url, params)
-            logger.debug(f"API Request: {redacted_url}")
+            logger.debug(f"API Request (search): {redacted_url}")
         
-        start_time = time.time()
-        try:
-            response = await self.client.get(
-                url,
-                params=params,
-                timeout=self.request_timeout
+        # Check shutdown before making request
+        if shutdown_event and shutdown_event.is_set():
+            raise asyncio.CancelledError("Shutdown requested")
+        
+        # Acquire concurrency semaphore to limit concurrent API requests
+        async with self.throttle_manager.concurrency_semaphore:
+            start_time = time.time()
+            try:
+                # Create the HTTP request task that can be cancelled
+                request_task = asyncio.create_task(
+                    self.client.get(
+                        url,
+                        params=params,
+                        timeout=self.request_timeout
+                    )
+                )
+                
+                # Wait for either completion or shutdown
+                if shutdown_event:
+                    # Race between request completion and shutdown
+                    done, pending = await asyncio.wait(
+                        [request_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=0.1  # Check shutdown every 100ms
+                    )
+                    
+                    # Check for shutdown while waiting
+                    while not done and not shutdown_event.is_set():
+                        done, pending = await asyncio.wait(
+                            [request_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=0.1
+                        )
+                    
+                    if shutdown_event.is_set() and not done:
+                        # Shutdown requested, cancel the request
+                        request_task.cancel()
+                        try:
+                            await request_task
+                        except asyncio.CancelledError:
+                            pass
+                        raise asyncio.CancelledError("Shutdown requested during API search")
+                    
+                    response = await request_task
+                else:
+                    # No shutdown event, just wait for response
+                    response = await request_task
+                    
+            except asyncio.CancelledError:
+                raise
+            except httpx.TimeoutException:
+                raise Exception("Request timeout")
+            except httpx.ConnectError:
+                raise Exception("Connection error")
+            except Exception as e:
+                raise Exception(f"Network error: {e}")
+            
+            elapsed_time = time.time() - start_time
+            
+            # Log response
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
+            
+            # Handle HTTP status (pass throttle_manager for 429 handling)
+            handle_http_status(
+                response.status_code, 
+                context=romnom,
+                throttle_manager=self.throttle_manager,
+                endpoint=APIEndpoint.JEU_INFOS.value,
+                retry_after=response.headers.get('Retry-After')
             )
-        except httpx.TimeoutException:
-            raise Exception("Request timeout")
-        except httpx.ConnectError:
-            raise Exception("Connection error")
-        except Exception as e:
-            raise Exception(f"Network error: {e}")
-        
-        elapsed_time = time.time() - start_time
-        
-        # Log response
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
-        
-        # Handle HTTP status (pass throttle_manager for 429 handling)
-        handle_http_status(
-            response.status_code, 
-            context=romnom,
-            throttle_manager=self.throttle_manager,
-            endpoint=APIEndpoint.JEU_INFOS.value,
-            retry_after=response.headers.get('Retry-After')
-        )
-        
-        # Reset backoff on successful request
-        if response.status_code == 200:
-            self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_INFOS.value)
-        
-        # Validate and parse response
-        try:
-            root = validate_response(response.content, expected_format='xml')
-        except ResponseError as e:
-            raise SkippableAPIError(f"Invalid response: {e}")
-        
-        # Check for API error message
-        error_msg = extract_error_message(root)
-        if error_msg:
-            raise SkippableAPIError(f"API error: {error_msg}")
-        
-        # Extract and store user limits from response (async-safe with monotonic updates)
-        new_user_info = parse_user_info(root)
-        if new_user_info:
-            async with self._user_limits_lock:
-                # First time initialization
-                if self._user_limits is None:
-                    self._user_limits = new_user_info
-                    self._rate_limits_initialized = True
-                    logger.info(f"API user limits detected: {self._user_limits}")
-                # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
-                elif 'requeststoday' in new_user_info:
-                    new_requests = new_user_info.get('requeststoday', 0)
-                    old_requests = self._user_limits.get('requeststoday', 0)
-                    if new_requests > old_requests:
+            
+            # Reset backoff on successful request
+            if response.status_code == 200:
+                self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_INFOS.value)
+            
+            # Validate and parse response
+            try:
+                root = validate_response(response.content, expected_format='xml')
+            except ResponseError as e:
+                raise SkippableAPIError(f"Invalid response: {e}")
+            
+            # Check for API error message
+            error_msg = extract_error_message(root)
+            if error_msg:
+                raise SkippableAPIError(f"API error: {error_msg}")
+            
+            # Extract and store user limits from response (async-safe with monotonic updates)
+            new_user_info = parse_user_info(root)
+            if new_user_info:
+                async with self._user_limits_lock:
+                    # First time initialization
+                    if self._user_limits is None:
                         self._user_limits = new_user_info
-                        logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
+                        self._rate_limits_initialized = True
+                        logger.info(f"API user limits detected: {self._user_limits}")
+                    # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
+                    elif 'requeststoday' in new_user_info:
+                        new_requests = new_user_info.get('requeststoday', 0)
+                        old_requests = self._user_limits.get('requeststoday', 0)
+                        if new_requests > old_requests:
+                            self._user_limits = new_user_info
+                            logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
+                
+                # Update throttle manager quota tracking
+                await self.throttle_manager.update_quota(new_user_info)
+                
+                # Check quota thresholds and log warnings if exceeded
+                await self.throttle_manager.check_quota_threshold(self._quota_warning_threshold)
             
-            # Update throttle manager quota tracking
-            await self.throttle_manager.update_quota(new_user_info)
+            # Parse game info
+            try:
+                game_data = parse_game_info(root)
+            except ResponseError as e:
+                raise SkippableAPIError(str(e))
             
-            # Check quota thresholds and log warnings if exceeded
-            await self.throttle_manager.check_quota_threshold(self._quota_warning_threshold)
-        
-        # Parse game info
-        try:
-            game_data = parse_game_info(root)
-        except ResponseError as e:
-            raise SkippableAPIError(str(e))
-        
-        return game_data
+            return game_data
     
     async def search_game(
         self,
         rom_info: ROMInfo,
+        shutdown_event: Optional[asyncio.Event] = None,
         max_results: int = 5
     ) -> list[Dict[str, Any]]:
         """
@@ -394,6 +448,7 @@ class ScreenScraperClient:
         
         Args:
             rom_info: ROM information from scanner
+            shutdown_event: Optional event to check for cancellation
             max_results: Maximum number of results to return
             
         Returns:
@@ -402,7 +457,12 @@ class ScreenScraperClient:
         Raises:
             FatalAPIError: For fatal errors requiring stop
             SkippableAPIError: For skippable errors
+            asyncio.CancelledError: If shutdown is requested
         """
+        # Check for shutdown before starting
+        if shutdown_event and shutdown_event.is_set():
+            raise asyncio.CancelledError("Shutdown requested")
+        
         # Get system ID
         try:
             systemeid = get_systemeid(rom_info.system)
@@ -414,7 +474,8 @@ class ScreenScraperClient:
             return await self._query_jeu_recherche(
                 systemeid=systemeid,
                 recherche=rom_info.query_filename,
-                max_results=max_results
+                max_results=max_results,
+                shutdown_event=shutdown_event
             )
         
         # Execute with retry
@@ -439,7 +500,8 @@ class ScreenScraperClient:
         self,
         systemeid: int,
         recherche: str,
-        max_results: int = 5
+        max_results: int = 5,
+        shutdown_event: Optional[asyncio.Event] = None
     ) -> list[Dict[str, Any]]:
         """
         Query jeuRecherche.php endpoint for text search.
@@ -448,12 +510,14 @@ class ScreenScraperClient:
             systemeid: ScreenScraper system ID
             recherche: Search query (typically filename without extension)
             max_results: Maximum results to return
+            shutdown_event: Optional event to check for cancellation
             
         Returns:
             List of parsed game data dictionaries
             
         Raises:
             Various API errors
+            asyncio.CancelledError: If shutdown is requested
         """
         # Wait for rate limit
         await self.throttle_manager.wait_if_needed(APIEndpoint.JEU_RECHERCHE.value)
@@ -479,74 +543,117 @@ class ScreenScraperClient:
             redacted_url = self._build_redacted_url(url, params)
             logger.debug(f"API Request: {redacted_url}")
         
-        start_time = time.time()
-        try:
-            response = await self.client.get(
-                url,
-                params=params,
-                timeout=self.request_timeout
+        # Check shutdown before making request
+        if shutdown_event and shutdown_event.is_set():
+            raise asyncio.CancelledError("Shutdown requested")
+        
+        # Acquire concurrency semaphore to limit concurrent API requests
+        async with self.throttle_manager.concurrency_semaphore:
+            start_time = time.time()
+            try:
+                # Create the HTTP request task that can be cancelled
+                request_task = asyncio.create_task(
+                    self.client.get(
+                        url,
+                        params=params,
+                        timeout=self.request_timeout
+                    )
+                )
+                
+                # Wait for either completion or shutdown
+                if shutdown_event:
+                    # Race between request completion and shutdown
+                    done, pending = await asyncio.wait(
+                        [request_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=0.1  # Check shutdown every 100ms
+                    )
+                    
+                    # Check for shutdown while waiting
+                    while not done and not shutdown_event.is_set():
+                        done, pending = await asyncio.wait(
+                            [request_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=0.1
+                        )
+                    
+                    if shutdown_event.is_set() and not done:
+                        # Shutdown requested, cancel the request
+                        request_task.cancel()
+                        try:
+                            await request_task
+                        except asyncio.CancelledError:
+                            pass
+                        raise asyncio.CancelledError("Shutdown requested during API search")
+                    
+                    response = await request_task
+                else:
+                    # No shutdown event, just wait for response
+                    response = await request_task
+                    
+            except asyncio.CancelledError:
+                raise
+            except httpx.TimeoutException:
+                raise Exception("Request timeout")
+            except httpx.ConnectError:
+                raise Exception("Connection error")
+            except Exception as e:
+                raise Exception(f"Network error: {e}")
+            
+            elapsed_time = time.time() - start_time
+            
+            # Log response
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
+            
+            # Handle HTTP status (pass throttle_manager for 429 handling)
+            handle_http_status(
+                response.status_code,
+                context=f"search:{recherche}",
+                throttle_manager=self.throttle_manager,
+                endpoint=APIEndpoint.JEU_RECHERCHE.value,
+                retry_after=response.headers.get('Retry-After')
             )
-        except httpx.TimeoutException:
-            raise Exception("Request timeout")
-        except httpx.ConnectError:
-            raise Exception("Connection error")
-        except Exception as e:
-            raise Exception(f"Network error: {e}")
-        
-        elapsed_time = time.time() - start_time
-        
-        # Log response
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
-        
-        # Handle HTTP status (pass throttle_manager for 429 handling)
-        handle_http_status(
-            response.status_code,
-            context=f"search:{recherche}",
-            throttle_manager=self.throttle_manager,
-            endpoint=APIEndpoint.JEU_RECHERCHE.value,
-            retry_after=response.headers.get('Retry-After')
-        )
-        
-        # Reset backoff on successful request
-        if response.status_code == 200:
-            self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_RECHERCHE.value)
-        
-        # Validate and parse response
-        try:
-            root = validate_response(response.content, expected_format='xml')
-        except ResponseError as e:
-            raise SkippableAPIError(f"Invalid response: {e}")
-        
-        # Check for API error message
-        error_msg = extract_error_message(root)
-        if error_msg:
-            raise SkippableAPIError(f"API error: {error_msg}")
-        
-        # Extract and store user limits from response (async-safe with monotonic updates)
-        new_user_info = parse_user_info(root)
-        if new_user_info:
-            async with self._user_limits_lock:
-                # First time initialization
-                if self._user_limits is None:
-                    self._user_limits = new_user_info
-                    self._rate_limits_initialized = True
-                    logger.info(f"API user limits detected: {self._user_limits}")
-                # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
-                elif 'requeststoday' in new_user_info:
-                    new_requests = new_user_info.get('requeststoday', 0)
-                    old_requests = self._user_limits.get('requeststoday', 0)
-                    if new_requests > old_requests:
+            
+            # Reset backoff on successful request
+            if response.status_code == 200:
+                self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_RECHERCHE.value)
+            
+            # Validate and parse response
+            try:
+                root = validate_response(response.content, expected_format='xml')
+            except ResponseError as e:
+                raise SkippableAPIError(f"Invalid response: {e}")
+            
+            # Check for API error message
+            error_msg = extract_error_message(root)
+            if error_msg:
+                raise SkippableAPIError(f"API error: {error_msg}")
+            
+            # Extract and store user limits from response (async-safe with monotonic updates)
+            new_user_info = parse_user_info(root)
+            if new_user_info:
+                async with self._user_limits_lock:
+                    # First time initialization
+                    if self._user_limits is None:
                         self._user_limits = new_user_info
-                        logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
-        
-        # Parse search results
-        try:
-            results = parse_search_results(root)
-        except ResponseError as e:
-            raise SkippableAPIError(str(e))
-        
-        return results
+                        self._rate_limits_initialized = True
+                        logger.info(f"API user limits detected: {self._user_limits}")
+                    # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
+                    elif 'requeststoday' in new_user_info:
+                        new_requests = new_user_info.get('requeststoday', 0)
+                        old_requests = self._user_limits.get('requeststoday', 0)
+                        if new_requests > old_requests:
+                            self._user_limits = new_user_info
+                            logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
+            
+            # Parse search results
+            try:
+                results = parse_search_results(root)
+            except ResponseError as e:
+                raise SkippableAPIError(str(e))
+            
+            return results
     
     def get_user_limits(self) -> Optional[Dict[str, Any]]:
         """

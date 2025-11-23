@@ -179,8 +179,6 @@ class PerformanceMonitor:
         avg_api_time = self._calculate_average_with_outlier_exclusion(self.api_times)
         avg_rom_time = self._calculate_average_with_outlier_exclusion(self.rom_times)
         
-        logger.debug(f"Performance metrics: API samples={len(self.api_times)}, avg={avg_api_time:.3f}s; ROM samples={len(self.rom_times)}, avg={avg_rom_time:.3f}s")
-        
         # Calculate ETA with caching to reduce jitter
         remaining_roms = self.total_roms - self.roms_processed
         

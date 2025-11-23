@@ -279,7 +279,7 @@ def parse_user_info(root: etree.Element) -> Dict[str, Any]:
     
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"Parsed user_info from API response: {user_info}")
+    logger.debug(f"Parsed user_info from API response: {user_info}")
     
     return user_info
 

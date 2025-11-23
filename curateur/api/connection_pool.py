@@ -63,7 +63,7 @@ class ConnectionPoolManager:
         limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=max_connections,
-            keepalive_expiry=5.0
+            keepalive_expiry=60.0  # Keep connections alive for 60 seconds
         )
         
         # Configure timeout
@@ -71,7 +71,7 @@ class ConnectionPoolManager:
             connect=10.0,
             read=timeout,
             write=30.0,
-            pool=10.0
+            pool=None  # No timeout for acquiring connection from pool
         )
         
         # Configure transport with retries

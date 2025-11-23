@@ -189,8 +189,8 @@ class WorkflowOrchestrator:
         
         # Step 0: System start logging
         logger.info(f"=== Begin work for system: {system.name} ===")
-        logger.info(f"System ID: {system.screenscraper_id}")
-        logger.info(f"ROM path: {system.rom_path}")
+        logger.info(f"Platform: {system.platform}")
+        logger.info(f"Path: {system.path}")
         
         # Initialize checkpoint manager for this system
         gamelist_dir = self.paths['gamelists'] / system.name
@@ -445,7 +445,7 @@ class WorkflowOrchestrator:
                 
                 # Calculate hash using configured algorithm
                 hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
-                logger.info(f"Hashing ROM: {rom_info.name}")
+                logger.info(f"[{rom_info.filename}] Hashing ROM ({hash_algorithm.upper()})")
                 rom_info.hash_value = calculate_hash(
                     hash_file,
                     algorithm=hash_algorithm,
@@ -453,9 +453,9 @@ class WorkflowOrchestrator:
                 )
                 
                 if rom_info.hash_value:
-                    logger.info(f"Hash calculated: {hash_algorithm.upper()}={rom_info.hash_value}")
+                    logger.info(f"[{rom_info.filename}] ROM hash calculated {hash_algorithm.upper()}={rom_info.hash_value}")
                 else:
-                    logger.info("Hash calculation skipped (file size exceeds limit)")
+                    logger.info(f"[{rom_info.filename}] Hash calculation skipped (file size exceeds limit)")
                 
                 # Don't emit completion - move directly to next operation
                 completed_tasks += 1
@@ -468,7 +468,7 @@ class WorkflowOrchestrator:
             # Step 2: Look up existing gamelist entry for this ROM
             gamelist_entry = None
             if existing_entries:
-                rom_relative_path = f"./{rom_info.name}"
+                rom_relative_path = f"./{rom_info.filename}"
                 for entry in existing_entries:
                     if entry.path == rom_relative_path:
                         gamelist_entry = entry
@@ -483,7 +483,7 @@ class WorkflowOrchestrator:
             
             # Log evaluator decision at DEBUG level
             logger.debug(
-                f"Evaluator decision for {rom_info.name}: "
+                f"Evaluator decision for {rom_info.filename}: "
                 f"fetch_metadata={decision.fetch_metadata}, "
                 f"update_metadata={decision.update_metadata}, "
                 f"update_media={decision.update_media}, "
@@ -495,7 +495,7 @@ class WorkflowOrchestrator:
             
             # Check if ROM should be skipped
             if decision.skip_reason:
-                logger.info(f"Skipping {rom_info.name}: {decision.skip_reason}")
+                logger.info(f"[{rom_info.filename}] Skipping: {decision.skip_reason}")
                 return ScrapingResult(
                     rom_path=rom_info.path,
                     success=True,
@@ -517,22 +517,22 @@ class WorkflowOrchestrator:
             if decision.fetch_metadata:
                 # Emit UI event
                 if operation_callback:
-                    emit(Operations.FETCHING_METADATA, "Fetching metadata...")
+                    emit(Operations.FETCHING_METADATA, f"(hash={rom_hash}, size={rom_info.path.stat().st_size})")
                 
                 logger.info(
-                    f"Fetching metadata: {rom_info.name} "
+                    f"[{rom_info.filename}] Fetching metadata "
                     f"(hash={rom_hash}, size={rom_info.path.stat().st_size})"
                 )
                 logger.debug(
                     f"API request: hash={rom_hash}, "
-                    f"size={rom_info.size}, "
-                    f"system_id={system.screenscraper_id}"
+                    f"size={rom_info.file_size}, "
+                    f"system_id={system.platform}"
                 )
                 
                 api_start = time.time()
                 
                 try:
-                    game_info = await self.api_client.query_game(rom_info)
+                    game_info = await self.api_client.query_game(rom_info, shutdown_event=shutdown_event)
                     api_duration = time.time() - api_start
                     
                     # Record API timing
@@ -543,28 +543,38 @@ class WorkflowOrchestrator:
                         # Count non-empty fields
                         field_count = len([k for k in game_info.keys() if game_info.get(k)])
                         logger.info(
+                            f"[{rom_info.filename}] "
                             f"Metadata processed: {field_count} fields, "
                             f"{len(game_info.get('names', {}))} names, "
                             f"{len(game_info.get('descriptions', {}))} descriptions, "
                             f"language={self.config.get('scraping', {}).get('preferred_language', 'en')}"
                         )
                         logger.debug(
+                            f"[{rom_info.filename}] "
                             f"Metadata fields: name={game_info.get('name', 'N/A')[:50]}, "
                             f"desc={game_info.get('desc', 'N/A')[:50]}..."
                         )
                     
-                    logger.debug(f"Hash lookup successful for {rom_info.filename}")
+                    logger.debug(f"[{rom_info.filename}] Hash lookup successful")
                     # Increment task counter but don't emit completion status
                     completed_tasks += 1
                     
+                except asyncio.CancelledError:
+                    # Shutdown requested during API call
+                    logger.info(f"[{rom_info.filename}] API request cancelled (shutdown)")
+                    return ScrapingResult(
+                        rom_path=rom_info.path,
+                        success=False,
+                        error="Cancelled due to shutdown"
+                    )
                 except SkippableAPIError as e:
-                    logger.debug(f"Hash lookup failed for {rom_info.filename}: {e}")
+                    logger.debug(f"[{rom_info.filename}] Hash lookup failed: {e}")
                     
                     # Try search fallback if enabled
                     if self.enable_search_fallback:
                         emit(Operations.SEARCH_FALLBACK, "Trying text search...")
-                        logger.info(f"Attempting search fallback for {rom_info.filename}")
-                        game_info = await self._search_fallback(rom_info, preferred_regions)
+                        logger.info(f"[{rom_info.filename}] Attempting search fallback")
+                        game_info = await self._search_fallback(rom_info, preferred_regions, shutdown_event=shutdown_event)
                         
                         if game_info:
                             api_duration = time.time() - api_start
@@ -573,11 +583,11 @@ class WorkflowOrchestrator:
                             if hasattr(self, 'performance_monitor') and self.performance_monitor:
                                 self.performance_monitor.record_api_call(api_duration)
                             
-                            logger.info(f"Search fallback successful for {rom_info.filename}")
+                            logger.info(f"[{rom_info.filename}] Search fallback successful")
                             # Increment task counter but don't emit completion status
                             completed_tasks += 1
                         else:
-                            logger.info(f"Search fallback found no matches for {rom_info.filename}")
+                            logger.info(f"[{rom_info.filename}] Search fallback: no matches found")
                             emit(Operations.NO_MATCHES, "Game not found in database")
                     else:
                         raise
@@ -616,6 +626,13 @@ class WorkflowOrchestrator:
                     for media_type, media_items in media_dict.items():
                         media_list.extend(media_items)
                 
+                logger.debug(
+                    f"[{rom_info.filename}] Media availability: "
+                    f"decision.media_to_download={decision.media_to_download}, "
+                    f"media_list_count={len(media_list)}, "
+                    f"media_types_in_api={list(media_dict.keys()) if media_dict else []}"
+                )
+                
                 # Download media files (from decision.media_to_download)
                 if decision.media_to_download and media_list:
                     for idx, media_type_singular in enumerate(decision.media_to_download, 1):
@@ -624,8 +641,8 @@ class WorkflowOrchestrator:
                             emit("Downloading media", f"{media_type_singular} ({idx}/{len(decision.media_to_download)})")
                         
                         logger.info(
-                            f"Downloading media {idx}/{len(decision.media_to_download)}: "
-                            f"{media_type_singular} for {rom_info.name}"
+                            f"[{rom_info.filename}] Downloading media {idx}/{len(decision.media_to_download)}: "
+                            f"{media_type_singular}"
                         )
                         logger.debug(
                             f"Media selection preferences: regions={preferred_regions}, "
@@ -640,11 +657,21 @@ class WorkflowOrchestrator:
                         type_media_list = [m for m in media_list if m.get('type') == media_type_plural]
                         
                         if type_media_list:
+                            # Create progress callback to update UI during download
+                            def media_progress_callback(media_type: str, current_idx: int, total_count: int):
+                                if operation_callback:
+                                    emit(
+                                        "Downloading media",
+                                        f"{media_type} ({current_idx}/{total_count})",
+                                        progress=(current_idx / total_count * 100) if total_count > 0 else None
+                                    )
+                            
                             # Download using existing MediaDownloader logic
                             download_results, _ = await media_downloader.download_media_for_game(
                                 media_list=type_media_list,
                                 rom_path=str(rom_info.path),
                                 system=system.name,
+                                progress_callback=media_progress_callback,
                                 shutdown_event=shutdown_event
                             )
                             
@@ -676,7 +703,7 @@ class WorkflowOrchestrator:
                         if operation_callback:
                             emit(Operations.HASHING_MEDIA, media_type_singular)
                         
-                        logger.info(f"Hashing media: {media_type_singular} for {rom_info.name}")
+                        logger.info(f"[{rom_info.filename}] Hashing media: {media_type_singular}")
                         
                         # Get media file path
                         media_path = self._get_media_path(system, rom_info, media_type_singular)
@@ -696,7 +723,7 @@ class WorkflowOrchestrator:
                             
                             if media_hash != stored_hash:
                                 logger.info(
-                                    f"Media hash mismatch for {media_type_singular}: "
+                                    f"[{rom_info.filename}] Media hash mismatch for {media_type_singular}: "
                                     f"stored={stored_hash}, calculated={media_hash}"
                                 )
                                 
@@ -706,10 +733,20 @@ class WorkflowOrchestrator:
                                 type_media_list = [m for m in media_list if m.get('type') == media_type_plural]
                                 
                                 if type_media_list:
+                                    # Create progress callback for re-download
+                                    def media_redownload_callback(media_type: str, current_idx: int, total_count: int):
+                                        if operation_callback:
+                                            emit(
+                                                "Re-downloading media",
+                                                f"{media_type} ({current_idx}/{total_count}) - hash mismatch",
+                                                progress=(current_idx / total_count * 100) if total_count > 0 else None
+                                            )
+                                    
                                     download_results, _ = await media_downloader.download_media_for_game(
                                         media_list=type_media_list,
                                         rom_path=str(rom_info.path),
                                         system=system.name,
+                                        progress_callback=media_redownload_callback,
                                         shutdown_event=shutdown_event
                                     )
                                     
@@ -719,7 +756,7 @@ class WorkflowOrchestrator:
                                             media_hashes[media_type_singular] = media_hash
                             else:
                                 logger.info(
-                                    f"Media hash validated: {media_type_singular} "
+                                    f"[{rom_info.filename}] Media hash validated: {media_type_singular} "
                                     f"(hash={media_hash})"
                                 )
                                 media_hashes[media_type_singular] = media_hash
@@ -750,12 +787,12 @@ class WorkflowOrchestrator:
                             media_path.rename(cleanup_path)
                             
                             logger.info(
-                                f"Cleaned disabled media: {media_type_singular} for {rom_info.name} "
+                                f"[{rom_info.filename}] Cleaned disabled media: {media_type_singular} "
                                 f"(moved to CLEANUP/{system.name}/{media_type_plural})"
                             )
                         else:
                             logger.info(
-                                f"Would clean disabled media: {media_type_singular} for {rom_info.name}"
+                                f"[{rom_info.filename}] Would clean disabled media: {media_type_singular}"
                             )
             
             # Step 6: Create or update GameEntry with hashes
@@ -763,7 +800,7 @@ class WorkflowOrchestrator:
                 # Create entry from API response
                 game_entry = GameEntry.from_api_response(
                     game_info=game_info,
-                    rom_path=f"./{rom_info.name}",
+                    rom_path=f"./{rom_info.filename}",
                     media_paths=media_paths
                 )
                 
@@ -817,7 +854,7 @@ class WorkflowOrchestrator:
             )
             
         except Exception as e:
-            logger.error(f"Error scraping {rom_info.filename}: {e}")
+            logger.error(f"[{rom_info.filename}] Error scraping: {e}")
             
             return ScrapingResult(
                 rom_path=rom_info.path,
@@ -882,7 +919,7 @@ class WorkflowOrchestrator:
                 return result
                 
             except Exception as e:
-                logger.error(f"ROM processor error for {rom_info.filename}: {e}")
+                logger.error(f"[{rom_info.filename}] ROM processor error: {e}")
                 return ScrapingResult(
                     rom_path=rom_info.path,
                     success=False,
@@ -965,12 +1002,6 @@ class WorkflowOrchestrator:
         not_found_items = []  # Track 404 errors separately
         rom_count = 0
         
-        # Initialize idle workers in UI if available
-        if self.console_ui and self.thread_manager and self.thread_manager.is_initialized():
-            max_workers = self.thread_manager.max_concurrent
-            for i in range(1, max_workers + 1):
-                self.console_ui.clear_worker_operation(i)  # Pass integer, not string
-        
         # Populate work queue with all ROM entries
         logger.info(f"Populating work queue with {len(rom_entries)} ROM entries")
         successfully_added = 0
@@ -1019,12 +1050,15 @@ class WorkflowOrchestrator:
             # Clear any previous results
             self.thread_manager.clear_results()
             
-            # Spawn workers that will continuously process from queue
-            self.thread_manager.spawn_workers(
+            # Spawn workers that will continuously process from queue (with staggered startup)
+            # Use shorter stagger for larger worker counts to improve utilization
+            stagger_delay = 2.0 if self.thread_manager.max_concurrent > 3 else 5.0
+            await self.thread_manager.spawn_workers(
                 work_queue=self.work_queue,
                 rom_processor=rom_processor,
                 operation_callback=ui_callback,
-                count=self.thread_manager.max_concurrent
+                count=self.thread_manager.max_concurrent,
+                stagger_delay=stagger_delay
             )
             
             logger.info(f"Workers spawned. Waiting for completion...")
@@ -1143,7 +1177,8 @@ class WorkflowOrchestrator:
     async def _search_fallback(
         self,
         rom_info: ROMInfo,
-        preferred_regions: List[str]
+        preferred_regions: List[str],
+        shutdown_event: Optional[asyncio.Event] = None
     ) -> Optional[Dict]:
         """
         Search fallback when hash lookup fails.
@@ -1154,19 +1189,25 @@ class WorkflowOrchestrator:
         Args:
             rom_info: ROM information from scanner
             preferred_regions: Region preference list for scoring
+            shutdown_event: Optional event to check for cancellation
             
         Returns:
             Game data dictionary if match found, None otherwise
         """
+        # Check for shutdown before searching
+        if shutdown_event and shutdown_event.is_set():
+            raise asyncio.CancelledError("Shutdown requested")
+        
         try:
             # Search API
             results = await self.api_client.search_game(
                 rom_info,
+                shutdown_event=shutdown_event,
                 max_results=self.search_max_results
             )
             
             if not results:
-                logger.debug(f"Search returned no results for {rom_info.filename}")
+                logger.debug(f"[{rom_info.filename}] Search returned no results")
                 return None
             
             # Convert ROM info to dict for scorer
@@ -1192,7 +1233,7 @@ class WorkflowOrchestrator:
             scored_candidates.sort(key=lambda x: x[1], reverse=True)
             
             # Log all candidates
-            logger.debug(f"Search candidates for {rom_info.filename}:")
+            logger.debug(f"[{rom_info.filename}] Search candidates:")
             for i, (game, score) in enumerate(scored_candidates, 1):
                 game_name = game.get('names', {}).get('en', 'Unknown')
                 logger.debug(f"  {i}. {game_name} - {score:.1%}")
@@ -1211,22 +1252,22 @@ class WorkflowOrchestrator:
             if best_score >= self.search_confidence_threshold:
                 game_name = best_game.get('names', {}).get('en', 'Unknown')
                 logger.info(
-                    f"Auto-selected search match for {rom_info.filename}: "
+                    f"[{rom_info.filename}] Auto-selected search match: "
                     f"{game_name} (confidence: {best_score:.1%})"
                 )
                 return best_game
             else:
                 logger.info(
-                    f"Best match below threshold for {rom_info.filename}: "
+                    f"[{rom_info.filename}] Best match below threshold: "
                     f"{best_score:.1%} < {self.search_confidence_threshold:.1%}"
                 )
                 return None
                 
         except SkippableAPIError as e:
-            logger.debug(f"Search API error for {rom_info.filename}: {e}")
+            logger.debug(f"[{rom_info.filename}] Search API error: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error in search fallback for {rom_info.filename}: {e}")
+            logger.error(f"[{rom_info.filename}] Unexpected error in search fallback: {e}")
             return None
     
     def _generate_gamelist(
@@ -1416,8 +1457,8 @@ class WorkflowOrchestrator:
         if self.thread_manager and self.thread_manager.is_initialized():
             stats = await self.thread_manager.get_stats()
             thread_stats = {
-                'active_threads': stats.get('active_threads', 0),
-                'max_threads': stats.get('max_threads', 1)
+                'active_threads': stats.get('active_workers', 0),
+                'max_threads': stats.get('max_workers', 1)
             }
         
         # Get API quota from throttle manager

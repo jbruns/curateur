@@ -30,11 +30,8 @@ class ThreadPoolManager:
         # Initialize based on API limits
         manager.initialize_pools({'maxthreads': 4})
         
-        # Spawn workers
-        manager.spawn_workers(work_queue, process_rom, ui_callback, count=1)
-        
-        # Scale after authentication
-        await manager.scale_workers(4)
+        # Spawn workers with staggered startup
+        await manager.spawn_workers(work_queue, process_rom, ui_callback, count=4, stagger_delay=5.0)
         
         # Wait for all work to complete
         await manager.wait_for_completion()
@@ -156,7 +153,7 @@ class ThreadPoolManager:
         Yields:
             Tuple of (rom, result) as they complete
         """
-        logger.warning("submit_rom_batch() is deprecated, use spawn_workers() + wait_for_completion()")
+        logger.warning("submit_rom_batch() is deprecated, use await spawn_workers() + await wait_for_completion()")
         
         if not self._initialized:
             self.initialize_pools()
@@ -199,12 +196,13 @@ class ThreadPoolManager:
                 logger.error(f"Task failed: {e}")
                 yield (None, {'error': str(e)})
     
-    def spawn_workers(
+    async def spawn_workers(
         self,
         work_queue: 'WorkQueueManager',
         rom_processor: Callable[[Any, Optional[Callable]], Awaitable[Any]],
         operation_callback: Optional[Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]],
-        count: int
+        count: int,
+        stagger_delay: float = 5.0
     ) -> None:
         """
         Spawn worker coroutines that continuously process items from work queue
@@ -218,6 +216,7 @@ class ThreadPoolManager:
             rom_processor: Async function to process each ROM
             operation_callback: Optional UI callback for progress updates
             count: Number of workers to spawn
+            stagger_delay: Delay in seconds between starting each worker (default: 5.0)
         """
         if not self._initialized:
             self.initialize_pools()
@@ -227,11 +226,19 @@ class ThreadPoolManager:
         self._rom_processor = rom_processor
         self._operation_callback = operation_callback
         
-        logger.info(f"Spawning {count} worker(s)")
+        if count > 1:
+            logger.info(f"Spawning {count} worker(s) with {stagger_delay}s stagger")
+        else:
+            logger.info(f"Spawning {count} worker(s)")
         
         for i in range(count):
             worker_task = asyncio.create_task(self._worker_loop(i + 1))
             self._worker_tasks.append(worker_task)
+            logger.debug(f"Started worker {i + 1}")
+            
+            # Stagger the startup (except for the last worker)
+            if i < count - 1:
+                await asyncio.sleep(stagger_delay)
     
     async def _worker_loop(self, worker_id: int) -> None:
         """
@@ -310,6 +317,18 @@ class ThreadPoolManager:
             
             try:
                 logger.debug(f"Worker {worker_id} starting {rom_info.filename}")
+                
+                # Update UI to show worker is waiting if semaphore is locked
+                if self._operation_callback and self.semaphore.locked():
+                    task_name = f"task-{id(asyncio.current_task())}"
+                    self._operation_callback(
+                        task_name,
+                        rom_info.filename,
+                        "Waiting for API slot",
+                        f"Queued for processing ({self._active_work_count-1} ahead)",
+                        None, None, None
+                    )
+                
                 async with self.semaphore:
                     result = await self._rom_processor(rom_info, self._operation_callback, self._shutdown_event)
                     
@@ -328,6 +347,10 @@ class ThreadPoolManager:
                     if 'timeout' in result.error.lower() or 'network' in result.error.lower():
                         self._work_queue.retry_failed(work_item, result.error)
                 
+            except asyncio.CancelledError:
+                # Shutdown requested during processing, mark as incomplete
+                logger.debug(f"Worker {worker_id} cancelled {rom_info.filename} (shutdown)")
+                await self._work_queue.mark_processed(work_item)
             except Exception as e:
                 logger.error(f"Worker {worker_id} failed processing {rom_info.filename}: {e}")
                 await self._work_queue.mark_processed(work_item)
@@ -336,35 +359,6 @@ class ThreadPoolManager:
                     self._active_work_count = max(0, self._active_work_count - 1)
         
         logger.debug(f"Worker {worker_id} finished")
-    
-    async def scale_workers(self, new_total: int) -> None:
-        """
-        Scale worker pool to new total count
-        
-        Only supports scaling up (adding workers). To scale down, use stop_workers()
-        and respawn fresh pool.
-        
-        Args:
-            new_total: Target total number of workers
-        """
-        current_count = len(self._worker_tasks)
-        
-        if new_total <= current_count:
-            logger.debug(f"Worker count already at {current_count}, not scaling to {new_total}")
-            return
-        
-        # Update semaphore limit
-        self.max_concurrent = new_total
-        self.semaphore = asyncio.Semaphore(new_total)
-        
-        # Spawn additional workers
-        additional = new_total - current_count
-        logger.info(f"Scaling workers from {current_count} to {new_total} (+{additional})")
-        
-        for i in range(additional):
-            worker_id = current_count + i + 1
-            worker_task = asyncio.create_task(self._worker_loop(worker_id))
-            self._worker_tasks.append(worker_task)
     
     async def wait_for_completion(self) -> list:
         """
