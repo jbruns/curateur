@@ -40,14 +40,16 @@ class ThreadPoolManager:
         await manager.stop_workers()
     """
     
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, console_ui=None):
         """
         Initialize task pool manager
         
         Args:
             config: Configuration dictionary
+            console_ui: Optional ConsoleUI instance for pause state checking
         """
         self.config = config
+        self.console_ui = console_ui
         self.max_concurrent = 1  # Conservative default
         self.semaphore: Optional[asyncio.Semaphore] = None
         self._initialized = False
@@ -242,8 +244,21 @@ class ThreadPoolManager:
             task_id: Numeric identifier for this task (for logging)
         """
         logger.debug(f"Task {task_id} started")
+        paused_logged = False  # Track if we've logged pause state
         
         while not self._shutdown_event.is_set():
+            # Check for pause state from keyboard controls
+            if self.console_ui and self.console_ui.is_paused:
+                if not paused_logged:
+                    logger.debug(f"Task {task_id} paused - waiting for resume")
+                    paused_logged = True
+                # Sleep briefly and check again
+                await asyncio.sleep(0.5)
+                continue
+            elif paused_logged:
+                logger.debug(f"Task {task_id} resumed")
+                paused_logged = False
+            
             # Check if work queue is done
             if self._work_queue.is_system_complete() and self._work_queue.is_empty():
                 logger.debug(f"Task {task_id} exiting - system complete and queue empty")
