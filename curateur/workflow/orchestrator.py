@@ -251,10 +251,11 @@ class WorkflowOrchestrator:
         
         # Step 1: Scan ROMs
         logger.info("Scanning ROMs...")
+        crc_size_limit = self.config.get('runtime', {}).get('crc_size_limit', 1073741824)
         rom_entries = scan_system(
             system,
             rom_root=self.rom_directory,
-            crc_size_limit=1073741824
+            crc_size_limit=crc_size_limit
         )
         logger.info(f"ROM scan complete: {len(rom_entries)} files found")
         
@@ -644,7 +645,12 @@ class WorkflowOrchestrator:
             media_paths = {}
             media_count = 0
             media_hashes = {}
-            hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
+            hash_algorithm = self.config.get('runtime', {}).get('hash_algorithm', 'crc32')
+            
+            # Get media config
+            media_config = self.config.get('media', {})
+            validation_mode = media_config.get('validation_mode', 'disabled')
+            image_min_dimension = media_config.get('image_min_dimension', 50)
             
             if game_info:
                 # Use throttle manager's semaphore for unified concurrency control
@@ -657,6 +663,9 @@ class WorkflowOrchestrator:
                     preferred_regions=preferred_regions,
                     enabled_media_types=media_types,
                     hash_algorithm=hash_algorithm,
+                    validation_mode=validation_mode,
+                    min_width=image_min_dimension,
+                    min_height=image_min_dimension,
                     download_semaphore=global_semaphore
                 )
                 
@@ -759,8 +768,8 @@ class WorkflowOrchestrator:
                                 else:
                                     logger.debug(f"[{rom_info.filename}] No hash available for {media_type_singular}")
                 
-                # Validate existing media (from decision.media_to_validate)
-                if decision.media_to_validate:
+                # Validate existing media (only in normal or strict mode)
+                if decision.media_to_validate and validation_mode != 'disabled':
                     for media_type_singular in decision.media_to_validate:
                         # Check if media file exists
                         media_path = self._get_media_path(system, media_type_singular, rom_info.path)
@@ -777,36 +786,51 @@ class WorkflowOrchestrator:
                             expected_hash = self.api_client.cache.get_media_hash(rom_hash, media_type_singular)
                         
                         if not expected_hash:
-                            # No hash in cache - accept existing file
-                            logger.debug(f"[{rom_info.filename}] Media exists (no cached hash): {media_type_singular}")
-                            media_paths[media_type_singular] = str(media_path)
-                            if self.console_ui:
-                                self.console_ui.increment_media_validated(media_type_singular)
+                            # No hash in cache
+                            if validation_mode == 'strict':
+                                # Strict mode: re-download files without cached hashes
+                                logger.debug(f"[{rom_info.filename}] No cached hash for {media_type_singular} in strict mode, will re-download")
+                                if media_type_singular not in decision.media_to_download:
+                                    decision.media_to_download.append(media_type_singular)
+                            else:
+                                # Normal mode: accept existing file
+                                logger.debug(f"[{rom_info.filename}] Media exists (no cached hash): {media_type_singular}")
+                                media_paths[media_type_singular] = str(media_path)
+                                if self.console_ui:
+                                    self.console_ui.increment_media_validated(media_type_singular)
                             continue
                         
-                        # Calculate current hash
-                        current_hash = calculate_hash(
-                            media_path,
-                            algorithm=hash_algorithm,
-                            size_limit=0
-                        )
-                        
-                        if current_hash == expected_hash:
-                            # Hash matches - keep existing file
-                            logger.info(f"[{rom_info.filename}] Media validated: {media_type_singular} (hash={current_hash})")
-                            media_paths[media_type_singular] = str(media_path)
-                            media_hashes[media_type_singular] = current_hash
+                        # Strict mode: Calculate current hash and compare
+                        if validation_mode == 'strict':
+                            current_hash = calculate_hash(
+                                media_path,
+                                algorithm=hash_algorithm,
+                                size_limit=0
+                            )
                             
+                            if current_hash == expected_hash:
+                                # Hash matches - keep existing file
+                                logger.info(f"[{rom_info.filename}] Media validated: {media_type_singular} (hash={current_hash})")
+                                media_paths[media_type_singular] = str(media_path)
+                                media_hashes[media_type_singular] = current_hash
+                                
+                                if self.console_ui:
+                                    self.console_ui.increment_media_validated(media_type_singular)
+                            else:
+                                # Hash mismatch - re-download
+                                logger.info(
+                                    f"[{rom_info.filename}] Media hash mismatch: {media_type_singular} "
+                                    f"(expected: {expected_hash}, got: {current_hash}) - will re-download"
+                                )
+                                if media_type_singular not in decision.media_to_download:
+                                    decision.media_to_download.append(media_type_singular)
+                        else:
+                            # Normal mode: trust cached hash, no file validation
+                            logger.debug(f"[{rom_info.filename}] Media exists with cached hash: {media_type_singular}")
+                            media_paths[media_type_singular] = str(media_path)
+                            media_hashes[media_type_singular] = expected_hash
                             if self.console_ui:
                                 self.console_ui.increment_media_validated(media_type_singular)
-                        else:
-                            # Hash mismatch - re-download
-                            logger.info(
-                                f"[{rom_info.filename}] Media hash mismatch: {media_type_singular} "
-                                f"(expected: {expected_hash}, got: {current_hash}) - will re-download"
-                            )
-                            if media_type_singular not in decision.media_to_download:
-                                decision.media_to_download.append(media_type_singular)
                     
                     # Re-download any media that failed validation
                     if decision.media_to_download:
@@ -1171,7 +1195,7 @@ class WorkflowOrchestrator:
         
         # Pre-hash ROMs in batches for better throughput (feeds pipeline efficiently)
         logger.info(f"Pre-hashing {len(rom_entries)} ROMs in concurrent batches of 100")
-        hash_algorithm = self.config.get('scraping', {}).get('hash_algorithm', 'crc32')
+        hash_algorithm = self.config.get('runtime', {}).get('hash_algorithm', 'crc32')
         rom_entries = await self._batch_hash_roms(rom_entries, hash_algorithm, batch_size=100)
         logger.info(f"ROM hashing complete: {sum(1 for r in rom_entries if r.hash_value)} hashed, {sum(1 for r in rom_entries if not r.hash_value)} skipped")
         

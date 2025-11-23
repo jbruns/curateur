@@ -65,7 +65,7 @@ class CheckpointManager:
         self.gamelist_dir = Path(gamelist_dir)
         self.checkpoint_file = self.gamelist_dir / ".curateur_checkpoint.json"
         self.system_name = system_name
-        self.interval = config.get('scraping', {}).get('checkpoint_interval', 100)
+        self.interval = config.get('runtime', {}).get('checkpoint_interval', 100)
         self.processed_count = 0
         self.data = self._init_checkpoint_data()
     

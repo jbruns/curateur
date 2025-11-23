@@ -25,7 +25,6 @@ class WorkflowDecision:
     Attributes:
         fetch_metadata: Whether to fetch metadata from API
         update_metadata: Whether to update metadata fields in gamelist
-        update_media: Whether to process media files
         media_to_download: List of singular media types to download
         media_to_validate: List of singular media types to hash-validate
         clean_disabled_media: Whether to clean up disabled media types
@@ -33,7 +32,6 @@ class WorkflowDecision:
     """
     fetch_metadata: bool = False
     update_metadata: bool = False
-    update_media: bool = False
     media_to_download: List[str] = field(default_factory=list)
     media_to_validate: List[str] = field(default_factory=list)
     clean_disabled_media: bool = False
@@ -44,7 +42,7 @@ class WorkflowEvaluator:
     """
     Evaluates ROMs to determine workflow actions.
     
-    Centralizes all decision logic based on update_policy, hash comparison,
+    Centralizes all decision logic based on scrape_mode, hash comparison,
     and configuration settings.
     """
     
@@ -58,24 +56,26 @@ class WorkflowEvaluator:
         """
         self.config = config
         self.scraping_config = config.get('scraping', {})
+        self.media_config = config.get('media', {})
+        self.runtime_config = config.get('runtime', {})
         self.cache = cache
         
-        # Extract key settings
-        self.update_policy = self.scraping_config.get('update_policy', 'changed_only')
-        self.update_metadata = self.scraping_config.get('update_metadata', True)
-        self.update_media = self.scraping_config.get('update_media', True)
-        self.clean_mismatched_media = self.scraping_config.get('clean_mismatched_media', False)
-        self.hash_algorithm = self.scraping_config.get('hash_algorithm', 'crc32')
+        
+        # Get scrape_mode setting
+        self.scrape_mode = self.scraping_config.get('scrape_mode', 'changed')
+        self.clean_mismatched_media = self.media_config.get('clean_mismatched_media', False)
+        self.hash_algorithm = self.runtime_config.get('hash_algorithm', 'crc32')
+        self.validation_mode = self.media_config.get('validation_mode', 'disabled')
         
         # Media types (convert to singular for consistency)
         self.enabled_media_types = self._convert_to_singular(
-            self.scraping_config.get('media_types', [])
+            self.media_config.get('media_types', [])
         )
         
+        
         logger.debug(
-            f"WorkflowEvaluator initialized: update_policy={self.update_policy}, "
-            f"update_metadata={self.update_metadata}, update_media={self.update_media}, "
-            f"hash_algorithm={self.hash_algorithm}"
+            f"WorkflowEvaluator initialized: scrape_mode={self.scrape_mode}, "
+            f"validation_mode={self.validation_mode}, hash_algorithm={self.hash_algorithm}"
         )
     
     def _convert_to_singular(self, plural_types: List[str]) -> List[str]:
@@ -107,10 +107,10 @@ class WorkflowEvaluator:
         """
         decision = WorkflowDecision()
         
-        # Step 1: Check update_policy
-        if self.update_policy == 'never':
+        # Step 1: Check scrape_mode for skip condition
+        if self.scrape_mode == 'skip':
             if gamelist_entry is not None and rom_info.path.exists():
-                decision.skip_reason = "update_policy is 'never'; ROM exists in gamelist"
+                decision.skip_reason = "scrape_mode is 'skip'; ROM exists in gamelist"
                 logger.info(
                     f"Skipping {rom_info.filename}: {decision.skip_reason}"
                 )
@@ -119,25 +119,22 @@ class WorkflowEvaluator:
         # Step 2: Compare ROM hash with gamelist hash
         hash_matches = self._check_hash_match(rom_hash, gamelist_entry)
         
-        # Step 3: Determine if we need to fetch metadata
-        if self.update_policy == 'always':
-            # Always fetch metadata
+        # Step 3: Determine if we need to fetch metadata based on scrape_mode
+        if self.scrape_mode == 'force':
+            # Force: Always fetch and update metadata
             decision.fetch_metadata = True
-            decision.update_metadata = self.update_metadata
-            decision.update_media = self.update_media
+            decision.update_metadata = True
             
-        elif self.update_policy == 'changed_only':
+        elif self.scrape_mode == 'changed':
             if gamelist_entry is None:
                 # ROM not in gamelist - full scrape
                 decision.fetch_metadata = True
                 decision.update_metadata = True
-                decision.update_media = True
                 
             elif not hash_matches:
                 # ROM changed - full scrape
                 decision.fetch_metadata = True
                 decision.update_metadata = True
-                decision.update_media = True
                 logger.debug(
                     f"ROM hash changed for {rom_info.filename}: "
                     f"stored={self._get_stored_hash(gamelist_entry)}, "
@@ -145,23 +142,30 @@ class WorkflowEvaluator:
                 )
                 
             else:
-                # Hash matches - ROM unchanged
-                # Check if metadata/media updates are forced
-                if self.update_metadata or self.update_media:
-                    decision.fetch_metadata = True
-                    decision.update_metadata = self.update_metadata
-                    decision.update_media = self.update_media
-                else:
-                    decision.skip_reason = "ROM hash matches; updates disabled"
-                    logger.info(
-                        f"Skipping {rom_info.filename}: {decision.skip_reason}"
-                    )
-                    return decision
+                # Hash matches - ROM unchanged, skip
+                decision.skip_reason = "ROM hash matches; scrape_mode is 'changed'"
+                logger.info(
+                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
+                )
+                return decision
+        
+        elif self.scrape_mode == 'new_only':
+            if gamelist_entry is None:
+                # ROM not in gamelist - full scrape
+                decision.fetch_metadata = True
+                decision.update_metadata = True
+            else:
+                # ROM exists in gamelist - skip (even if hash changed)
+                decision.skip_reason = "scrape_mode is 'new_only'; ROM exists in gamelist"
+                logger.info(
+                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
+                )
+                return decision
         
         # Step 4: Determine media operations
         if decision.fetch_metadata:
             decision.media_to_download, decision.media_to_validate = \
-                self._determine_media_operations(gamelist_entry, hash_matches, rom_hash, decision.update_media)
+                self._determine_media_operations(gamelist_entry, hash_matches, rom_hash)
             
             # Set cleanup flag
             decision.clean_disabled_media = self.clean_mismatched_media
@@ -170,7 +174,6 @@ class WorkflowEvaluator:
             f"Decision for {rom_info.filename}: "
             f"fetch_metadata={decision.fetch_metadata}, "
             f"update_metadata={decision.update_metadata}, "
-            f"update_media={decision.update_media}, "
             f"media_to_download={len(decision.media_to_download)}, "
             f"media_to_validate={len(decision.media_to_validate)}"
         )
@@ -222,8 +225,7 @@ class WorkflowEvaluator:
         self,
         gamelist_entry: Optional[GameEntry],
         hash_matches: bool,
-        rom_hash: Optional[str],
-        should_update_media: bool = None
+        rom_hash: Optional[str]
     ) -> tuple[List[str], List[str]]:
         """
         Determine which media to download and which to validate.
@@ -232,7 +234,6 @@ class WorkflowEvaluator:
             gamelist_entry: Existing gamelist entry (None if not in gamelist)
             hash_matches: Whether ROM hash matches
             rom_hash: ROM hash for cache lookup
-            should_update_media: Override for update_media decision (None uses config)
         
         Returns:
             Tuple of (media_to_download, media_to_validate)
@@ -240,25 +241,27 @@ class WorkflowEvaluator:
         media_to_download = []
         media_to_validate = []
         
-        # Use decision override if provided, otherwise use config
-        update_media = should_update_media if should_update_media is not None else self.update_media
-        
-        if not update_media:
-            # Media updates disabled - skip all media work
+        if self.validation_mode == 'disabled':
+            # Validation disabled - only download missing media
+            if gamelist_entry is None or not hash_matches:
+                # New ROM or changed ROM - download all enabled media types
+                media_to_download = self.enabled_media_types.copy()
+            # For existing unchanged ROMs, skip existing media (no validation)
             return media_to_download, media_to_validate
         
+        # Validation enabled (normal or strict)
         if gamelist_entry is None or not hash_matches:
             # New ROM or changed ROM - download all enabled media types
             media_to_download = self.enabled_media_types.copy()
             return media_to_download, media_to_validate
         
-        # ROM unchanged but update_media is True - validate existing media
-        # and redownload if hashes don't match
+        # ROM unchanged and validation enabled - validate existing media
+        # and redownload if validation fails
         stored_media_hashes = self._get_stored_media_hashes(rom_hash)
         
         for media_type in self.enabled_media_types:
             if media_type in stored_media_hashes:
-                # Media exists in cache - validate hash
+                # Media exists in cache - add to validation list
                 media_to_validate.append(media_type)
             else:
                 # Media missing from cache - download

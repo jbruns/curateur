@@ -57,7 +57,7 @@ The `config.yaml` file controls all aspects of scraping behavior. See `config.ya
 ### Key Options
 
 - `scraping.systems`: Limit scraping to specific systems (e.g., `[nes, snes]`)
-- `scraping.media_types`: Which media to download (covers, screenshots, etc.)
+- `media.media_types`: Which media to download (covers, screenshots, etc.)
 - `scraping.preferred_regions`: Region priority for media selection
 - `runtime.dry_run`: Preview mode without downloads
 

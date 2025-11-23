@@ -455,7 +455,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     try:
         # Convert ES-DE directory names to ScreenScraper media types
         from curateur.media.media_types import convert_directory_names_to_media_types
-        configured_media = config['scraping'].get('media_types', ['covers', 'screenshots'])
+        configured_media = config['media'].get('media_types', ['covers', 'screenshots'])
         media_types_to_scrape = convert_directory_names_to_media_types(configured_media)
         
         # Fallback to defaults if no valid media types

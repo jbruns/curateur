@@ -941,7 +941,7 @@ class ConsoleUI:
             max_bad_requests = api_quota.get('maxrequestskoperday', 0)
             
             # Get quota threshold from config
-            quota_threshold = self.config.get('scraping', {}).get('quota_warning_threshold', 0.95)
+            quota_threshold = self.config.get('api', {}).get('quota_warning_threshold', 0.95)
             
             # Format API quota
             if max_requests > 0 and requests_today >= 0:

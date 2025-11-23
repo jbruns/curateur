@@ -40,7 +40,8 @@ class ImageDownloader:
         timeout: int = 30,
         max_retries: int = 3,
         min_width: int = 50,
-        min_height: int = 50
+        min_height: int = 50,
+        validation_mode: str = 'disabled'
     ):
         """
         Initialize image downloader.
@@ -51,12 +52,14 @@ class ImageDownloader:
             max_retries: Maximum number of retry attempts
             min_width: Minimum acceptable image width in pixels
             min_height: Minimum acceptable image height in pixels
+            validation_mode: Validation mode (disabled, normal, strict)
         """
         self.client = client
         self.timeout = timeout
         self.max_retries = max_retries
         self.min_width = min_width
         self.min_height = min_height
+        self.validation_mode = validation_mode
     
     async def download(
         self,
@@ -92,8 +95,8 @@ class ImageDownloader:
                 # Download image data
                 image_data = await self._download_with_retry(url, attempt)
                 
-                # Validate if requested
-                if validate:
+                # Validate if requested and validation mode is not disabled
+                if validate and self.validation_mode != 'disabled':
                     is_valid, validation_error = self._validate_image_data(image_data)
                     if not is_valid:
                         if attempt < self.max_retries - 1:
@@ -150,11 +153,12 @@ class ImageDownloader:
         )
         response.raise_for_status()
         
-        # Check content type (allow images, PDFs, videos, and generic downloads)
-        content_type = response.headers.get('Content-Type', '')
-        allowed_types = ['image/', 'application/pdf', 'video/', 'application/force-download', 'application/octet-stream']
-        if not any(content_type.startswith(t) for t in allowed_types):
-            raise DownloadError(f"Invalid content type: {content_type}")
+        # Check content type only if validation is enabled
+        if self.validation_mode != 'disabled':
+            content_type = response.headers.get('Content-Type', '')
+            allowed_types = ['image/', 'application/pdf', 'video/', 'application/force-download', 'application/octet-stream']
+            if not any(content_type.startswith(t) for t in allowed_types):
+                raise DownloadError(f"Invalid content type: {content_type}")
         
         return response.content
     

@@ -72,6 +72,7 @@ class MediaDownloader:
         min_width: int = 50,
         min_height: int = 50,
         hash_algorithm: str = 'crc32',
+        validation_mode: str = 'disabled',
         download_semaphore: Optional[asyncio.Semaphore] = None
     ):
         """
@@ -87,6 +88,7 @@ class MediaDownloader:
             min_width: Minimum image width in pixels
             min_height: Minimum image height in pixels
             hash_algorithm: Hash algorithm for file verification ('crc32', 'md5', 'sha1')
+            validation_mode: Validation mode (disabled, normal, strict)
             download_semaphore: Optional semaphore to limit concurrent downloads globally
         """
         self.url_selector = MediaURLSelector(
@@ -99,11 +101,13 @@ class MediaDownloader:
             timeout=timeout,
             max_retries=max_retries,
             min_width=min_width,
-            min_height=min_height
+            min_height=min_height,
+            validation_mode=validation_mode
         )
         
         self.organizer = MediaOrganizer(media_root)
         self.hash_algorithm = hash_algorithm
+        self.validation_mode = validation_mode
         self.download_semaphore = download_semaphore
     
     async def download_media_for_game(
@@ -236,18 +240,15 @@ class MediaDownloader:
             if media_type not in ['manuel', 'video']:
                 dimensions = self.downloader.get_image_dimensions(output_path)
             
-            # Calculate hash asynchronously in thread pool
+            # Calculate hash based on validation mode
             import asyncio
             from curateur.scanner.hash_calculator import calculate_hash
             import logging
             logger = logging.getLogger(__name__)
             hash_value = None
             
-            # Skip hashing for very small files (<50KB) - dimension validation is sufficient
-            file_size = output_path.stat().st_size
-            if file_size < 50 * 1024:
-                logger.debug(f"Skipping hash for small {media_type} ({file_size} bytes)")
-            else:
+            if self.validation_mode == 'strict':
+                # Strict mode: always calculate hash, no size threshold
                 try:
                     # Run hash calculation in thread pool to avoid blocking
                     hash_value = await asyncio.to_thread(
@@ -261,6 +262,8 @@ class MediaDownloader:
                     # Hash calculation failed - continue without hash
                     logger.warning(f"Failed to calculate hash for {media_type} at {output_path}: {e}")
                     pass
+            # In disabled and normal modes, skip hash calculation during download
+            # Hashes from API responses are still stored in cache regardless of mode
             
             return DownloadResult(
                 media_type=media_type,

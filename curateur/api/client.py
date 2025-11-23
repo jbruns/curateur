@@ -69,8 +69,10 @@ class ScreenScraperClient:
         self.max_retries = config.get('api', {}).get('max_retries', 3)
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
-        self._quota_warning_threshold = config.get('scraping', {}).get('quota_warning_threshold', 0.95)
-        self.update_policy = config.get('scraping', {}).get('update_policy', 'changed_only')
+        self._quota_warning_threshold = config.get('api', {}).get('quota_warning_threshold', 0.95)
+        
+        # Scrape mode for cache behavior
+        self.scrape_mode = config.get('scraping', {}).get('scrape_mode', 'changed')
         
         # HTTP client (use provided or None - caller must provide)
         self.client = client
@@ -294,8 +296,8 @@ class ScreenScraperClient:
             Various API errors
             asyncio.CancelledError: If shutdown is requested
         """
-        # Check cache first (unless update_policy is 'always')
-        use_cache = self.cache and self.update_policy != 'always'
+                # Check cache first (unless scrape_mode is 'force')
+        use_cache = self.cache and self.scrape_mode != 'force'
         if use_cache and crc:
             cached_entry = self.cache.get(crc, rom_size=romtaille)
             if cached_entry is not None:

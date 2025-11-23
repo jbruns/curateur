@@ -3,7 +3,6 @@
 
 screenscraper:
   # ScreenScraper user credentials (required - obtain from screenscraper.fr)
-  # Note: Developer credentials are hardcoded in the application
   user_id: ""
   user_password: ""
 
@@ -34,6 +33,53 @@ scraping:
   # Default: [] (empty = all systems)
   systems: []
   
+  # Region priority for media selection (lowercase ScreenScraper codes)
+  # Purpose: Defines region preference when multiple media variants exist
+  # Valid: us, wor (world), eu, jp, ss (ScreenScraper generic), and more
+  # Default: [us, wor, eu, jp, ss]
+  preferred_regions: [us, wor, eu, jp, ss]
+  
+  # Preferred metadata language (two-letter ISO 639-1 code)
+  # Purpose: Language for game titles, descriptions, genres
+  # Valid: en, fr, de, es, it, pt, ja, etc.
+  # Default: en
+  preferred_language: en
+  
+  # Gamelist integrity threshold (fraction of ROMs that must match)
+  # Purpose: Fail validation if match rate below this threshold
+  # Valid: 0.0 - 1.0 (0.95 = 95%)
+  # Default: 0.95
+  # Note: Validation always performed; prompt if threshold not met
+  gamelist_integrity_threshold: 0.95
+  
+  # Scrape mode for ROM metadata and media
+  # Purpose: Controls when to fetch data from API based on ROM changes
+  # Valid: new_only | changed | force | skip
+  # Default: changed
+  # Behavior:
+  #   - new_only: Only scrape ROMs not in gamelist (incremental additions)
+  #   - changed: Scrape new ROMs and ROMs with hash changes (default, efficient)
+  #   - force: Re-scrape all ROMs regardless of changes (full refresh)
+  #   - skip: Skip all ROMs that exist in gamelist (media validation only)
+  scrape_mode: changed
+  
+  # Metadata merge strategy for updates
+  # Purpose: Controls field preservation during metadata updates
+  # Valid: preserve_user_edits | overwrite_all
+  # Default: preserve_user_edits
+  # Behavior:
+  #   - preserve_user_edits: Preserve all existing fields, update only scraped fields
+  #   - overwrite_all: Replace scraped fields, preserve only user fields (favorite, playcount, etc.)
+  merge_strategy: preserve_user_edits
+  
+  # Name verification strictness
+  # Purpose: How strictly to match game names during API verification
+  # Valid: strict | normal | lenient | disabled
+  # Default: normal
+  # Note: strict=exact, normal=normalized, lenient=fuzzy, disabled=skip check
+  name_verification: normal
+
+media:
   # Media types to download
   # Purpose: Defines which media assets to download from ScreenScraper
   # Valid: covers, screenshots, titlescreens, marquees, 3dboxes, backcovers,
@@ -53,133 +99,31 @@ scraping:
     - physicalmedia
     - videos
   
-  # Region priority for media selection (lowercase ScreenScraper codes)
-  # Purpose: Defines region preference when multiple media variants exist
-  # Valid: us, wor (world), eu, jp, ss (ScreenScraper generic), and more
-  # Default: [us, wor, eu, jp, ss]
-  preferred_regions: [us, wor, eu, jp, ss]
-  
-  # Preferred metadata language (two-letter ISO 639-1 code)
-  # Purpose: Language for game titles, descriptions, genres
-  # Valid: en, fr, de, es, it, pt, ja, etc.
-  # Default: en
-  preferred_language: en
-  
-  # Hash algorithm for ROM and media file verification
-  # Purpose: Algorithm used to calculate and compare file hashes
-  # Valid: crc32 | md5 | sha1
-  # Default: crc32
-  # Note: Stored in gamelist.xml <hash> element for change detection
-  hash_algorithm: crc32
-  
-  # Maximum file size (bytes) for hash calculation
-  # Purpose: Skip hash calculation for files larger than this (performance)
-  # Valid: Non-negative integer (0 = disabled, calculate all files)
-  # Default: 1073741824 (1 GiB)
-  # Note: Large ISO/CHD files may be slow to hash
-  crc_size_limit: 1073741824
-  
+  # Media validation mode
+  # Purpose: Controls integrity checks performed on downloaded media
+  # Valid: disabled | normal | strict
+  # Default: disabled
+  # Behavior:
+  #   - disabled: Skip existing media files, no validation (fastest)
+  #   - normal: Check image dimensions and content-type headers
+  #   - strict: Full validation with file hashes, content headers, and dimensions
+  #             Re-download files without cached hashes (exhaustive but slower)
+  # Note: All modes store hashes in cache for future validation runs
+  validation_mode: disabled
+
   # Minimum width/height (pixels) for image verification
-  # Purpose: Reject images smaller than this dimension
+  # Purpose: Reject images smaller than this dimension (applies in normal and strict modes)
   # Valid: Positive integer
   # Default: 50
   # Note: Prevents corrupt or placeholder images
   image_min_dimension: 50
-  
-  # Gamelist integrity threshold (fraction of ROMs that must match)
-  # Purpose: Fail validation if match rate below this threshold
-  # Valid: 0.0 - 1.0 (0.95 = 95%)
-  # Default: 0.95
-  # Note: Validation always performed; prompt if threshold not met
-  gamelist_integrity_threshold: 0.95
-  
-  # Update policy for ROM scraping (hash-based detection)
-  # Purpose: Determines when to fetch metadata based on ROM hash changes
-  # Valid: always | changed_only | never
-  # Default: changed_only
-  # Behavior:
-  #   - always: Fetch metadata for all ROMs regardless of hash match
-  #   - changed_only: Fetch only when ROM hash differs from gamelist (default)
-  #   - never: Skip all ROMs that exist in gamelist and filesystem
-  update_policy: changed_only
-  
-  # Update metadata fields when ROM hash matches
-  # Purpose: Allow metadata updates even when ROM unchanged
-  # Valid: true | false
-  # Default: true
-  # Note: Only applies when update_policy is 'always'; respects merge_strategy
-  update_metadata: true
-  
-  # Update media files when ROM hash matches
-  # Purpose: Re-download/validate media even when ROM unchanged
-  # Valid: true | false
-  # Default: true
-  # Note: Only applies when update_policy is 'always'; validates media hashes
-  update_media: true
-  
-  # Metadata merge strategy for updates
-  # Purpose: Controls field preservation during metadata updates
-  # Valid: preserve_user_edits | overwrite_all
-  # Default: preserve_user_edits
-  # Behavior:
-  #   - preserve_user_edits: Preserve all existing fields, update only scraped fields
-  #   - overwrite_all: Replace scraped fields, preserve only user fields (favorite, playcount, etc.)
-  merge_strategy: preserve_user_edits
-  
+
   # Remove media files for disabled media types
   # Purpose: Clean up media when media_types list changes
   # Valid: true | false
   # Default: false
   # Note: Removes media types not in enabled media_types list
   clean_mismatched_media: false
-  
-  # Checkpoint interval (number of ROMs)
-  # Purpose: Save progress periodically for resume capability
-  # Valid: Non-negative integer (0 = disabled)
-  # Default: 0 (disabled)
-  # Note: Set to 50-100 for large collections, enables resume from interruption
-  checkpoint_interval: 0
-  
-  # Name verification strictness
-  # Purpose: How strictly to match game names during API verification
-  # Valid: strict | normal | lenient | disabled
-  # Default: normal
-  # Note: strict=exact, normal=normalized, lenient=fuzzy, disabled=skip check
-  name_verification: normal
-  
-  # Quota warning threshold
-  # Purpose: Log warning when approaching API quota limits (daily requests or bad requests)
-  # Valid: 0.0 - 1.0 (0.95 = warn at 95% usage)
-  # Default: 0.95
-  # Note: Warning logged once per session when threshold crossed for either quota type
-  quota_warning_threshold: 0.95
-  
-  # Advanced: Rate limit override (use with caution)
-  # Purpose: Override API-provided rate limits for advanced scenarios
-  # Valid: true | false
-  # Default: false
-  # Warning: Cannot exceed API limits - will be capped with warning
-  # Note: API limits are authoritative; overrides can only reduce limits safely
-  rate_limit_override_enabled: false
-  
-  # Rate limit override values (only used if rate_limit_override_enabled=true)
-  # Purpose: Manually specify rate limits (capped at API-provided limits)
-  # Valid: max_workers (1-10), requests_per_minute (1-300), daily_quota (1000-50000)
-  # Default: API-provided limits, or 1 worker/60 rpm/10000 daily if API doesn't provide
-  # Behavior: Values exceeding API limits will be capped with warning logged
-  #           Values below API limits will be honored with warning logged
-  rate_limit_override:
-    max_workers: 1                # Concurrent workers (typical API: 4, max: 8)
-    requests_per_minute: 60       # API calls per minute (typical API: 120-300)
-    daily_quota: 10000            # Daily API call limit (typical API: 20000)
-
-media:
-  # Skip download if media file already exists
-  # Purpose: Avoid re-downloading existing media files
-  # Valid: true | false
-  # Default: true
-  # Note: Checks file existence only, does not verify integrity
-  skip_existing_media: true
 
 api:
   # HTTP request timeout (seconds)
@@ -200,6 +144,13 @@ api:
   # Default: 5
   # Note: Retry delays: 5s, 10s, 20s with backoff_factor=2
   retry_backoff_seconds: 5
+  
+  # Quota warning threshold
+  # Purpose: Log warning when approaching API quota limits (daily requests or bad requests)
+  # Valid: 0.0 - 1.0 (0.95 = warn at 95% usage)
+  # Default: 0.95
+  # Note: Warning logged once per session when threshold crossed for either quota type
+  quota_warning_threshold: 0.95
 
 logging:
   # Logging level
@@ -229,6 +180,46 @@ runtime:
   # Default: false
   # Note: Useful for testing configuration and estimating quota usage
   dry_run: false
+  
+  # Checkpoint interval (number of ROMs)
+  # Purpose: Save progress periodically for resume capability
+  # Valid: Non-negative integer (0 = disabled)
+  # Default: 0 (disabled)
+  # Note: Set to 50-100 for large collections, enables resume from interruption
+  checkpoint_interval: 0
+  
+  # Hash algorithm for ROM and media file verification
+  # Purpose: Algorithm used to calculate and compare file hashes
+  # Valid: crc32 | md5 | sha1
+  # Default: crc32
+  # Note: Stored in gamelist.xml <hash> element for change detection
+  hash_algorithm: crc32
+  
+  # Maximum ROM file size (bytes) for hash calculation
+  # Purpose: Skip ROM hash calculation for files larger than this (performance)
+  # Valid: Non-negative integer (0 = disabled, calculate all files)
+  # Default: 1073741824 (1 GiB)
+  # Note: Large ISO/CHD ROM files may be slow to hash; does not apply to media files
+  crc_size_limit: 1073741824
+  
+  # Advanced: Rate limit override (use with caution)
+  # Purpose: Override API-provided rate limits for advanced scenarios
+  # Valid: true | false
+  # Default: false
+  # Warning: Cannot exceed API limits - will be capped with warning
+  # Note: API limits are authoritative; overrides can only reduce limits safely
+  rate_limit_override_enabled: false
+  
+  # Rate limit override values (only used if rate_limit_override_enabled=true)
+  # Purpose: Manually specify rate limits (capped at API-provided limits)
+  # Valid: max_workers (1-10), requests_per_minute (1-300), daily_quota (1000-50000)
+  # Default: API-provided limits, or 1 worker/60 rpm/10000 daily if API doesn't provide
+  # Behavior: Values exceeding API limits will be capped with warning logged
+  #           Values below API limits will be honored with warning logged
+  rate_limit_override:
+    max_workers: 1                # Concurrent workers (typical API: 4, max: 8)
+    requests_per_minute: 60       # API calls per minute (typical API: 120-300)
+    daily_quota: 10000            # Daily API call limit (typical API: 20000)
 
 search:
   # Enable search fallback when hash-based lookup fails

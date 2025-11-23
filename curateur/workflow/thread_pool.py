@@ -111,7 +111,7 @@ class ThreadPoolManager:
             api_maxthreads = int(api_limits['maxthreads'])
         
         # Check if rate limit override is enabled
-        rate_limit_override_enabled = self.config.get('scraping', {}).get('rate_limit_override_enabled', False)
+        rate_limit_override_enabled = self.config.get('runtime', {}).get('rate_limit_override_enabled', False)
         
         if rate_limit_override_enabled:
             # User has override enabled - use RateLimitOverride to get effective limits

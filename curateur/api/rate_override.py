@@ -29,7 +29,7 @@ class RateLimitOverride:
     WARNING: Exceeding ScreenScraper limits may result in temporary bans
     
     Configuration example:
-        scraping:
+        runtime:
           rate_limit_override_enabled: false
           rate_limit_override:
             max_threads: 4
@@ -67,10 +67,10 @@ class RateLimitOverride:
             config: Configuration dictionary
         """
         self.config = config
-        self.override_enabled = config.get('scraping', {}).get(
+        self.override_enabled = config.get('runtime', {}).get(
             'rate_limit_override_enabled', False
         )
-        self.custom_limits = config.get('scraping', {}).get(
+        self.custom_limits = config.get('runtime', {}).get(
             'rate_limit_override', {}
         )
         

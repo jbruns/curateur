@@ -1,7 +1,10 @@
 """Configuration validation."""
 
+import logging
 from pathlib import Path
 from typing import Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 
 class ValidationError(Exception):
@@ -29,6 +32,9 @@ def validate_config(config: Dict[str, Any]) -> None:
     
     # Validate scraping section
     errors.extend(_validate_scraping(config.get('scraping', {})))
+    
+    # Validate media section
+    errors.extend(_validate_media(config.get('media', {})))
     
     # Validate api section
     errors.extend(_validate_api(config.get('api', {})))
@@ -100,19 +106,6 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
     if not isinstance(systems, list):
         errors.append("scraping.systems must be a list")
     
-    # Validate media_types
-    media_types = section.get('media_types', [])
-    if not isinstance(media_types, list):
-        errors.append("scraping.media_types must be a list")
-    else:
-        # Empty list is valid - means no media download, only gamelist updates
-        valid_types = {'covers', 'screenshots', 'titlescreens', 'marquees', 
-                       '3dboxes', 'backcovers', 'fanart', 'manuals', 
-                       'miximages', 'physicalmedia', 'videos'}
-        for media_type in media_types:
-            if media_type not in valid_types:
-                errors.append(f"Invalid media type: {media_type}")
-    
     # Validate regions
     regions = section.get('preferred_regions', [])
     if not isinstance(regions, list):
@@ -124,16 +117,6 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
         errors.append("scraping.preferred_language must be a 2-letter code")
     
     # Validate numeric values
-    if 'crc_size_limit' in section:
-        limit = section['crc_size_limit']
-        if not isinstance(limit, int) or limit < 0:
-            errors.append("scraping.crc_size_limit must be a non-negative integer")
-    
-    if 'image_min_dimension' in section:
-        dim = section['image_min_dimension']
-        if not isinstance(dim, int) or dim < 1:
-            errors.append("scraping.image_min_dimension must be a positive integer")
-    
     if 'gamelist_integrity_threshold' in section:
         threshold = section['gamelist_integrity_threshold']
         if not isinstance(threshold, (int, float)):
@@ -141,41 +124,14 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
         elif threshold < 0.0 or threshold > 1.0:
             errors.append("scraping.gamelist_integrity_threshold must be between 0.0 and 1.0")
     
-    if 'checkpoint_interval' in section:
-        interval = section['checkpoint_interval']
-        if not isinstance(interval, int) or interval < 0:
-            errors.append("scraping.checkpoint_interval must be a non-negative integer")
-    
-    # Validate hash_algorithm
-    if 'hash_algorithm' in section:
-        algorithm = section['hash_algorithm']
-        valid_algorithms = ['crc32', 'md5', 'sha1']
-        if algorithm not in valid_algorithms:
+    # Validate scrape_mode
+    if 'scrape_mode' in section:
+        mode = section['scrape_mode']
+        valid_modes = ['new_only', 'changed', 'force', 'skip']
+        if mode not in valid_modes:
             errors.append(
-                f"scraping.hash_algorithm must be one of: {', '.join(valid_algorithms)}"
+                f"scraping.scrape_mode must be one of: {', '.join(valid_modes)}"
             )
-    
-    # Validate update_policy
-    if 'update_policy' in section:
-        policy = section['update_policy']
-        valid_policies = ['always', 'changed_only', 'never']
-        if policy not in valid_policies:
-            errors.append(
-                f"scraping.update_policy must be one of: {', '.join(valid_policies)}"
-            )
-    
-    # Validate boolean flags
-    if 'update_metadata' in section:
-        if not isinstance(section['update_metadata'], bool):
-            errors.append("scraping.update_metadata must be a boolean")
-    
-    if 'update_media' in section:
-        if not isinstance(section['update_media'], bool):
-            errors.append("scraping.update_media must be a boolean")
-    
-    if 'clean_mismatched_media' in section:
-        if not isinstance(section['clean_mismatched_media'], bool):
-            errors.append("scraping.clean_mismatched_media must be a boolean")
     
     # Validate merge_strategy
     if 'merge_strategy' in section:
@@ -186,22 +142,54 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
                 f"scraping.merge_strategy must be one of: {', '.join(valid_strategies)}"
             )
     
-    # Validate verification mode
+    # Validate name_verification
     if 'name_verification' in section:
-        mode = section['name_verification']
+        verification = section['name_verification']
         valid_modes = ['strict', 'normal', 'lenient', 'disabled']
-        if mode not in valid_modes:
+        if verification not in valid_modes:
             errors.append(
                 f"scraping.name_verification must be one of: {', '.join(valid_modes)}"
             )
     
-    # Validate quota_warning_threshold
-    if 'quota_warning_threshold' in section:
-        threshold = section['quota_warning_threshold']
-        if not isinstance(threshold, (int, float)):
-            errors.append("scraping.quota_warning_threshold must be a number")
-        elif threshold < 0.0 or threshold > 1.0:
-            errors.append("scraping.quota_warning_threshold must be between 0.0 and 1.0")
+    return errors
+
+
+def _validate_media(section: Dict[str, Any]) -> List[str]:
+    """Validate media options section."""
+    errors = []
+    
+    # Validate media_types
+    media_types = section.get('media_types', [])
+    if not isinstance(media_types, list):
+        errors.append("media.media_types must be a list")
+    else:
+        # Empty list is valid - means no media download, only gamelist updates
+        valid_types = {'covers', 'screenshots', 'titlescreens', 'marquees', 
+                       '3dboxes', 'backcovers', 'fanart', 'manuals', 
+                       'miximages', 'physicalmedia', 'videos'}
+        for media_type in media_types:
+            if media_type not in valid_types:
+                errors.append(f"Invalid media type: {media_type}")
+    
+    # Validate image_min_dimension
+    if 'image_min_dimension' in section:
+        dim = section['image_min_dimension']
+        if not isinstance(dim, int) or dim < 1:
+            errors.append("media.image_min_dimension must be a positive integer")
+    
+    # Validate validation_mode
+    if 'validation_mode' in section:
+        mode = section['validation_mode']
+        valid_modes = ['disabled', 'normal', 'strict']
+        if mode not in valid_modes:
+            errors.append(
+                f"media.validation_mode must be one of: {', '.join(valid_modes)}"
+            )
+    
+    # Validate clean_mismatched_media
+    if 'clean_mismatched_media' in section:
+        if not isinstance(section['clean_mismatched_media'], bool):
+            errors.append("media.clean_mismatched_media must be a boolean")
     
     return errors
 
@@ -268,6 +256,12 @@ def _validate_runtime(section: Dict[str, Any]) -> List[str]:
     dry_run = section.get('dry_run', False)
     if not isinstance(dry_run, bool):
         errors.append("runtime.dry_run must be a boolean")
+    
+    # Validate checkpoint_interval
+    if 'checkpoint_interval' in section:
+        interval = section['checkpoint_interval']
+        if not isinstance(interval, int) or interval < 0:
+            errors.append("runtime.checkpoint_interval must be a non-negative integer")
     
     # Validate threads
     threads = section.get('threads', 1)
