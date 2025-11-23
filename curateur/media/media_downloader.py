@@ -236,18 +236,31 @@ class MediaDownloader:
             if media_type not in ['manuel', 'video']:
                 dimensions = self.downloader.get_image_dimensions(output_path)
             
-            # Calculate hash
+            # Calculate hash asynchronously in thread pool
+            import asyncio
             from curateur.scanner.hash_calculator import calculate_hash
+            import logging
+            logger = logging.getLogger(__name__)
             hash_value = None
-            try:
-                hash_value = calculate_hash(
-                    output_path,
-                    algorithm=self.hash_algorithm,
-                    size_limit=0  # No size limit for media files
-                )
-            except Exception:
-                # Hash calculation failed - continue without hash
-                pass
+            
+            # Skip hashing for very small files (<50KB) - dimension validation is sufficient
+            file_size = output_path.stat().st_size
+            if file_size < 50 * 1024:
+                logger.debug(f"Skipping hash for small {media_type} ({file_size} bytes)")
+            else:
+                try:
+                    # Run hash calculation in thread pool to avoid blocking
+                    hash_value = await asyncio.to_thread(
+                        calculate_hash,
+                        output_path,
+                        algorithm=self.hash_algorithm,
+                        size_limit=0  # No size limit for media files
+                    )
+                    logger.debug(f"Calculated hash for {media_type}: {hash_value}")
+                except Exception as e:
+                    # Hash calculation failed - continue without hash
+                    logger.warning(f"Failed to calculate hash for {media_type} at {output_path}: {e}")
+                    pass
             
             return DownloadResult(
                 media_type=media_type,

@@ -48,15 +48,17 @@ class WorkflowEvaluator:
     and configuration settings.
     """
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], cache=None):
         """
         Initialize evaluator with configuration.
         
         Args:
             config: Configuration dictionary
+            cache: Optional APICache instance for media hash lookups
         """
         self.config = config
         self.scraping_config = config.get('scraping', {})
+        self.cache = cache
         
         # Extract key settings
         self.update_policy = self.scraping_config.get('update_policy', 'changed_only')
@@ -159,7 +161,7 @@ class WorkflowEvaluator:
         # Step 4: Determine media operations
         if decision.fetch_metadata:
             decision.media_to_download, decision.media_to_validate = \
-                self._determine_media_operations(gamelist_entry, hash_matches, decision.update_media)
+                self._determine_media_operations(gamelist_entry, hash_matches, rom_hash, decision.update_media)
             
             # Set cleanup flag
             decision.clean_disabled_media = self.clean_mismatched_media
@@ -220,6 +222,7 @@ class WorkflowEvaluator:
         self,
         gamelist_entry: Optional[GameEntry],
         hash_matches: bool,
+        rom_hash: Optional[str],
         should_update_media: bool = None
     ) -> tuple[List[str], List[str]]:
         """
@@ -228,6 +231,7 @@ class WorkflowEvaluator:
         Args:
             gamelist_entry: Existing gamelist entry (None if not in gamelist)
             hash_matches: Whether ROM hash matches
+            rom_hash: ROM hash for cache lookup
             should_update_media: Override for update_media decision (None uses config)
         
         Returns:
@@ -250,31 +254,38 @@ class WorkflowEvaluator:
         
         # ROM unchanged but update_media is True - validate existing media
         # and redownload if hashes don't match
-        stored_media_hashes = self._get_stored_media_hashes(gamelist_entry)
+        stored_media_hashes = self._get_stored_media_hashes(rom_hash)
         
         for media_type in self.enabled_media_types:
             if media_type in stored_media_hashes:
-                # Media exists in gamelist - validate hash
+                # Media exists in cache - validate hash
                 media_to_validate.append(media_type)
             else:
-                # Media missing from gamelist - download
+                # Media missing from cache - download
                 media_to_download.append(media_type)
         
         return media_to_download, media_to_validate
     
-    def _get_stored_media_hashes(self, gamelist_entry: Optional[GameEntry]) -> Dict[str, str]:
+    def _get_stored_media_hashes(self, rom_hash: Optional[str]) -> Dict[str, str]:
         """
-        Extract stored media hashes from gamelist entry.
-        
-        NOTE: Deprecated - media hashes now stored in cache, not gamelist.xml.
+        Get stored media hashes from cache.
         
         Args:
-            gamelist_entry: Gamelist entry
+            rom_hash: ROM hash to look up in cache
         
         Returns:
-            Empty dict (media hashes no longer in gamelist)
+            Dict of media type (singular) -> hash from cache
         """
-        return {}
+        if not self.cache or not rom_hash:
+            return {}
+        
+        media_hashes = {}
+        for media_type in self.enabled_media_types:
+            media_hash = self.cache.get_media_hash(rom_hash, media_type)
+            if media_hash:
+                media_hashes[media_type] = media_hash
+        
+        return media_hashes
     
     def should_clean_media(self, media_type: str) -> bool:
         """

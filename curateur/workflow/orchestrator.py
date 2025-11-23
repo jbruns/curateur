@@ -146,8 +146,8 @@ class WorkflowOrchestrator:
         self.console_ui = console_ui
         self.throttle_manager = throttle_manager
         
-        # Initialize workflow evaluator
-        self.evaluator = WorkflowEvaluator(self.config)
+        # Initialize workflow evaluator with cache for media hash lookups
+        self.evaluator = WorkflowEvaluator(self.config, cache=self.api_client.cache if self.api_client else None)
         
         # Initialize integrity validator
         integrity_threshold = self.config.get('scraping', {}).get('gamelist_integrity_threshold', 0.95)
@@ -656,6 +656,7 @@ class WorkflowOrchestrator:
                     client=self.api_client.client,
                     preferred_regions=preferred_regions,
                     enabled_media_types=media_types,
+                    hash_algorithm=hash_algorithm,
                     download_semaphore=global_semaphore
                 )
                 
@@ -726,6 +727,11 @@ class WorkflowOrchestrator:
                         # Process results
                         for result in download_results:
                             if result.success and result.file_path:
+                                # Convert ScreenScraper media type to ES-DE singular form for logging/tracking
+                                from ..media.media_types import get_directory_for_media_type, to_singular
+                                plural_dir = get_directory_for_media_type(result.media_type)
+                                media_type_singular = to_singular(plural_dir)
+                                
                                 # Update UI: Media download complete
                                 if self.console_ui:
                                     self.console_ui.update_media_download_stage(
@@ -734,123 +740,132 @@ class WorkflowOrchestrator:
                                         'complete'
                                     )
                                 
-                                # Map back to singular type for tracking
-                                media_type_singular = result.media_type
+                                # Track using singular ES-DE type
                                 media_paths[media_type_singular] = result.file_path
                                 media_count += 1
                                 completed_tasks += 1
                                 
-                                # Calculate hash for downloaded media
-                                media_path = Path(result.file_path)
-                                if media_path.exists():
-                                    media_hash = calculate_hash(
-                                        media_path,
-                                        algorithm=hash_algorithm,
-                                        size_limit=0  # No size limit for media
+                                # Log successful download with ES-DE singular type
+                                logger.info(
+                                    f"[{rom_info.filename}] Downloaded {media_type_singular}"
+                                )
+                                
+                                # Store hash from download result (already calculated by media_downloader)
+                                if result.hash_value:
+                                    media_hashes[media_type_singular] = result.hash_value
+                                    logger.debug(
+                                        f"[{rom_info.filename}] Media hash: {media_type_singular} = {result.hash_value}"
                                     )
-                                    if media_hash:
-                                        media_hashes[media_type_singular] = media_hash
-                                        logger.info(
-                                            f"Media downloaded: {media_type_singular}, "
-                                            f"hash={media_hash}"
-                                        )
+                                else:
+                                    logger.debug(f"[{rom_info.filename}] No hash available for {media_type_singular}")
                 
                 # Validate existing media (from decision.media_to_validate)
                 if decision.media_to_validate:
                     for media_type_singular in decision.media_to_validate:
-                        # Check if media file exists and matches expected hash
+                        # Check if media file exists
                         media_path = self._get_media_path(system, media_type_singular, rom_info.path)
-                        if media_path and media_path.exists():
-                            # Get expected hash from cache
-                            expected_hash = None
-                            if self.api_client.cache and rom_hash:
-                                expected_hash = self.api_client.cache.get_media_hash(rom_hash, media_type_singular)
+                        if not media_path or not media_path.exists():
+                            # File doesn't exist - add to download list
+                            logger.debug(f"[{rom_info.filename}] Media file missing: {media_type_singular}, will download")
+                            if media_type_singular not in decision.media_to_download:
+                                decision.media_to_download.append(media_type_singular)
+                            continue
+                        
+                        # Get expected hash from cache
+                        expected_hash = None
+                        if self.api_client.cache and rom_hash:
+                            expected_hash = self.api_client.cache.get_media_hash(rom_hash, media_type_singular)
+                        
+                        if not expected_hash:
+                            # No hash in cache - accept existing file
+                            logger.debug(f"[{rom_info.filename}] Media exists (no cached hash): {media_type_singular}")
+                            media_paths[media_type_singular] = str(media_path)
+                            if self.console_ui:
+                                self.console_ui.increment_media_validated(media_type_singular)
+                            continue
+                        
+                        # Calculate current hash
+                        current_hash = calculate_hash(
+                            media_path,
+                            algorithm=hash_algorithm,
+                            size_limit=0
+                        )
+                        
+                        if current_hash == expected_hash:
+                            # Hash matches - keep existing file
+                            logger.info(f"[{rom_info.filename}] Media validated: {media_type_singular} (hash={current_hash})")
+                            media_paths[media_type_singular] = str(media_path)
+                            media_hashes[media_type_singular] = current_hash
                             
-                            if expected_hash:
-                                # Calculate current hash
-                                current_hash = calculate_hash(
-                                    media_path,
-                                    algorithm=hash_algorithm,
-                                    size_limit=0
-                                )
-                                
-                                if current_hash == expected_hash:
-                                    logger.debug(f"[{rom_info.filename}] Media validated: {media_type_singular}")
-                                    media_paths[media_type_singular] = str(media_path)
-                                    
-                                    # Update UI: Media validated with type
-                                    if self.console_ui:
-                                        self.console_ui.increment_media_validated(media_type_singular)
-                                else:
-                                    logger.debug(
-                                        f"[{rom_info.filename}] Media hash mismatch: {media_type_singular} "
-                                        f"(expected: {expected_hash}, got: {current_hash})"
-                                    )
-                            else:
-                                # No hash to validate against, just use existing file
-                                logger.debug(f"[{rom_info.filename}] Media exists (no hash): {media_type_singular}")
-                                media_paths[media_type_singular] = str(media_path)
-                        # Emit UI event
-                        if operation_callback:
-                            emit(Operations.HASHING_MEDIA, media_type_singular)
+                            if self.console_ui:
+                                self.console_ui.increment_media_validated(media_type_singular)
+                        else:
+                            # Hash mismatch - re-download
+                            logger.info(
+                                f"[{rom_info.filename}] Media hash mismatch: {media_type_singular} "
+                                f"(expected: {expected_hash}, got: {current_hash}) - will re-download"
+                            )
+                            if media_type_singular not in decision.media_to_download:
+                                decision.media_to_download.append(media_type_singular)
+                    
+                    # Re-download any media that failed validation
+                    if decision.media_to_download:
+                        # Filter media_list for types that need re-download
+                        from ..media.media_types import to_plural, convert_directory_names_to_media_types
+                        plural_dirs = [to_plural(t) for t in decision.media_to_download]
+                        screenscraper_types = convert_directory_names_to_media_types(plural_dirs)
                         
-                        logger.info(f"[{rom_info.filename}] Hashing media: {media_type_singular}")
+                        redownload_media_list = [
+                            m for m in media_list 
+                            if m.get('type') in screenscraper_types
+                        ]
                         
-                        # Get media file path
-                        media_path = self._get_media_path(system, rom_info, media_type_singular)
-                        
-                        if media_path and media_path.exists():
-                            # Calculate hash
-                            media_hash = calculate_hash(
-                                media_path,
-                                algorithm=hash_algorithm,
-                                size_limit=0  # No size limit for media
+                        if redownload_media_list:
+                            logger.info(
+                                f"[{rom_info.filename}] Re-downloading {len(redownload_media_list)} media types after validation"
                             )
                             
-                            # Compare with stored hash
-                            stored_hash = None
-                            if gamelist_entry and gamelist_entry.hash:
-                                stored_hash = gamelist_entry.hash.get('media', {}).get(media_type_singular)
+                            def media_redownload_callback(media_type: str, current_idx: int, total_count: int):
+                                if self.console_ui:
+                                    self.console_ui.update_media_download_stage(
+                                        rom_info.filename,
+                                        media_type,
+                                        'start'
+                                    )
                             
-                            if media_hash != stored_hash:
-                                logger.info(
-                                    f"[{rom_info.filename}] Media hash mismatch for {media_type_singular}: "
-                                    f"stored={stored_hash}, calculated={media_hash}"
-                                )
-                                
-                                # Re-download media
-                                from ..media.media_types import to_plural
-                                media_type_plural = to_plural(media_type_singular)
-                                type_media_list = [m for m in media_list if m.get('type') == media_type_plural]
-                                
-                                if type_media_list:
-                                    # Create progress callback for re-download
-                                    def media_redownload_callback(media_type: str, current_idx: int, total_count: int):
-                                        if operation_callback:
-                                            emit(
-                                                "Re-downloading media",
-                                                f"{media_type} ({current_idx}/{total_count}) - hash mismatch",
-                                                progress=(current_idx / total_count * 100) if total_count > 0 else None
-                                            )
+                            download_results, _ = await media_downloader.download_media_for_game(
+                                media_list=redownload_media_list,
+                                rom_path=str(rom_info.path),
+                                system=system.name,
+                                progress_callback=media_redownload_callback,
+                                shutdown_event=shutdown_event
+                            )
+                            
+                            # Process re-download results
+                            for result in download_results:
+                                if result.success and result.file_path:
+                                    # Convert ScreenScraper media type to ES-DE singular form for logging/tracking
+                                    from ..media.media_types import get_directory_for_media_type, to_singular
+                                    plural_dir = get_directory_for_media_type(result.media_type)
+                                    media_type_singular = to_singular(plural_dir)
                                     
-                                    download_results, _ = await media_downloader.download_media_for_game(
-                                        media_list=type_media_list,
-                                        rom_path=str(rom_info.path),
-                                        system=system.name,
-                                        progress_callback=media_redownload_callback,
-                                        shutdown_event=shutdown_event
+                                    media_paths[media_type_singular] = result.file_path
+                                    media_count += 1
+                                    
+                                    logger.info(
+                                        f"[{rom_info.filename}] Re-downloaded {media_type_singular}: "
+                                        f"{result.file_path}"
                                     )
                                     
-                                    for result in download_results:
-                                        if result.success and result.file_path:
-                                            media_paths[media_type_singular] = result.file_path
-                                            media_hashes[media_type_singular] = media_hash
-                            else:
-                                logger.info(
-                                    f"[{rom_info.filename}] Media hash validated: {media_type_singular} "
-                                    f"(hash={media_hash})"
-                                )
-                                media_hashes[media_type_singular] = media_hash
+                                    if result.hash_value:
+                                        media_hashes[media_type_singular] = result.hash_value
+                                    
+                                    if self.console_ui:
+                                        self.console_ui.update_media_download_stage(
+                                            rom_info.filename,
+                                            media_type_singular,
+                                            'complete'
+                                        )
             
             # Clean disabled media types if configured
             if decision.clean_disabled_media:

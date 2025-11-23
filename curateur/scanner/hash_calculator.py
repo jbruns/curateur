@@ -17,7 +17,7 @@ def calculate_hash(
     Args:
         file_path: Path to file to hash
         algorithm: Hash algorithm ('crc32', 'md5', 'sha1')
-        size_limit: Maximum file size to hash (default 1GB). Set 0 to skip hashing.
+        size_limit: Maximum file size to hash (default 1GB). Set 0 for no limit.
         
     Returns:
         Uppercase hex hash string, or None if file exceeds limit
@@ -26,18 +26,16 @@ def calculate_hash(
         IOError: If file cannot be read
         ValueError: If algorithm is not supported
     """
-    if size_limit == 0:
-        return None
-    
     if algorithm not in ('crc32', 'md5', 'sha1'):
         raise ValueError(f"Unsupported hash algorithm: {algorithm}")
     
     file_size = file_path.stat().st_size
     
-    if file_size > size_limit:
+    # Only check size limit if one is set (non-zero)
+    if size_limit > 0 and file_size > size_limit:
         return None
     
-    chunk_size = 1024 * 1024  # 1MB chunks
+    chunk_size = 8 * 1024 * 1024  # 8MB chunks for better I/O efficiency
     
     if algorithm == 'crc32':
         # Calculate CRC32
