@@ -180,61 +180,6 @@ class PathHandler:
         
         return name
     
-    def to_relative_rom_path(self, rom_path: Path) -> str:
-        """
-        Alias for get_relative_rom_path for backwards compatibility.
-        
-        Args:
-            rom_path: Absolute path to ROM file/directory
-            
-        Returns:
-            Relative path string (e.g., "./Game.zip")
-        """
-        return self.get_relative_rom_path(rom_path)
-    
-    def to_absolute_rom_path(self, relative_path: str) -> Path:
-        """
-        Convert relative ROM path to absolute path.
-        
-        Args:
-            relative_path: Relative path from gamelist (e.g., "./Game.zip")
-            
-        Returns:
-            Absolute path to ROM file
-        """
-        return self.resolve_rom_path(relative_path)
-    
-    def to_relative_media_path(
-        self,
-        media_path: Path,
-        from_directory: Optional[Path] = None
-    ) -> str:
-        """
-        Alias for get_relative_media_path for backwards compatibility.
-        
-        Args:
-            media_path: Absolute path to media file
-            from_directory: Base directory for relative path
-            
-        Returns:
-            Relative path string
-        """
-        return self.get_relative_media_path(media_path, from_directory)
-    
-    def to_absolute_media_path(self, relative_path: str) -> Path:
-        """
-        Convert relative media path to absolute path.
-        
-        Args:
-            relative_path: Relative path from gamelist (e.g., "./covers/Game.png")
-            
-        Returns:
-            Absolute path to media file
-        """
-        # Remove leading ./
-        clean_path = relative_path.lstrip('./')
-        return self.media_directory / clean_path
-    
     def get_media_basename(self, rom_path: Path) -> str:
         """
         Get basename for media file from ROM path.

@@ -106,22 +106,6 @@ class WorkQueueManager:
         #     f"(action={action}, priority={priority.name})"
         # )
     
-    def get_work(self, timeout: Optional[float] = None) -> Optional[WorkItem]:
-        """
-        Get next work item from queue (legacy synchronous method, non-blocking)
-        
-        Args:
-            timeout: Ignored for compatibility (use get_work_async for blocking)
-        
-        Returns:
-            WorkItem or None if queue empty
-        """
-        try:
-            _, item = self.queue.get_nowait()
-            return item
-        except asyncio.QueueEmpty:
-            return None
-    
     async def get_work_async(self) -> Optional[WorkItem]:
         """
         Get next work item from queue (async, blocking until available)
