@@ -660,6 +660,9 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     if client:
         await client.aclose()
     
+    # Print completion message
+    print("\nScraping complete!", file=sys.stderr)
+    
     return 0
 
 
