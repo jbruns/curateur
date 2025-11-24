@@ -6,6 +6,7 @@ Generates properly formatted gamelist.xml with provider info and game entries.
 
 from pathlib import Path
 from typing import List
+from copy import deepcopy
 from lxml import etree
 from .game_entry import GameEntry, GamelistMetadata
 
@@ -148,8 +149,11 @@ class GamelistWriter:
             self._add_element(game, "hidden", "true")
         
         # Add extra fields (unknown fields preserved from existing gamelist)
-        for tag, text in sorted(entry.extra_fields.items()):
-            self._add_element(game, tag, text)
+        for tag, value in sorted(entry.extra_fields.items(), key=lambda item: item[0]):
+            if isinstance(value, etree._Element):
+                game.append(deepcopy(value))
+            elif value is not None:
+                self._add_element(game, tag, str(value))
         
         return game
     
