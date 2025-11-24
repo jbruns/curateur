@@ -985,6 +985,10 @@ class WorkflowOrchestrator:
                     self.api_client.cache.update_media_hashes(rom_hash, media_hashes)
                     logger.debug(f"Updated cache with {len(media_hashes)} media hashes for {rom_info.filename}")
                 
+                # Add completed game to spotlight (quality validation inside)
+                if self.console_ui and game_info:
+                    self.console_ui.add_completed_game(game_info)
+                
                 # Update UI: ROM complete
                 if self.console_ui:
                     self.console_ui.increment_completed()
@@ -999,6 +1003,10 @@ class WorkflowOrchestrator:
                 )
             
             # Return success even if no updates made
+            # Add completed game to spotlight (quality validation inside)
+            if self.console_ui and game_info:
+                self.console_ui.add_completed_game(game_info)
+            
             # Update UI: ROM complete
             if self.console_ui:
                 self.console_ui.increment_completed()

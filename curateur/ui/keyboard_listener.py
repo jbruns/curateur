@@ -41,8 +41,13 @@ class KeyboardListener:
             pass
     """
     
-    def __init__(self):
-        """Initialize keyboard listener with thread-safe state flags"""
+    def __init__(self, console_ui=None):
+        """
+        Initialize keyboard listener with thread-safe state flags
+        
+        Args:
+            console_ui: Optional ConsoleUI instance for UI callback methods
+        """
         self._lock = threading.Lock()
         
         # State flags
@@ -57,6 +62,9 @@ class KeyboardListener:
         # Listener tracking
         self._listener: Optional[object] = None
         self._listener_active = False
+        
+        # Console UI callback for extended controls
+        self.console_ui = console_ui
     
     def start(self) -> bool:
         """
@@ -78,6 +86,18 @@ class KeyboardListener:
                     char = None
                     if hasattr(key, 'char'):
                         char = key.char
+                    
+                    # Handle special keys (arrows)
+                    if hasattr(key, 'name'):
+                        key_name = key.name
+                        
+                        # Handle arrow keys for spotlight navigation
+                        if key_name == 'left' and self.console_ui:
+                            self.console_ui.spotlight_prev()
+                            return
+                        elif key_name == 'right' and self.console_ui:
+                            self.console_ui.spotlight_next()
+                            return
                     
                     if char is None:
                         return
@@ -108,6 +128,12 @@ class KeyboardListener:
                                 self._quit_requested = True
                                 self._quit_pending = True
                                 logger.debug("Keyboard control: Quit requested")
+                    
+                    # Handle log level filter keys (1-4)
+                    elif char in ('1', '2', '3', '4') and self.console_ui:
+                        level_key = int(char)
+                        self.console_ui.set_log_level(level_key)
+                        logger.debug(f"Keyboard control: Log level filter set to {level_key}")
                 
                 except Exception as e:
                     logger.error(f"Error handling key press: {e}", exc_info=True)

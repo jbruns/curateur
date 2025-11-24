@@ -44,6 +44,10 @@ class PerformanceMetrics:
     avg_api_time: float = 0.0  # Average API call duration in seconds
     avg_rom_time: float = 0.0  # Average total ROM processing time in seconds
     
+    # Time-series for sparklines (10-second window at 0.25s refresh = 40 samples)
+    throughput_history: list = field(default_factory=list)  # ROMs/second history
+    api_rate_history: list = field(default_factory=list)  # API calls/second history
+    
 
 class PerformanceMonitor:
     """
@@ -91,6 +95,10 @@ class PerformanceMonitor:
         # Rolling averages with outlier exclusion
         self.api_times: Deque[float] = deque(maxlen=50)  # Last 50 API call durations
         self.rom_times: Deque[float] = deque(maxlen=50)  # Last 50 total ROM processing times
+        
+        # Time-series history for sparklines (40 samples = 10 seconds at 0.25s refresh)
+        self.throughput_history: Deque[float] = deque(maxlen=40)
+        self.api_rate_history: Deque[float] = deque(maxlen=40)
         
         # ETA caching to avoid jitter
         self.eta_cache: Optional[float] = None
@@ -179,6 +187,10 @@ class PerformanceMonitor:
         avg_api_time = self._calculate_average_with_outlier_exclusion(self.api_times)
         avg_rom_time = self._calculate_average_with_outlier_exclusion(self.rom_times)
         
+        # Append current rates to history for sparkline visualization
+        self.throughput_history.append(roms_per_sec)
+        self.api_rate_history.append(api_per_sec)
+        
         # Calculate ETA with caching to reduce jitter
         remaining_roms = self.total_roms - self.roms_processed
         
@@ -218,7 +230,9 @@ class PerformanceMonitor:
             percent_complete=percent,
             eta_seconds=eta,
             avg_api_time=avg_api_time,
-            avg_rom_time=avg_rom_time
+            avg_rom_time=avg_rom_time,
+            throughput_history=list(self.throughput_history),
+            api_rate_history=list(self.api_rate_history)
         )
     
     def log_metrics(self) -> None:

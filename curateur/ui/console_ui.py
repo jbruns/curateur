@@ -13,15 +13,29 @@ from datetime import timedelta
 
 from curateur import __version__
 from curateur.ui.keyboard_listener import KeyboardListener
+from rich import box
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TaskID
+from rich.sparkline import Sparkline
 from rich.table import Table
 from rich.text import Text
 
 logger = logging.getLogger(__name__)
+
+
+# Retro theme color palette
+RETRO_THEME = {
+    'primary': 'magenta',
+    'secondary': 'cyan',
+    'accent': 'bright_magenta',
+    'success': 'bright_green',
+    'muted': 'dim cyan',
+    'warning': 'yellow',
+    'error': 'red'
+}
 
 
 class Operations:
@@ -178,7 +192,22 @@ class ConsoleUI:
         self.last_pipeline_update = 0.0
         
         # Log panel tracking
-        self.log_buffer: deque = deque(maxlen=16)  # Store last 12 log lines
+        self.log_buffer: deque = deque(maxlen=200)  # Increased for filtering
+        
+        # Log filtering state
+        self.current_log_level: int = 20  # INFO level
+        self.log_level_map = {1: 40, 2: 30, 3: 20, 4: 10}  # ERROR, WARNING, INFO, DEBUG
+        self._filtered_logs_cache: Optional[Text] = None
+        self._cache_invalidation_pending: bool = False
+        self.last_cache_invalidation: float = 0.0
+        
+        # Game spotlight state
+        self.recent_games: deque = deque(maxlen=10)
+        self.recent_games_queue: Optional[asyncio.Queue] = None  # Created in start()
+        self.spotlight_index: int = 0
+        self.spotlight_cycle_counter: int = 0
+        self.spotlight_auto_cycle: bool = True
+        self.spotlight_auto_cycle_pause_until: float = 0.0
         
         # Animation tracking for interval-based refresh
         self.spinner_state = 0
@@ -188,8 +217,8 @@ class ConsoleUI:
         # Logging handler tracking (for cleanup)
         self.log_handler: Optional['RichUILogHandler'] = None
         
-        # Keyboard listener for controls
-        self.keyboard_listener = KeyboardListener()
+        # Keyboard listener for controls (pass self for callback support)
+        self.keyboard_listener = KeyboardListener(console_ui=self)
         self.keyboard_listener_enabled = False
         
         # Current state
@@ -206,10 +235,11 @@ class ConsoleUI:
         """Create split panel layout"""
         layout = Layout()
         layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="threads", size=9),  # 5 stages + 4 for borders/title/padding
+            Layout(name="header", size=1),
+            Layout(name="threads", size=3),
+            Layout(name="spotlight", size=5),
             Layout(name="logs", ratio=1),  # Take remaining space
-            Layout(name="footer", size=7)
+            Layout(name="footer", size=4)
         )
         return layout
     
@@ -220,14 +250,25 @@ class ConsoleUI:
         
         # Initialize workers panel
         self.layout["threads"].update(
-            Panel(Text("Ready to begin processing", style="dim"), 
-                  title="Worker Operations", border_style="green")
+            Panel(
+                Text("Ready to begin processing", style="dim"),
+                title="⚡ PIPELINE",
+                border_style=RETRO_THEME['success'],
+                box=box.SIMPLE
+            )
         )
+        
+        # Initialize spotlight panel
+        self._render_spotlight_panel()
         
         # Initialize logs panel
         self.layout["logs"].update(
-            Panel(Text("Logs will appear here", style="dim"),
-                  title="Activity Log", border_style="magenta")
+            Panel(
+                Text("Logs will appear here", style="dim"),
+                title="▣ LOGS [1]ERR [2]WARN [3]INFO* [4]DBG | ←→ Navigate Spotlight",
+                border_style=RETRO_THEME['primary'],
+                box=box.SIMPLE
+            )
         )
         
         # Initialize footer with default stats
@@ -239,6 +280,13 @@ class ConsoleUI:
     def start(self) -> None:
         """Start live display and background refresh task"""
         if self.live is None:
+            # Initialize async queue for game spotlight
+            try:
+                self.recent_games_queue = asyncio.Queue()
+                logger.debug("Initialized spotlight queue")
+            except RuntimeError:
+                logger.warning("No event loop available for spotlight queue")
+            
             # Initialize all panels with default content
             self._initialize_panels()
             
@@ -256,7 +304,7 @@ class ConsoleUI:
             try:
                 if self.keyboard_listener.start():
                     self.keyboard_listener_enabled = True
-                    logger.info("Keyboard controls enabled: [P]ause [S]kip [Q]uit")
+                    logger.info("Keyboard controls enabled: [P]ause [S]kip [Q]uit [1-4] Log levels [←→] Navigate")
                     # Re-render header to show controls
                     self._render_header()
                 else:
@@ -311,10 +359,10 @@ class ConsoleUI:
     
     async def _background_refresh(self) -> None:
         """
-        Background task that updates UI every 250ms for spinner animation
+        Background task that updates UI every 250ms for spinner animation and spotlight cycling
         
         This ensures the UI updates even when no progress is being made,
-        keeping spinners animated for active operations.
+        keeping spinners animated for active operations and cycling spotlight display.
         """
         try:
             while True:
@@ -323,11 +371,34 @@ class ConsoleUI:
                 # Increment spinner state
                 self.spinner_state = (self.spinner_state + 1) % len(self.spinner_frames)
                 
+                # Drain spotlight queue
+                if self.recent_games_queue:
+                    try:
+                        while True:
+                            game_info = self.recent_games_queue.get_nowait()
+                            self.recent_games.append(game_info)
+                    except asyncio.QueueEmpty:
+                        pass
+                
+                # Auto-cycle spotlight every 40 cycles (10 seconds)
+                self.spotlight_cycle_counter += 1
+                if self.spotlight_cycle_counter >= 40 and self.recent_games:
+                    self.spotlight_cycle_counter = 0
+                    # Check if auto-cycle is enabled (not paused by manual navigation)
+                    if time.time() >= self.spotlight_auto_cycle_pause_until:
+                        self.spotlight_auto_cycle = True
+                    
+                    if self.spotlight_auto_cycle and self.recent_games:
+                        self.spotlight_index = (self.spotlight_index + 1) % len(self.recent_games)
+                
                 # Update header to refresh pause badge
                 self._render_header()
                 
                 # Update pipeline panel to refresh spinners
                 self._render_pipeline_panel()
+                
+                # Update spotlight panel
+                self._render_spotlight_panel()
         except asyncio.CancelledError:
             # Task was cancelled (UI stopped) - this is expected
             logger.debug("Background refresh task cancelled")
@@ -448,6 +519,97 @@ class ConsoleUI:
         self.pipeline_stages['api_fetch']['max_concurrent'] = max_threads
         self.pipeline_stages['media_download']['max_concurrent'] = max_threads
         logger.debug(f"Pipeline stages updated: api_fetch={self.pipeline_stages['api_fetch']['max_concurrent']}, media={self.pipeline_stages['media_download']['max_concurrent']}")
+        self._render_pipeline_panel()
+    
+    def add_completed_game(self, game_info: Dict[str, Any]) -> None:
+        """
+        Add a completed game to the spotlight queue with quality validation
+        
+        Only games with complete, quality metadata are queued for display.
+        
+        Args:
+            game_info: Game metadata from API response
+        """
+        try:
+            # Validate required fields with quality checks
+            if not game_info.get('name'):
+                return
+            
+            # Validate descriptions - must have at least one entry with substantial text
+            descriptions = game_info.get('descriptions', {})
+            if not descriptions:
+                return
+            
+            # Check for substantial description text (> 20 chars)
+            has_quality_desc = any(len(desc) > 20 for desc in descriptions.values() if desc)
+            if not has_quality_desc:
+                return
+            
+            # Validate release dates - must have parseable year in valid range
+            release_dates = game_info.get('release_dates', {})
+            if not release_dates:
+                return
+            
+            # Try to extract and validate year from any release date
+            valid_year = False
+            for date_str in release_dates.values():
+                if date_str:
+                    try:
+                        # Extract year from date string (format: YYYY-MM-DD or just YYYY)
+                        year = int(date_str.split('-')[0])
+                        if 1970 <= year <= 2030:
+                            valid_year = True
+                            break
+                    except (ValueError, IndexError):
+                        continue
+            
+            if not valid_year:
+                return
+            
+            # Validate genres - must be non-empty
+            genres = game_info.get('genres', [])
+            if not genres:
+                return
+            
+            # All validations passed - queue the game
+            if self.recent_games_queue:
+                try:
+                    self.recent_games_queue.put_nowait(game_info)
+                    logger.debug(f"Queued game for spotlight: {game_info['name']}")
+                except asyncio.QueueFull:
+                    # Silently drop oldest - newer games take priority
+                    logger.debug(f"Spotlight queue full, dropping: {game_info['name']}")
+        except Exception as e:
+            logger.debug(f"Error adding game to spotlight: {e}")
+    
+    def spotlight_next(self) -> None:
+        """Navigate to next game in spotlight"""
+        if self.recent_games:
+            self.spotlight_index = (self.spotlight_index + 1) % len(self.recent_games)
+            self.spotlight_auto_cycle = False
+            self.spotlight_auto_cycle_pause_until = time.time() + 30.0  # Pause auto-cycle for 30s
+            self._render_spotlight_panel()
+    
+    def spotlight_prev(self) -> None:
+        """Navigate to previous game in spotlight"""
+        if self.recent_games:
+            self.spotlight_index = (self.spotlight_index - 1) % len(self.recent_games)
+            self.spotlight_auto_cycle = False
+            self.spotlight_auto_cycle_pause_until = time.time() + 30.0  # Pause auto-cycle for 30s
+            self._render_spotlight_panel()
+    
+    def set_log_level(self, level_key: int) -> None:
+        """
+        Set current log filter level
+        
+        Args:
+            level_key: Key 1-4 corresponding to ERROR/WARNING/INFO/DEBUG
+        """
+        if level_key in self.log_level_map:
+            self.current_log_level = self.log_level_map[level_key]
+            self._cache_invalidation_pending = True
+            logger.debug(f"Log level filter set to: {self.current_log_level}")
+            self._render_logs_panel()
         self._render_pipeline_panel()
     
     def increment_completed(self) -> None:
@@ -630,77 +792,223 @@ class ConsoleUI:
         # Add to buffer (automatically removes oldest if full)
         self.log_buffer.append(text_entry)
         
+        # Mark cache for invalidation (batched at 100ms intervals)
+        self._cache_invalidation_pending = True
+        
         # Update log panel
         self._render_logs_panel()
     
     def _render_logs_panel(self) -> None:
-        """Render the logs panel with recent log entries"""
+        """Render the logs panel with filtered log entries and batched cache invalidation"""
         try:
-            if not self.log_buffer:
-                self.layout["logs"].update(
-                    Panel(Text("No recent activity", style="dim"),
-                          title="Activity Log", border_style="magenta")
-                )
-                return
+            # Batch cache invalidation - only rebuild if 100ms elapsed and invalidation pending
+            now = time.time()
+            should_rebuild = (
+                self._cache_invalidation_pending and 
+                (now - self.last_cache_invalidation) > 0.1
+            )
             
-            # Create text with all log entries (newest at bottom)
-            log_text = Text()
-            for entry in self.log_buffer:
-                # Entry is already a Text object from add_log_entry
-                if isinstance(entry, Text):
-                    log_text.append(entry)
-                    log_text.append("\n")
+            if should_rebuild or self._filtered_logs_cache is None:
+                if not self.log_buffer:
+                    self._filtered_logs_cache = Text("No recent activity", style="dim")
                 else:
-                    # Fallback for any string entries
-                    log_text.append(str(entry) + "\n")
+                    # Build filtered log text based on current level
+                    log_text = Text()
+                    
+                    # Map level names to numeric values for comparison
+                    level_numeric_map = {
+                        'DEBUG': 10,
+                        'INFO': 20,
+                        'WARNING': 30,
+                        'ERROR': 40,
+                        'CRITICAL': 50
+                    }
+                    
+                    for entry in self.log_buffer:
+                        # Extract level from entry text
+                        # Entry format is "[LEVEL    ] message"
+                        entry_str = entry.plain
+                        try:
+                            level_str = entry_str.split(']')[0].strip('[').strip()
+                            entry_level = level_numeric_map.get(level_str, 20)
+                            
+                            # Only include entries at or above current filter level
+                            if entry_level >= self.current_log_level:
+                                log_text.append(entry)
+                                log_text.append("\n")
+                        except (IndexError, KeyError):
+                            # If parsing fails, include the entry
+                            log_text.append(entry)
+                            log_text.append("\n")
+                    
+                    self._filtered_logs_cache = log_text
+                
+                # Reset cache state
+                self._cache_invalidation_pending = False
+                self.last_cache_invalidation = now
+            
+            # Build title with level indicators
+            level_indicators = {
+                40: "[1]ERR*",
+                30: "[2]WARN*",
+                20: "[3]INFO*",
+                10: "[4]DBG*"
+            }
+            active_indicator = level_indicators.get(self.current_log_level, "[3]INFO*")
+            
+            # Replace * in active indicator, dim others
+            title_parts = []
+            for level_num, indicator in level_indicators.items():
+                if level_num == self.current_log_level:
+                    title_parts.append(indicator)
+                else:
+                    title_parts.append(indicator.replace('*', ' '))
+            
+            title = f"▣ LOGS {' '.join(title_parts)} | ←→ Navigate Spotlight"
             
             self.layout["logs"].update(
-                Panel(log_text, title="Activity Log", border_style="magenta")
+                Panel(
+                    self._filtered_logs_cache,
+                    title=title,
+                    border_style=RETRO_THEME['primary'],
+                    box=box.SIMPLE
+                )
             )
         except Exception as e:
             logger.error(f"Error rendering logs panel: {e}", exc_info=True)
             # Show error state in panel
             self.layout["logs"].update(
-                Panel(Text(f"Error rendering logs: {e}", style="red"),
-                      title="Activity Log", border_style="magenta")
+                Panel(
+                    Text(f"Error rendering logs: {e}", style="red"),
+                    title="▣ LOGS",
+                    border_style=RETRO_THEME['error'],
+                    box=box.SIMPLE
+                )
+            )
+    
+    def _render_spotlight_panel(self) -> None:
+        """Render the game spotlight panel with current game metadata"""
+        try:
+            if not self.recent_games:
+                # No games yet - show initialization message
+                init_text = Text("■ INITIALIZING GAME DATABASE ■", style=RETRO_THEME['accent'], justify="center")
+                self.layout["spotlight"].update(
+                    Panel(
+                        init_text,
+                        title="◈ SPOTLIGHT",
+                        border_style=RETRO_THEME['secondary'],
+                        box=box.SIMPLE
+                    )
+                )
+                return
+            
+            # Get current game
+            game = self.recent_games[self.spotlight_index]
+            
+            # Build spotlight display
+            spotlight_text = Text()
+            
+            # Line 1: Title and year
+            name = game.get('name', 'Unknown')
+            release_dates = game.get('release_dates', {})
+            year = None
+            for date_str in release_dates.values():
+                if date_str:
+                    try:
+                        year = date_str.split('-')[0]
+                        break
+                    except IndexError:
+                        pass
+            
+            title_line = f"Now Scraped: {name}"
+            if year:
+                title_line += f" ({year})"
+            spotlight_text.append(title_line + "\n", style=RETRO_THEME['accent'])
+            
+            # Line 2: Genre and developer (if present)
+            info_parts = []
+            genres = game.get('genres', [])
+            if genres:
+                genre_str = ', '.join(genres[:3])  # Limit to first 3 genres
+                info_parts.append(f"Genre: {genre_str}")
+            
+            developer = game.get('developer')
+            if developer:
+                info_parts.append(f"Developer: {developer}")
+            
+            if info_parts:
+                spotlight_text.append(' | '.join(info_parts) + "\n", style=RETRO_THEME['secondary'])
+            
+            # Line 3: Synopsis (truncated to 100 chars)
+            descriptions = game.get('descriptions', {})
+            synopsis = None
+            # Prefer English description
+            for lang in ['en', 'us', 'fr', 'de', 'es']:
+                if lang in descriptions and descriptions[lang]:
+                    synopsis = descriptions[lang]
+                    break
+            
+            if not synopsis and descriptions:
+                # Take first available
+                synopsis = next(iter(descriptions.values()))
+            
+            if synopsis:
+                truncated = synopsis[:100]
+                if len(synopsis) > 100:
+                    truncated += "..."
+                spotlight_text.append(truncated, style=RETRO_THEME['muted'])
+            
+            self.layout["spotlight"].update(
+                Panel(
+                    spotlight_text,
+                    title=f"◈ SPOTLIGHT ({self.spotlight_index + 1}/{len(self.recent_games)})",
+                    border_style=RETRO_THEME['secondary'],
+                    box=box.SIMPLE
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error rendering spotlight panel: {e}", exc_info=True)
+            self.layout["spotlight"].update(
+                Panel(
+                    Text(f"Error rendering spotlight: {e}", style="red"),
+                    title="◈ SPOTLIGHT",
+                    border_style=RETRO_THEME['error'],
+                    box=box.SIMPLE
+                )
             )
     
     def _render_header(self) -> None:
-        """Render the header panel with system progress, pause state, and keyboard controls"""
+        """Render compact single-line header with system progress and inline controls"""
         try:
-            # Build header with version prefix
-            header_text = Text(f"curateur v{__version__}", style="bold magenta")
+            # Build compact header: "curateur v{ver} | {SYSTEM} (n/total) pct% | [P]ause [S]kip [Q]uit"
+            header_text = Text()
+            header_text.append(f"curateur v{__version__}", style=f"bold {RETRO_THEME['primary']}")
             header_text.append(" | ", style="dim")
             
             # System progress
             if self.current_system:
-                progress_text = f"System: {self.current_system.upper()} ({self.current_system_num}/{self.total_systems})"
                 percentage = (self.current_system_num - 1) / self.total_systems * 100 if self.total_systems > 0 else 0
-                
-                header_text.append(progress_text, style="bold cyan")
-                header_text.append(f" — {percentage:.0f}% complete", style="dim")
+                header_text.append(f"{self.current_system.upper()} ", style=f"bold {RETRO_THEME['secondary']}")
+                header_text.append(f"({self.current_system_num}/{self.total_systems}) ", style="dim")
+                header_text.append(f"{percentage:.0f}%", style=RETRO_THEME['success'] if percentage > 0 else "dim")
             else:
                 header_text.append("Initializing...", style="dim")
             
             # Add pause badge if paused
             if self.keyboard_listener_enabled and self.keyboard_listener.is_paused:
-                header_text.append(" ", style="dim")
-                header_text.append("⏸ PAUSED", style="bold yellow")
+                header_text.append(" ⏸", style=f"bold {RETRO_THEME['warning']}")
             
-            # Add keyboard controls on right side
+            # Add keyboard controls inline
             if self.keyboard_listener_enabled:
-                header_text.append("  |  ", style="dim")
-                header_text.append("Controls: ", style="dim")
-                header_text.append("[P]", style="bold cyan")
+                header_text.append(" | ", style="dim")
+                header_text.append("[P]", style=f"bold {RETRO_THEME['secondary']}")
                 header_text.append("ause ", style="dim")
-                header_text.append("[S]", style="bold yellow")
+                header_text.append("[S]", style=f"bold {RETRO_THEME['warning']}")
                 header_text.append("kip ", style="dim")
-                header_text.append("[Q]", style="bold red")
+                header_text.append("[Q]", style=f"bold {RETRO_THEME['error']}")
                 header_text.append("uit", style="dim")
             
-            self.layout["header"].update(
-                Panel(header_text, border_style="cyan")
-            )
+            self.layout["header"].update(header_text)
         except Exception as e:
             logger.error(f"Error rendering header: {e}", exc_info=True)
     
@@ -736,7 +1044,7 @@ class ConsoleUI:
             self.keyboard_listener.clear_quit_request()
     
     def _render_pipeline_panel(self) -> None:
-        """Render the pipeline stages panel showing concurrent activities"""
+        """Render compact 2-column pipeline panel showing stage names and status"""
         try:
             # Throttle updates to every 100ms
             now = time.time()
@@ -744,151 +1052,118 @@ class ConsoleUI:
                 return
             self.last_pipeline_update = now
             
-            pipeline_table = Table(show_header=False, show_edge=False, padding=(0, 1), box=None, expand=True)
-            pipeline_table.add_column("Stage", style="bold", width=20, no_wrap=True)
-            pipeline_table.add_column("Status", overflow="fold", no_wrap=False)
+            # Create 2-column table with auto-balanced widths
+            pipeline_table = Table(
+                show_header=False,
+                show_edge=False,
+                padding=(0, 1),
+                box=None,
+                expand=True
+            )
+            pipeline_table.add_column("Stage", style="bold", overflow="fold")
+            pipeline_table.add_column("Status", overflow="fold")
             
             spinner = self.spinner_frames[self.spinner_state]
             
-            # 1. SCANNER stage
+            # 1. Scanner
             scanner = self.pipeline_stages['scanner']
             scanner_count = scanner['count']
             if scanner_count > 0:
-                status_text = f"[bold green]✓ {scanner_count} files queued[/bold green]"
+                status = f"→ {scanner_count} files queued"
+                style = RETRO_THEME['success']
             else:
-                status_text = "[dim]Waiting...[/dim]"
-            pipeline_table.add_row("📂 SCANNER", status_text)
+                status = "→ Waiting..."
+                style = "dim"
+            pipeline_table.add_row(
+                Text("📂 Scanner", style="bold"),
+                Text(status, style=style)
+            )
             
-            # 2. HASHING stage
+            # 2. Hashing
             hashing = self.pipeline_stages['hashing']
             if hashing['active']:
                 current = hashing['current']
                 total = hashing['total']
                 pct = int((current / total * 100)) if total > 0 else 0
-                bar_width = 20
+                bar_width = 10
                 filled = int(bar_width * current / total) if total > 0 else 0
                 bar = '█' * filled + '░' * (bar_width - filled)
-                details = f" {hashing['details']}" if hashing['details'] else ""
-                status_text = f"[cyan]{spinner} [{bar}] {pct}% ({current}/{total} ROMs){details}[/cyan]"
+                status = f"→ {spinner} [{bar}] {pct}% ({current}/{total})"
+                style = RETRO_THEME['secondary']
             else:
-                status_text = "[dim]Ready[/dim]"
-            pipeline_table.add_row("⚡ HASHING", status_text)
+                status = "→ Ready"
+                style = "dim"
+            pipeline_table.add_row(
+                Text("⚡ Hashing", style="bold"),
+                Text(status, style=style)
+            )
             
-            # 3. API FETCH stage
+            # 3. API Fetch
             api_fetch = self.pipeline_stages['api_fetch']
             active_roms = api_fetch['active_roms']
             cache_hits = api_fetch.get('cache_hits', 0)
             cache_misses = api_fetch.get('cache_misses', 0)
-            search_fallback = api_fetch.get('search_fallback', 0)
             total_requests = cache_hits + cache_misses
             
             if active_roms:
-                # Show up to 3 ROM names
-                rom_names = ', '.join([self._truncate_rom_name(r, 25) for r in active_roms[:3]])
-                if len(active_roms) > 3:
-                    rom_names += f" +{len(active_roms) - 3} more"
-                
-                # Build info string with cache and search fallback stats
-                info_parts = []
-                if total_requests > 0:
-                    hit_rate = int(cache_hits / total_requests * 100)
-                    info_parts.append(f"Cache: {cache_hits} hits ({hit_rate}%)")
-                if search_fallback > 0:
-                    info_parts.append(f"{search_fallback} fallback")
-                
-                cache_info = f" | {', '.join(info_parts)}" if info_parts else ""
-                status_text = f"[yellow]{spinner} [{len(active_roms)}/{api_fetch['max_concurrent']}] {rom_names}{cache_info}[/yellow]"
-            elif total_requests > 0 or search_fallback > 0:
-                # Show stats even when idle
-                info_parts = []
-                if total_requests > 0:
-                    hit_rate = int(cache_hits / total_requests * 100)
-                    info_parts.append(f"Cache: {cache_hits}/{total_requests} hits ({hit_rate}%)")
-                if search_fallback > 0:
-                    info_parts.append(f"{search_fallback} fallback")
-                status_text = f"[dim]Idle | {', '.join(info_parts)}[/dim]"
+                rom_name = self._truncate_rom_name(active_roms[0], 20)
+                extra = f" +{len(active_roms) - 1}" if len(active_roms) > 1 else ""
+                status = f"→ {spinner} [{len(active_roms)}/{api_fetch['max_concurrent']}] {rom_name}{extra}"
+                style = RETRO_THEME['warning']
+            elif total_requests > 0:
+                hit_rate = int(cache_hits / total_requests * 100) if total_requests > 0 else 0
+                status = f"→ Cache: {cache_hits}/{total_requests} ({hit_rate}%)"
+                style = "dim"
             else:
-                status_text = "[dim]Idle[/dim]"
-            pipeline_table.add_row("🔍 API FETCH", status_text)
+                status = "→ Idle"
+                style = "dim"
+            pipeline_table.add_row(
+                Text("🔍 API Fetch", style="bold"),
+                Text(status, style=style)
+            )
             
-            # 4. MEDIA DOWNLOAD stage
+            # 4. Media DL
             media_dl = self.pipeline_stages['media_download']
             active_items = media_dl['active_roms']
             validated_count = media_dl.get('validated', 0)
             
             if active_items:
-                # Group by ROM and show media types
-                rom_media = {}
-                for rom, media_type in active_items:
-                    if rom not in rom_media:
-                        rom_media[rom] = []
-                    rom_media[rom].append(media_type)
-                
-                # Show first ROM with its media types
-                if rom_media:
-                    first_rom = list(rom_media.keys())[0]
-                    media_types = ', '.join(rom_media[first_rom][:3])
-                    display = f"{self._truncate_rom_name(first_rom, 20)}: {media_types}"
-                    if len(rom_media) > 1:
-                        display += f" +{len(rom_media) - 1} more"
-                    
-                    # Build validated info with breakdown by type
-                    validated_info = ""
-                    if validated_count > 0:
-                        by_type = media_dl.get('by_type', {})
-                        if by_type:
-                            # Show counts by type (e.g., "2 box, 3 screenshot")
-                            type_counts = [f"{count} {mtype}" for mtype, count in sorted(by_type.items())]
-                            validated_info = f" | {', '.join(type_counts)}"
-                        else:
-                            validated_info = f" | {validated_count} validated"
-                    
-                    status_text = f"[green]{spinner} [{len(active_items)}/{media_dl['max_concurrent']}] {display}{validated_info}[/green]"
-                else:
-                    status_text = "[dim]Idle[/dim]"
+                rom_name = self._truncate_rom_name(active_items[0][0], 15)
+                media_type = active_items[0][1]
+                extra = f" +{len(active_items) - 1}" if len(active_items) > 1 else ""
+                status = f"→ {spinner} [{len(active_items)}/{media_dl['max_concurrent']}] {rom_name}: {media_type}{extra}"
+                style = RETRO_THEME['success']
             elif validated_count > 0:
-                # Show breakdown by type when idle
-                by_type = media_dl.get('by_type', {})
-                if by_type:
-                    type_counts = [f"{count} {mtype}" for mtype, count in sorted(by_type.items())]
-                    status_text = f"[dim]Idle | {', '.join(type_counts)}[/dim]"
-                else:
-                    status_text = f"[dim]Idle | {validated_count} validated[/dim]"
+                status = f"→ {validated_count} validated"
+                style = "dim"
             else:
-                status_text = "[dim]Idle[/dim]"
-            pipeline_table.add_row("📥 MEDIA", status_text)
+                status = "→ Idle"
+                style = "dim"
+            pipeline_table.add_row(
+                Text("📥 Media DL", style="bold"),
+                Text(status, style=style)
+            )
             
-            # 5. COMPLETED counter
+            # 5. Complete
             completed_count = self.pipeline_stages['completed']['count']
             if completed_count > 0:
-                status_text = f"[bold green]✓ {completed_count} ROMs processed[/bold green]"
+                status = f"→ {completed_count} ROMs"
+                style = RETRO_THEME['success']
             else:
-                status_text = "[dim]0 ROMs[/dim]"
-            pipeline_table.add_row("✅ COMPLETE", status_text)
-            
-            # 6. SYSTEM OPERATION (always shown)
-            sys_op = self.pipeline_stages['system_operation']
-            if sys_op['active']:
-                operation = sys_op['operation']
-                details = sys_op['details']
-                status_text = f"[cyan]{spinner} {operation}: {details}[/cyan]"
-            else:
-                # Show persistent info when idle
-                info_parts = []
-                if self.integrity_score is not None:
-                    integrity_pct = int(self.integrity_score * 100)
-                    info_parts.append(f"Integrity: {integrity_pct}%")
-                if self.is_throttled:
-                    info_parts.append("[yellow]⚠ Rate limited[/yellow]")
-                
-                if info_parts:
-                    status_text = f"[dim]Idle | {' | '.join(info_parts)}[/dim]"
-                else:
-                    status_text = "[dim]Idle[/dim]"
-            pipeline_table.add_row("💾 SYSTEM", status_text)
+                status = "→ 0 ROMs"
+                style = "dim"
+            pipeline_table.add_row(
+                Text("✅ Complete", style="bold"),
+                Text(status, style=style)
+            )
             
             self.layout["threads"].update(
-                Panel(pipeline_table, title="Pipeline Stages", border_style="green")
+                Panel(
+                    pipeline_table,
+                    title="⚡ PIPELINE",
+                    border_style=RETRO_THEME['success'],
+                    box=box.SIMPLE
+                )
             )
         except Exception as e:
             logger.error(f"Error rendering pipeline panel: {e}", exc_info=True)
@@ -919,13 +1194,17 @@ class ConsoleUI:
         queue_pending: int = 0
     ) -> None:
         """
-        Update footer panel with statistics, quota, thread stats, and performance metrics
+        Update footer panel with sparklines and compact metrics
+        
+        Two-row format:
+        Row 1: Throughput sparkline + current rate | API rate sparkline + current rate
+        Row 2: API quota progress bar + percentage | Active threads + ETA
         
         Args:
             stats: Statistics dict with counts (successful, failed, skipped, etc.)
             api_quota: API quota dict (requests_today, max_requests_per_day)
             thread_stats: Optional thread pool stats (active_threads, max_threads)
-            performance_metrics: Optional performance metrics (avg_api_time, avg_rom_time, eta)
+            performance_metrics: Optional performance metrics (throughput_history, api_rate_history, eta)
             queue_pending: Number of pending items in work queue
         """
         try:
@@ -934,136 +1213,88 @@ class ConsoleUI:
             self.thread_stats = thread_stats or {}
             self.performance_metrics = performance_metrics or {}
             
-            # Create footer table
-            footer_table = Table.grid(padding=(0, 2))
-            footer_table.add_column(style="bold")
-            footer_table.add_column()
-            footer_table.add_column(style="bold")
-            footer_table.add_column()
+            # Extract time-series data for sparklines
+            throughput_history = performance_metrics.get('throughput_history', []) if performance_metrics else []
+            api_rate_history = performance_metrics.get('api_rate_history', []) if performance_metrics else []
+            current_throughput = performance_metrics.get('roms_per_second', 0) if performance_metrics else 0
+            current_api_rate = performance_metrics.get('api_calls_per_second', 0) if performance_metrics else 0
             
-            # Statistics row
-            successful = stats.get('successful', 0)
-            failed = stats.get('failed', 0)
-            skipped = stats.get('skipped', 0)
+            # Row 1: Sparklines with current rates
+            throughput_sparkline = Sparkline(throughput_history if len(throughput_history) > 0 else [0], width=30)
+            api_sparkline = Sparkline(api_rate_history if len(api_rate_history) > 0 else [0], width=30)
             
-            footer_table.add_row(
-                "Success:", Text(str(successful), style="green"),
-                "Failed:", Text(str(failed), style="red" if failed > 0 else "dim")
-            )
-            footer_table.add_row(
-                "Skipped:", Text(str(skipped), style="yellow"),
-                "Unmatched:", Text(str(self.unmatched_count), style="red" if self.unmatched_count > 0 else "dim")
-            )
-            footer_table.add_row(
-                "Queue:", Text(str(queue_pending), style="blue"),
-                "", Text("")  # Empty cell for alignment
+            row1 = Text.assemble(
+                ("Throughput: ", RETRO_THEME['primary']),
+                throughput_sparkline,
+                (f" {current_throughput:.2f} ROMs/s", RETRO_THEME['success']),
+                ("  |  ", "dim"),
+                ("API Rate: ", RETRO_THEME['primary']),
+                api_sparkline,
+                (f" {current_api_rate:.1f} calls/s", RETRO_THEME['warning'])
             )
             
-            # API quota row (with bad requests on same row)
+            # Row 2: API quota progress bar + threads + ETA
             # Note: Keys match ScreenScraper API field names (lowercase, no underscores)
             requests_today = api_quota.get('requeststoday', 0)
-            max_requests = api_quota.get('maxrequestsperday', 0)
-            bad_requests_today = api_quota.get('requestskotoday', 0)
-            max_bad_requests = api_quota.get('maxrequestskoperday', 0)
+            max_requests = api_quota.get('maxrequestsperday', 1)
+            quota_pct = requests_today / max_requests if max_requests > 0 else 0
             
             # Get quota threshold from config
             quota_threshold = self.config.get('api', {}).get('quota_warning_threshold', 0.95)
             
-            # Format API quota
-            if max_requests > 0 and requests_today >= 0:
-                quota_pct = requests_today / max_requests
-                # Color code based on percentage: green <80%, yellow 80%-<threshold, red >=threshold
-                if quota_pct >= quota_threshold:
-                    quota_style = "red"
-                elif quota_pct >= 0.80:
-                    quota_style = "yellow"
-                else:
-                    quota_style = "green"
-                quota_text = f"{requests_today}/{max_requests} ({quota_pct:.1%})"
-            elif requests_today > 0:
-                # Have requests but no max (shouldn't happen with API data)
-                quota_style = "dim"
-                quota_text = f"{requests_today}"
+            # Build progress bar (20 chars width)
+            bar_width = 20
+            filled = int(quota_pct * bar_width)
+            bar_char = "█"
+            empty_char = "░"
+            progress_bar = bar_char * filled + empty_char * (bar_width - filled)
+            
+            # Color code quota
+            if quota_pct >= quota_threshold:
+                quota_color = RETRO_THEME['error']
+            elif quota_pct >= 0.80:
+                quota_color = RETRO_THEME['warning']
             else:
-                # No data yet
-                quota_style = "dim"
-                quota_text = "N/A"
+                quota_color = RETRO_THEME['success']
             
-            # Format bad requests
-            if max_bad_requests > 0 and bad_requests_today >= 0:
-                bad_quota_pct = bad_requests_today / max_bad_requests
-                # Use same color thresholds as regular quota
-                if bad_quota_pct >= quota_threshold:
-                    bad_quota_style = "red"
-                elif bad_quota_pct >= 0.80:
-                    bad_quota_style = "yellow"
-                else:
-                    bad_quota_style = "green"
-                bad_quota_text = f"{bad_requests_today}/{max_bad_requests} ({bad_quota_pct:.1%})"
-            elif bad_requests_today > 0:
-                bad_quota_style = "dim"
-                bad_quota_text = f"{bad_requests_today}"
-            else:
-                bad_quota_style = "dim"
-                bad_quota_text = "N/A"
-            
-            footer_table.add_row(
-                "API Quota:", Text(quota_text, style=quota_style),
-                "Bad Requests:", Text(bad_quota_text, style=bad_quota_style)
-            )
-            
-            # ScreenScraper worker stats
-            if thread_stats and thread_stats.get('max_threads', 0) > 0:
-                active_threads = thread_stats.get('active_threads', 0)
-                max_threads = thread_stats.get('max_threads', 0)
-                footer_table.add_row(
-                    "API Threads:", Text(f"{active_threads} active / {max_threads} max", style="cyan"),
-                    "", ""
-                )
-            
-            # Performance metrics
-            avg_api_time = performance_metrics.get('avg_api_time', 0) if performance_metrics else 0
-            avg_rom_time = performance_metrics.get('avg_rom_time', 0) if performance_metrics else 0
-            
-            # Show N/A if no data collected yet (values will be 0 initially)
-            if avg_api_time > 0:
-                api_time_text = f"{avg_api_time:.0f}ms"
-            else:
-                api_time_text = "N/A"
-            
-            if avg_rom_time > 0:
-                rom_time_text = f"{avg_rom_time:.1f}s"
-            else:
-                rom_time_text = "N/A"
-            
-            footer_table.add_row(
-                "Avg API Response:", Text(api_time_text, style="yellow"),
-                "Avg ROM Time:", Text(rom_time_text, style="cyan")
-            )
+            # Threads
+            active_threads = thread_stats.get('active_threads', 0) if thread_stats else 0
+            max_threads = thread_stats.get('max_threads', 0) if thread_stats else 0
             
             # ETA
+            eta_text = "N/A"
+            eta_color = "dim"
             if performance_metrics:
                 eta = performance_metrics.get('eta')
                 if eta and isinstance(eta, timedelta):
                     hours = int(eta.total_seconds() // 3600)
                     minutes = int((eta.total_seconds() % 3600) // 60)
+                    eta_text = f"{hours}h {minutes}m"
                     
-                    # Color code based on time remaining
-                    if eta.total_seconds() < 1800:  # <30 minutes
-                        eta_style = "green"
-                    elif eta.total_seconds() < 7200:  # <2 hours
-                        eta_style = "yellow"
+                    if eta.total_seconds() < 1800:  # <30 min
+                        eta_color = RETRO_THEME['success']
+                    elif eta.total_seconds() < 7200:  # <2 hr
+                        eta_color = RETRO_THEME['warning']
                     else:
-                        eta_style = "red"
-                    
-                    eta_text = f"{hours}h {minutes}m remaining"
-                    footer_table.add_row(
-                        "System ETA:", Text(eta_text, style=eta_style),
-                        "", ""
-                    )
+                        eta_color = RETRO_THEME['error']
+            
+            row2 = Text.assemble(
+                ("API Quota: ", RETRO_THEME['primary']),
+                (progress_bar, quota_color),
+                (f" {quota_pct*100:.0f}% ({requests_today}/{max_requests})", quota_color),
+                ("  |  ", "dim"),
+                ("Threads: ", RETRO_THEME['primary']),
+                (f"{active_threads}/{max_threads}", RETRO_THEME['accent']),
+                ("  |  ", "dim"),
+                ("ETA: ", RETRO_THEME['primary']),
+                (eta_text, eta_color)
+            )
+            
+            # Combine rows
+            footer_content = Text.assemble(row1, "\n", row2)
             
             self.layout["footer"].update(
-                Panel(footer_table, title="Statistics", border_style="blue")
+                Panel(footer_content, title="📊 Performance", border_style=RETRO_THEME['primary'], box=box.SIMPLE)
             )
         except Exception as e:
             logger.error(f"Error updating footer: {e}", exc_info=True)
