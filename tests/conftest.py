@@ -26,6 +26,17 @@ def data_dir(project_root: Path) -> Path:
 
 
 @pytest.fixture
+def es_systems_file(tmp_path: Path, data_dir: Path) -> Path:
+    """
+    Write a minimal es_systems.xml fixture into the temp workspace.
+    """
+    source = data_dir / "config" / "es_systems_valid.xml"
+    dest = tmp_path / "es_systems.xml"
+    dest.write_text(source.read_text())
+    return dest
+
+
+@pytest.fixture
 def make_config(tmp_path: Path) -> Callable[[Dict[str, Any]], Path]:
     """
     Create a minimal config.yaml in a temp directory.
