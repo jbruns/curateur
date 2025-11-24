@@ -6,7 +6,7 @@ Defines the data models for game entries and their components.
 
 import html
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 
@@ -42,14 +42,14 @@ class GameEntry:
     
     # User-editable fields (preserved during merge)
     favorite: bool = False
-    playcount: int = 0
+    playcount: Optional[int] = None
     lastplayed: Optional[str] = None
     
     # Hidden field (not shown in UI)
     hidden: bool = False
     
     # Preserve unknown XML fields (sortname, kidgame, altemulator, etc.)
-    extra_fields: Dict[str, str] = field(default_factory=dict)
+    extra_fields: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
         """Decode HTML entities in text fields."""
