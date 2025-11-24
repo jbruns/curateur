@@ -37,6 +37,17 @@ def es_systems_file(tmp_path: Path, data_dir: Path) -> Path:
 
 
 @pytest.fixture
+def rom_system_def(es_systems_file: Path):
+    """
+    Simple SystemDefinition stub for scanner tests (NES-like).
+    """
+    from curateur.config.es_systems import parse_es_systems
+
+    systems = parse_es_systems(es_systems_file)
+    return systems[0]
+
+
+@pytest.fixture
 def make_config(tmp_path: Path) -> Callable[[Dict[str, Any]], Path]:
     """
     Create a minimal config.yaml in a temp directory.
