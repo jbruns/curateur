@@ -279,6 +279,10 @@ class WorkflowOrchestrator:
         )
         logger.info(f"ROM scan complete: {len(rom_entries)} files found")
         
+        # Update UI with scanner count
+        if self.console_ui:
+            self.console_ui.update_scanner(len(rom_entries))
+        
         # Set total ROM count for checkpoint tracking
         self.checkpoint_manager.set_total_roms(len(rom_entries))
         

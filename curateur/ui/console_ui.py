@@ -163,6 +163,7 @@ class ConsoleUI:
         
         # Pipeline stage tracking
         self.pipeline_stages = {
+            'scanner': {'count': 0},
             'hashing': {'active': False, 'current': 0, 'total': 0, 'details': ''},
             'api_fetch': {'active_roms': [], 'max_concurrent': 3, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0},
             'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'by_type': {}},
@@ -458,15 +459,30 @@ class ConsoleUI:
     
     def set_system_operation(self, operation: str, details: str) -> None:
         """
-        Set active system-level operation (writing gamelist, validation, etc.)
-        
-        Args:
-            operation: Operation name (e.g., 'Writing gamelist', 'Validating')
-            details: Operation details
+        Update system operation indicator
         """
         self.pipeline_stages['system_operation']['active'] = True
         self.pipeline_stages['system_operation']['operation'] = operation
         self.pipeline_stages['system_operation']['details'] = details
+        self._render_pipeline_panel()
+    
+    def clear_system_operation(self) -> None:
+        """
+        Clear system operation indicator
+        """
+        self.pipeline_stages['system_operation']['active'] = False
+        self.pipeline_stages['system_operation']['operation'] = ''
+        self.pipeline_stages['system_operation']['details'] = ''
+        self._render_pipeline_panel()
+    
+    def update_scanner(self, count: int) -> None:
+        """
+        Update scanner stage with count of files found
+        
+        Args:
+            count: Number of ROM files scanned and queued
+        """
+        self.pipeline_stages['scanner']['count'] = count
         self._render_pipeline_panel()
     
     def clear_system_operation(self) -> None:
@@ -486,6 +502,7 @@ class ConsoleUI:
         current_max_concurrent = self.pipeline_stages['api_fetch']['max_concurrent']
         
         self.pipeline_stages = {
+            'scanner': {'count': 0},
             'hashing': {'active': False, 'current': 0, 'total': 0, 'details': ''},
             'api_fetch': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0},
             'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'by_type': {}},
@@ -733,7 +750,16 @@ class ConsoleUI:
             
             spinner = self.spinner_frames[self.spinner_state]
             
-            # 1. HASHING stage
+            # 1. SCANNER stage
+            scanner = self.pipeline_stages['scanner']
+            scanner_count = scanner['count']
+            if scanner_count > 0:
+                status_text = f"[bold green]✓ {scanner_count} files queued[/bold green]"
+            else:
+                status_text = "[dim]Waiting...[/dim]"
+            pipeline_table.add_row("📂 SCANNER", status_text)
+            
+            # 2. HASHING stage
             hashing = self.pipeline_stages['hashing']
             if hashing['active']:
                 current = hashing['current']
@@ -748,7 +774,7 @@ class ConsoleUI:
                 status_text = "[dim]Ready[/dim]"
             pipeline_table.add_row("⚡ HASHING", status_text)
             
-            # 2. API FETCH stage
+            # 3. API FETCH stage
             api_fetch = self.pipeline_stages['api_fetch']
             active_roms = api_fetch['active_roms']
             cache_hits = api_fetch.get('cache_hits', 0)
@@ -785,7 +811,7 @@ class ConsoleUI:
                 status_text = "[dim]Idle[/dim]"
             pipeline_table.add_row("🔍 API FETCH", status_text)
             
-            # 3. MEDIA DOWNLOAD stage
+            # 4. MEDIA DOWNLOAD stage
             media_dl = self.pipeline_stages['media_download']
             active_items = media_dl['active_roms']
             validated_count = media_dl.get('validated', 0)
@@ -832,7 +858,7 @@ class ConsoleUI:
                 status_text = "[dim]Idle[/dim]"
             pipeline_table.add_row("📥 MEDIA", status_text)
             
-            # 4. COMPLETED counter
+            # 5. COMPLETED counter
             completed_count = self.pipeline_stages['completed']['count']
             if completed_count > 0:
                 status_text = f"[bold green]✓ {completed_count} ROMs processed[/bold green]"
@@ -840,7 +866,7 @@ class ConsoleUI:
                 status_text = "[dim]0 ROMs[/dim]"
             pipeline_table.add_row("✅ COMPLETE", status_text)
             
-            # 5. SYSTEM OPERATION (always shown)
+            # 6. SYSTEM OPERATION (always shown)
             sys_op = self.pipeline_stages['system_operation']
             if sys_op['active']:
                 operation = sys_op['operation']
