@@ -1,0 +1,38 @@
+# GitHub Actions workflow for code quality checks
+#
+# This workflow runs on pull requests and push to main to ensure code quality.
+# It uses the check_file_corruption.py tool to validate Python code.
+
+name: Code Quality
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Check for file corruption
+      run: |
+        python3 curateur/tools/code_quality_check.py curateur/
+        
+    - name: Run full CI quality checks (non-blocking)
+      continue-on-error: true
+      run: |
+        python3 curateur/tools/code_quality_check.py --ci curateur/
+        
+    # Optionally run with --strict to fail on any quality issues
+    # - name: Strict quality check
+    #   run: |
+    #     python3 curateur/tools/code_quality_check.py --strict --ci curateur/
