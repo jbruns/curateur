@@ -6,6 +6,7 @@ import asyncio
 import time
 import logging
 import sys
+import inspect
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ async def retry_with_backoff(
     """
     delay = initial_delay
     last_exception = None
-    is_async = asyncio.iscoroutinefunction(func)
+    is_async = inspect.iscoroutinefunction(func)
     
     for attempt in range(1, max_attempts + 1):
         try:
