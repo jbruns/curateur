@@ -11,7 +11,7 @@ Curateur needs a test suite that is CI-first while remaining easy to run and int
 ## Test Taxonomy & Markers
 - `unit` — single function/class with I/O mocked; milliseconds runtime.
 - `integration` — multiple components together (e.g., config + validator + scanner) using real filesystem/temp dirs and stubbed network.
-- `e2e` — full workflow or CLI-level runs that exercise threading, checkpointing, and XML/media outputs.
+- `e2e` — full workflow or CLI-level runs that exercise threading and XML/media outputs.
 - Cross-cutting markers:
   - `slow` — long-running; excluded from default CI matrix.
   - `live` — real ScreenScraper calls; excluded from CI by default and require credentials.
@@ -30,7 +30,7 @@ Curateur needs a test suite that is CI-first while remaining easy to run and int
     scanner/    # rom scanning, hashing, playlists
     media/      # downloader, URL/region selection, file validation
     gamelist/   # metadata merge, XML writer/parser, integrity rules
-    workflow/   # orchestrator, queues, checkpoints, concurrency
+    workflow/   # orchestrator, queues, concurrency
     ui/         # console prompts/output formatting (non-interactive)
     tools/      # generators and maintenance scripts
     data/       # static fixtures (tiny ROMs, XML, YAML, images)
@@ -44,7 +44,7 @@ Curateur needs a test suite that is CI-first while remaining easy to run and int
 - **scanner**: ROM type detection, CRC/hash limits, m3u/disc handling, conflict detection, and directory filters.
 - **media**: URL/region selection precedence, downloader resumes/skips, image validation failures, filesystem layout per media type, dry-run behavior.
 - **gamelist**: metadata merge rules, integrity thresholds, XML writer formatting/encoding, parser robustness on corrupted files, path normalization.
-- **workflow**: orchestrator happy path with stubbed components, retry/skip flows, checkpoint resume, work queue prioritization, evaluator decisions, progress reporting signals.
+- **workflow**: orchestrator happy path with stubbed components, retry/skip flows, work queue prioritization, evaluator decisions, progress reporting signals.
 - **ui**: prompt defaults/non-interactive modes, console logging verbosity, keyboard listener safeguards (ensure tests never block).
 - **tools**: system map generation with small fixture files, dev credential helper dry-run.
 

@@ -105,6 +105,8 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
     systems = section.get('systems', [])
     if not isinstance(systems, list):
         errors.append("scraping.systems must be a list")
+    elif any(not isinstance(s, str) for s in systems):
+        errors.append("scraping.systems entries must be strings")
     
     # Validate regions
     regions = section.get('preferred_regions', [])
@@ -238,6 +240,14 @@ def _validate_api(section: Dict[str, Any]) -> List[str]:
     backoff = section.get('retry_backoff_seconds', 5)
     if not isinstance(backoff, (int, float)) or backoff < 0:
         errors.append("api.retry_backoff_seconds must be non-negative")
+
+    # Quota warning threshold
+    if 'quota_warning_threshold' in section:
+        threshold = section['quota_warning_threshold']
+        if not isinstance(threshold, (int, float)):
+            errors.append("api.quota_warning_threshold must be a number")
+        elif not (0.0 <= threshold <= 1.0):
+            errors.append("api.quota_warning_threshold must be between 0.0 and 1.0")
     
     return errors
 
@@ -256,6 +266,11 @@ def _validate_logging(section: Dict[str, Any]) -> List[str]:
     console = section.get('console', True)
     if not isinstance(console, bool):
         errors.append("logging.console must be a boolean")
+
+    # Validate optional log file
+    if 'file' in section and section['file'] is not None:
+        if not isinstance(section['file'], str):
+            errors.append("logging.file must be a string path or null")
     
     return errors
 
@@ -268,24 +283,51 @@ def _validate_runtime(section: Dict[str, Any]) -> List[str]:
     dry_run = section.get('dry_run', False)
     if not isinstance(dry_run, bool):
         errors.append("runtime.dry_run must be a boolean")
-    
-    # Validate checkpoint_interval
-    if 'checkpoint_interval' in section:
-        interval = section['checkpoint_interval']
-        if not isinstance(interval, int) or interval < 0:
-            errors.append("runtime.checkpoint_interval must be a non-negative integer")
-    
+
+    # Hash algorithm
+    hash_algorithm = section.get('hash_algorithm', 'crc32')
+    valid_hashes = ['crc32', 'md5', 'sha1']
+    if hash_algorithm not in valid_hashes:
+        errors.append(f"runtime.hash_algorithm must be one of: {', '.join(valid_hashes)}")
+
+    # CRC size limit
+    if 'crc_size_limit' in section:
+        size_limit = section['crc_size_limit']
+        if not isinstance(size_limit, int) or size_limit < 0:
+            errors.append("runtime.crc_size_limit must be a non-negative integer")
+
+    # Rate limit override toggle
+    if 'rate_limit_override_enabled' in section:
+        if not isinstance(section['rate_limit_override_enabled'], bool):
+            errors.append("runtime.rate_limit_override_enabled must be a boolean")
+
+    # Rate limit override values
+    if 'rate_limit_override' in section:
+        override = section['rate_limit_override']
+        if not isinstance(override, dict):
+            errors.append("runtime.rate_limit_override must be a mapping")
+        else:
+            max_workers = override.get('max_workers')
+            if max_workers is not None:
+                if not isinstance(max_workers, int) or not (1 <= max_workers <= 10):
+                    errors.append("runtime.rate_limit_override.max_workers must be between 1 and 10")
+
+            rpm = override.get('requests_per_minute')
+            if rpm is not None:
+                if not isinstance(rpm, int) or not (1 <= rpm <= 300):
+                    errors.append("runtime.rate_limit_override.requests_per_minute must be between 1 and 300")
+
+            daily_quota = override.get('daily_quota')
+            if daily_quota is not None:
+                if not isinstance(daily_quota, int) or daily_quota < 1:
+                    errors.append("runtime.rate_limit_override.daily_quota must be a positive integer")
+
     # Validate enable_cache flag
     if 'enable_cache' in section:
         enable_cache = section['enable_cache']
         if not isinstance(enable_cache, bool):
             errors.append("runtime.enable_cache must be a boolean")
-    
-    # Validate threads
-    threads = section.get('threads', 1)
-    if not isinstance(threads, int) or threads < 1:
-        errors.append("runtime.threads must be a positive integer")
-    
+        
     return errors
 
 

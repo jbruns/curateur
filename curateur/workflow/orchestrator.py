@@ -41,7 +41,6 @@ from ..gamelist.integrity_validator import IntegrityValidator
 from ..gamelist.metadata_merger import MetadataMerger
 from ..workflow.work_queue import WorkQueueManager, Priority
 from ..workflow.evaluator import WorkflowEvaluator, WorkflowDecision
-from ..workflow.checkpoint import CheckpointManager, prompt_resume_from_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +162,6 @@ class WorkflowOrchestrator:
         
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
-        
-        # Checkpoint manager (initialized per-system)
-        self.checkpoint_manager: Optional[CheckpointManager] = None
     
     async def scrape_system(
         self,
@@ -201,13 +197,7 @@ class WorkflowOrchestrator:
         if self.console_ui:
             self.console_ui.reset_pipeline_stages()
         
-        # Initialize checkpoint manager for this system
         gamelist_dir = self.paths['gamelists'] / system.name
-        self.checkpoint_manager = CheckpointManager(
-            str(gamelist_dir),
-            system.name,
-            self.config
-        )
         
         # Initialize metadata cache for this system
         enable_cache = self.config.get('runtime', {}).get('enable_cache', True)
@@ -258,18 +248,6 @@ class WorkflowOrchestrator:
         # Update API client with cache for this system
         self.api_client.cache = cache
         
-        # Try to load existing checkpoint
-        checkpoint = self.checkpoint_manager.load_checkpoint()
-        resume_from_checkpoint = False
-        
-        if checkpoint:
-            # Prompt user to resume from checkpoint
-            resume_from_checkpoint = prompt_resume_from_checkpoint(checkpoint)
-            if not resume_from_checkpoint:
-                # User wants fresh start - remove checkpoint
-                self.checkpoint_manager.remove_checkpoint()
-                logger.info("Starting fresh scrape (checkpoint discarded)")
-        
         # Step 1: Scan ROMs
         logger.info("Scanning ROMs...")
         crc_size_limit = self.config.get('runtime', {}).get('crc_size_limit', 1073741824)
@@ -283,23 +261,6 @@ class WorkflowOrchestrator:
         # Update UI with scanner count
         if self.console_ui:
             self.console_ui.update_scanner(len(rom_entries))
-        
-        # Set total ROM count for checkpoint tracking
-        self.checkpoint_manager.set_total_roms(len(rom_entries))
-        
-        # Filter out already-processed ROMs if resuming
-        if resume_from_checkpoint:
-            original_count = len(rom_entries)
-            rom_entries = [
-                rom for rom in rom_entries 
-                if not self.checkpoint_manager.is_processed(rom.filename)
-            ]
-            skipped_from_checkpoint = original_count - len(rom_entries)
-            if skipped_from_checkpoint > 0:
-                logger.info(
-                    f"Resuming from checkpoint: skipping {skipped_from_checkpoint} "
-                    f"already-processed ROMs, {len(rom_entries)} remaining"
-                )
         
         # Notify progress tracker with actual ROM count
         if progress_tracker:
@@ -440,10 +401,6 @@ class WorkflowOrchestrator:
         
         # Step 9: Write summary log
         self._write_summary_log(system, results, scraped_count, skipped_count, failed_count)
-        
-        # Step 10: Remove checkpoint after successful completion
-        if self.checkpoint_manager:
-            self.checkpoint_manager.remove_checkpoint()
         
         logger.info(
             f"System complete: {system.name} - "
@@ -1411,22 +1368,10 @@ class WorkflowOrchestrator:
             
             logger.info(f"All pipeline tasks completed ({len(task_results)} results)")
             
-            # Convert task results to our expected format and record in checkpoint
+            # Convert task results to our expected format
             for rom_info, result in task_results:
                 rom_count += 1
                 results.append(result)
-                
-                # Record in checkpoint
-                if self.checkpoint_manager:
-                    action = 'skip' if result.skipped else 'full_scrape'
-                    self.checkpoint_manager.add_processed_rom(
-                        rom_info.filename,
-                        action,
-                        result.success,
-                        result.error
-                    )
-                    # Save checkpoint periodically
-                    self.checkpoint_manager.save_checkpoint()
                 
                 # Track not found items
                 if not result.success and result.error == "No game info found from API":
@@ -1475,18 +1420,6 @@ class WorkflowOrchestrator:
                         existing_entries=existing_entries
                     )
                     results.append(result)
-                    
-                    # Record in checkpoint
-                    if self.checkpoint_manager:
-                        action = 'skip' if result.skipped else 'full_scrape'
-                        self.checkpoint_manager.add_processed_rom(
-                            rom_info.filename,
-                            action,
-                            result.success,
-                            result.error
-                        )
-                        # Save checkpoint periodically
-                        self.checkpoint_manager.save_checkpoint()
                     
                     # Track not found items
                     if not result.success and result.error == "No game info found from API":
@@ -2007,5 +1940,3 @@ class WorkflowOrchestrator:
             logger.info(f"Summary log written: {summary_path}")
         except Exception as e:
             logger.warning(f"Failed to write summary log: {e}")
-
-

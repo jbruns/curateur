@@ -197,13 +197,6 @@ runtime:
   # Note: Useful for testing configuration and estimating quota usage
   dry_run: false
   
-  # Checkpoint interval (number of ROMs)
-  # Purpose: Save progress periodically for resume capability
-  # Valid: Non-negative integer (0 = disabled)
-  # Default: 0 (disabled)
-  # Note: Set to 50-100 for large collections, enables resume from interruption
-  checkpoint_interval: 0
-  
   # Hash algorithm for ROM and media file verification
   # Purpose: Algorithm used to calculate and compare file hashes
   # Valid: crc32 | md5 | sha1
