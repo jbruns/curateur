@@ -76,7 +76,12 @@ class ThrottleManager:
         # Concurrency limiting (will be updated from API limits)
         self.max_concurrent = max_concurrent or 3  # Default fallback
         self.concurrency_semaphore = asyncio.Semaphore(self.max_concurrent)
-        logger.info(f"Throttle manager initialized with max {self.max_concurrent} concurrent requests")
+        
+        # Separate semaphore for media downloads (higher limit for throughput)
+        self.max_media_downloads = 20  # Allow more concurrent media downloads
+        self.media_download_semaphore = asyncio.Semaphore(self.max_media_downloads)
+        
+        logger.info(f"Throttle manager initialized with max {self.max_concurrent} concurrent API requests, {self.max_media_downloads} concurrent media downloads")
         
         # Quota tracking from ScreenScraper API
         self.requeststoday = 0
@@ -116,8 +121,16 @@ class ThrottleManager:
             old_limit = self.max_concurrent
             self.max_concurrent = max_concurrent
             self.concurrency_semaphore = asyncio.Semaphore(max_concurrent)
+            
+            # Scale media downloads proportionally (but cap at reasonable limit)
+            # Use 5x API limit, capped at 30
+            old_media_limit = self.max_media_downloads
+            self.max_media_downloads = min(max_concurrent * 5, 30)
+            self.media_download_semaphore = asyncio.Semaphore(self.max_media_downloads)
+            
             logger.info(
-                f"Updated throttle concurrency limit: {old_limit} -> {max_concurrent} concurrent requests"
+                f"Updated throttle concurrency limits: API {old_limit} -> {max_concurrent}, "
+                f"Media {old_media_limit} -> {self.max_media_downloads}"
             )
     
     async def wait_if_needed(self, endpoint: str) -> float:
