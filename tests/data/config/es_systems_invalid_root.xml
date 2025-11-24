@@ -1,0 +1,9 @@
+<invalidRoot>
+  <system>
+    <name>nes</name>
+    <fullname>Nintendo</fullname>
+    <path>%ROMPATH%/nes</path>
+    <extension>.nes</extension>
+    <platform>nes</platform>
+  </system>
+</invalidRoot>
