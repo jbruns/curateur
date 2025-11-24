@@ -10,6 +10,7 @@ Implements three merge strategies:
 from typing import List, Set, Optional
 from dataclasses import dataclass, replace
 import logging
+from copy import deepcopy
 
 from .game_entry import GameEntry
 
@@ -104,13 +105,6 @@ class MetadataMerger:
         merged_data['path'] = existing.path
         preserved_fields.add('path')
         
-        # Hash is always preserved from existing (updated separately by workflow)
-        if hasattr(existing, 'hash') and existing.hash:
-            merged_data['hash'] = existing.hash
-            preserved_fields.add('hash')
-        elif hasattr(scraped, 'hash') and scraped.hash:
-            merged_data['hash'] = scraped.hash
-        
         # Apply merge strategy
         if self.merge_strategy == 'preserve_user_edits':
             # Most conservative: keep ALL existing fields, only update path
@@ -161,7 +155,7 @@ class MetadataMerger:
         # Process all fields from existing entry
         for field_name in dir(existing):
             # Skip private/magic methods and non-field attributes
-            if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
+            if field_name.startswith('_') or field_name in ('from_api_response', 'path'):
                 continue
             
             # Skip methods
@@ -178,7 +172,7 @@ class MetadataMerger:
         
         # Preserve extra_fields
         if hasattr(existing, 'extra_fields') and existing.extra_fields:
-            merged_data['extra_fields'] = existing.extra_fields.copy()
+            merged_data['extra_fields'] = deepcopy(existing.extra_fields)
             preserved_fields.add('extra_fields')
         else:
             merged_data['extra_fields'] = {}
@@ -205,7 +199,7 @@ class MetadataMerger:
         # Process all fields
         for field_name in dir(existing):
             # Skip private/magic methods and non-field attributes
-            if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
+            if field_name.startswith('_') or field_name in ('from_api_response', 'path'):
                 continue
             
             # Skip methods
@@ -255,7 +249,7 @@ class MetadataMerger:
         
         # Preserve extra_fields
         if hasattr(existing, 'extra_fields') and existing.extra_fields:
-            merged_data['extra_fields'] = existing.extra_fields.copy()
+            merged_data['extra_fields'] = deepcopy(existing.extra_fields)
             preserved_fields.add('extra_fields')
         else:
             merged_data['extra_fields'] = {}
@@ -282,7 +276,7 @@ class MetadataMerger:
         # Use all scraped fields
         for field_name in dir(scraped):
             # Skip private/magic methods and non-field attributes
-            if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
+            if field_name.startswith('_') or field_name in ('from_api_response', 'path'):
                 continue
             
             # Skip methods
