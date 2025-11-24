@@ -210,15 +210,24 @@ class WorkQueueManager:
         """
         return self._system_complete
     
-    async def drain(self) -> None:
+    async def drain(self, timeout: float = 300.0) -> None:
         """
         Wait for queue to be empty (async)
         
         Use this to wait for all work to be consumed before moving to next system.
+        
+        Args:
+            timeout: Maximum time to wait in seconds (default 5 minutes)
         """
+        import time
+        start_time = time.time()
         while not self.queue.empty():
+            if time.time() - start_time > timeout:
+                logger.warning(f"Queue drain timed out after {timeout}s with {self.queue.qsize()} items remaining")
+                break
             await asyncio.sleep(0.1)
-        logger.debug("Queue drained - all work consumed")
+        else:
+            logger.debug("Queue drained - all work consumed")
     
     def reset_for_new_system(self) -> None:
         """

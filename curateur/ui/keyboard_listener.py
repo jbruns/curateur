@@ -162,12 +162,34 @@ class KeyboardListener:
             
             char = char.lower()
             
+            # Handle prompt response (Y/N)
+            if self.console_ui and self.console_ui.prompt_active:
+                if char in ('y', '\n', '\r'):
+                    self.console_ui.prompt_response = True
+                    logger.debug("Keyboard control: Prompt confirmed (Y)")
+                    return
+                elif char == 'n':
+                    self.console_ui.prompt_response = False
+                    logger.debug("Keyboard control: Prompt declined (N)")
+                    return
+            
             # Handle pause/resume (toggle)
             if char == 'p':
                 with self._lock:
                     self._is_paused = not self._is_paused
                     state = "paused" if self._is_paused else "resumed"
                     logger.info(f"Keyboard control: Processing {state}")
+            
+            # Handle spotlight navigation
+            elif char == 'n':
+                if self.console_ui:
+                    self.console_ui.spotlight_next()
+                    logger.debug("Keyboard control: Spotlight next")
+            
+            elif char == 'b':
+                if self.console_ui:
+                    self.console_ui.spotlight_prev()
+                    logger.debug("Keyboard control: Spotlight previous")
             
             # Handle skip request
             elif char == 's':

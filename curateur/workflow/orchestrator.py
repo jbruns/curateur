@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Callable, Any, TYPE_CHECKING
 from dataclasses import dataclass
+from datetime import timedelta
 import time
 
 if TYPE_CHECKING:
@@ -614,6 +615,9 @@ class WorkflowOrchestrator:
                 except asyncio.CancelledError:
                     # Shutdown requested during API call
                     logger.info(f"[{rom_info.filename}] API request cancelled (shutdown)")
+                    # Update UI: Complete API fetch (cancelled)
+                    if self.console_ui:
+                        self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
                     return ScrapingResult(
                         rom_path=rom_info.path,
                         success=False,
@@ -642,12 +646,26 @@ class WorkflowOrchestrator:
                             
                             # Increment task counter but don't emit completion status
                             completed_tasks += 1
+                            
+                            # Update UI: Complete API fetch (via fallback)
+                            if self.console_ui:
+                                self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete', cache_hit=False)
                         else:
                             logger.info(f"[{rom_info.filename}] Search fallback: no matches found")
+                            # Update UI: Complete API fetch (fallback failed)
+                            if self.console_ui:
+                                self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
                     else:
+                        # Update UI: Complete API fetch (error, no fallback)
+                        if self.console_ui:
+                            self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
                         raise
             
             if not game_info and decision.fetch_metadata:
+                # Update UI: Complete API fetch (failed)
+                if self.console_ui:
+                    self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
+                
                 # Track as unmatched
                 system_name = system.name
                 if system_name not in self.unmatched_roms:
@@ -676,9 +694,9 @@ class WorkflowOrchestrator:
             image_min_dimension = media_config.get('image_min_dimension', 50)
             
             if game_info:
-                # Use throttle manager's semaphore for unified concurrency control
-                # This ensures metadata API calls and media downloads share the same limit
-                global_semaphore = self.throttle_manager.concurrency_semaphore if self.throttle_manager else None
+                # Use separate media download semaphore for higher throughput
+                # This allows media downloads to proceed independently from API rate limits
+                media_semaphore = self.throttle_manager.media_download_semaphore if self.throttle_manager else None
                 
                 media_downloader = MediaDownloader(
                     media_root=self.media_directory,
@@ -689,7 +707,7 @@ class WorkflowOrchestrator:
                     validation_mode=validation_mode,
                     min_width=image_min_dimension,
                     min_height=image_min_dimension,
-                    download_semaphore=global_semaphore
+                    download_semaphore=media_semaphore
                 )
                 
                 # Get media list from game_info
@@ -708,9 +726,63 @@ class WorkflowOrchestrator:
                 
                 # Download all media files concurrently (from decision.media_to_download)
                 if decision.media_to_download and media_list:
-                    # Convert singular ES-DE types to ScreenScraper media types for filtering
+                    # Convert singular ES-DE types to ScreenScraper media types for checking disk
                     # E.g., 'cover' -> 'covers' -> 'box-2D'
                     from ..media.media_types import to_plural, convert_directory_names_to_media_types
+                    
+                    # Check which media already exists on disk (skip redownloading)
+                    rom_basename = media_downloader.organizer.get_rom_basename(str(rom_info.path))
+                    existing_media = {}
+                    
+                    for media_type_singular in decision.media_to_download:
+                        # Convert singular to ScreenScraper type for path lookup
+                        plural_dir = to_plural(media_type_singular)
+                        screenscraper_types = convert_directory_names_to_media_types([plural_dir])
+                        
+                        if screenscraper_types:
+                            screenscraper_type = screenscraper_types[0]
+                            # Check with common extensions
+                            for ext in ['jpg', 'png', 'gif', 'webp', 'mp4', 'pdf']:
+                                media_path = media_downloader.organizer.get_media_path(
+                                    system.name,
+                                    screenscraper_type,
+                                    rom_basename,
+                                    ext
+                                )
+                                if media_downloader.organizer.file_exists(media_path):
+                                    existing_media[media_type_singular] = True
+                                    logger.debug(f"[{rom_info.filename}] Media {media_type_singular} already exists at {media_path}")
+                                    break
+                            else:
+                                existing_media[media_type_singular] = False
+                        else:
+                            logger.warning(f"[{rom_info.filename}] Could not convert media type {media_type_singular} to ScreenScraper type")
+                            existing_media[media_type_singular] = False
+                    
+                    # Filter out media that already exists (only download missing ones)
+                    media_types_to_download = [
+                        mt for mt in decision.media_to_download 
+                        if not existing_media.get(mt, False)
+                    ]
+                    
+                    # Count skipped media as validated (they exist on disk)
+                    skipped_media = [
+                        mt for mt in decision.media_to_download 
+                        if existing_media.get(mt, False)
+                    ]
+                    for media_type in skipped_media:
+                        if self.console_ui:
+                            self.console_ui.increment_media_validated(media_type)
+                    
+                    if not media_types_to_download:
+                        logger.info(f"[{rom_info.filename}] All media already exists on disk, skipping downloads")
+                    else:
+                        if len(media_types_to_download) < len(decision.media_to_download):
+                            skipped = len(decision.media_to_download) - len(media_types_to_download)
+                            logger.info(f"[{rom_info.filename}] {skipped} media type(s) already exist, downloading {len(media_types_to_download)}")
+                    
+                    # Update decision to only download missing media
+                    decision.media_to_download = media_types_to_download
                     
                     # First convert singular to plural directory names
                     plural_dirs = [to_plural(t) for t in decision.media_to_download]
@@ -847,6 +919,10 @@ class WorkflowOrchestrator:
                                 )
                                 if media_type_singular not in decision.media_to_download:
                                     decision.media_to_download.append(media_type_singular)
+                                
+                                # Track validation failure in UI
+                                if self.console_ui:
+                                    self.console_ui.increment_media_validation_failed(media_type_singular)
                         else:
                             # Normal mode: trust cached hash, no file validation
                             logger.debug(f"[{rom_info.filename}] Media exists with cached hash: {media_type_singular}")
@@ -1638,10 +1714,49 @@ class WorkflowOrchestrator:
     ) -> None:
         """Background task to periodically update UI during parallel processing"""
         paused_logged = False  # Track whether we've logged pause state
+        quit_prompted = False  # Track whether we've prompted for quit confirmation
+        skip_prompted = False  # Track whether we've prompted for skip confirmation
         
         try:
             while True:
                 await asyncio.sleep(0.5)  # Update every 500ms
+                
+                # Check for quit request from keyboard controls
+                if self.console_ui and self.console_ui.quit_requested and not quit_prompted:
+                    quit_prompted = True
+                    if await self.console_ui.prompt_confirm("Quit after current ROMs complete?", default='y'):
+                        logger.info("Graceful shutdown initiated - completing in-flight ROMs")
+                        # Update header to show shutdown status
+                        self.console_ui.set_shutting_down()
+                        # Stop workers gracefully by setting shutdown event
+                        if self.thread_manager:
+                            logger.debug("Calling stop_workers()...")
+                            await self.thread_manager.stop_workers()
+                            logger.debug("stop_workers() returned")
+                        # Exit the update loop
+                        logger.debug("Exiting periodic UI update loop")
+                        return
+                    else:
+                        # User declined quit
+                        self.console_ui.clear_quit_request()
+                        quit_prompted = False
+                
+                # Check for skip system request from keyboard controls
+                if self.console_ui and self.console_ui.skip_requested and not skip_prompted:
+                    skip_prompted = True
+                    current_system = self.console_ui.current_system if self.console_ui else "current system"
+                    if await self.console_ui.prompt_confirm(f"Skip system {current_system}?", default='n'):
+                        logger.info(f"Skipping system: {current_system} - completing in-flight ROMs")
+                        # Stop workers gracefully and exit update loop
+                        if self.thread_manager:
+                            await self.thread_manager.stop_workers()
+                        self.console_ui.clear_skip_request()
+                        # Exit the update loop to finish system processing
+                        return
+                    else:
+                        # User declined skip
+                        self.console_ui.clear_skip_request()
+                        skip_prompted = False
                 
                 # Check for pause state from keyboard controls
                 if self.console_ui and self.console_ui.is_paused:
@@ -1700,6 +1815,11 @@ class WorkflowOrchestrator:
         if self.performance_monitor:
             metrics = self.performance_monitor.get_metrics()
             performance_metrics = {
+                'roms_per_hour': metrics.roms_per_hour,
+                'api_calls_per_minute': metrics.api_calls_per_minute,
+                'throughput_history': metrics.throughput_history,
+                'api_rate_history': metrics.api_rate_history,
+                'eta': timedelta(seconds=metrics.eta_seconds) if metrics.eta_seconds > 0 else None,
                 'avg_api_time': metrics.avg_api_time * 1000,  # Convert to milliseconds
                 'avg_rom_time': metrics.avg_rom_time,  # Keep in seconds
                 'eta_seconds': metrics.eta_seconds

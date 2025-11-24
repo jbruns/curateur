@@ -58,6 +58,7 @@ class ThreadPoolManager:
         self._active_work_count = 0
         self._lock = asyncio.Lock()
         self._shutdown_event = asyncio.Event()
+        self._workers_stopped = False  # Track if stop_workers has been called
         
         # Task management
         self._worker_tasks: list = []
@@ -327,19 +328,10 @@ class ThreadPoolManager:
             try:
                 logger.debug(f"Task {task_id} starting {rom_info.filename}")
                 
-                # Update UI to show task is waiting if semaphore is locked
-                if self._operation_callback and self.semaphore.locked():
-                    task_name = f"task-{id(asyncio.current_task())}"
-                    self._operation_callback(
-                        task_name,
-                        rom_info.filename,
-                        "Waiting for API slot",
-                        f"Queued for processing ({self._active_work_count-1} ahead)",
-                        None, None, None
-                    )
-                
-                async with self.semaphore:
-                    result = await self._rom_processor(rom_info, self._operation_callback, self._shutdown_event)
+                # Process ROM directly - no semaphore needed at worker level
+                # API calls self-regulate via throttle_manager.concurrency_semaphore
+                # Media downloads use separate throttle_manager.media_download_semaphore
+                result = await self._rom_processor(rom_info, self._operation_callback, self._shutdown_event)
                     
                 logger.debug(f"Task {task_id} completed {rom_info.filename}")
                 
@@ -382,9 +374,19 @@ class ThreadPoolManager:
         """
         logger.debug("Waiting for tasks to complete...")
         
-        # Wait for queue to drain
-        if self._work_queue:
-            await self._work_queue.drain()
+        # Wait for queue to drain (but only if workers haven't been stopped)
+        if self._work_queue and not self._workers_stopped:
+            # Use shorter timeout and poll to allow interruption
+            while not self._work_queue.queue.empty() and not self._workers_stopped:
+                try:
+                    # Wait up to 1 second at a time, allows checking _workers_stopped
+                    await asyncio.wait_for(self._work_queue.drain(timeout=1.0), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # Timeout checking if queue empty, loop will check _workers_stopped
+                    pass
+                    
+        if self._workers_stopped:
+            logger.debug("Workers stopped - skipping remaining queue drain")
         
         # Wait for all tasks to finish
         if self._worker_tasks:
@@ -399,13 +401,16 @@ class ThreadPoolManager:
     def clear_results(self) -> None:
         """Clear accumulated results (call before processing new system)"""
         self._results = []
+        self._workers_stopped = False  # Reset stopped flag for new system
+        self._workers_stopped = False  # Reset stopped flag for new system
+        self._workers_stopped = False  # Reset for new system
     
     async def get_current_results(self) -> list:
         """Get current accumulated results (non-blocking, for progress tracking)"""
         async with self._results_lock:
             return self._results.copy()
     
-    async def stop_workers(self, timeout: float = 30.0) -> None:
+    async def stop_workers(self, timeout: float = 5.0) -> None:
         """
         Gracefully stop all pipeline tasks
         
@@ -423,10 +428,16 @@ class ThreadPoolManager:
         total_tasks = len(self._worker_tasks)
         
         logger.info(f"Stopping {total_tasks} pipeline task(s) - {active_count} currently active...")
-        logger.info("Tasks will finish in-flight work but not start new ones")
         
         # Set shutdown event to stop tasks from starting new work
         self._shutdown_event.set()
+        
+        # If no active work, tasks should exit quickly
+        if active_count == 0:
+            logger.info("No active work - tasks should exit immediately")
+            timeout = 2.0  # Shorter timeout when nothing is running
+        else:
+            logger.info("Tasks will finish in-flight work but not start new ones")
         
         # Wait for tasks to finish in-flight work (with timeout)
         try:
@@ -436,17 +447,21 @@ class ThreadPoolManager:
             )
             logger.info(f"All {total_tasks} tasks stopped gracefully")
         except asyncio.TimeoutError:
-            logger.warning(f"Tasks did not complete in-flight work within {timeout}s, cancelling...")
             incomplete_count = sum(1 for task in self._worker_tasks if not task.done())
-            logger.warning(f"Cancelling {incomplete_count} task(s) still in progress")
             
-            for task in self._worker_tasks:
-                if not task.done():
-                    task.cancel()
-            
-            # Wait for cancellations
-            await asyncio.gather(*self._worker_tasks, return_exceptions=True)
-            logger.info("Tasks cancelled")
+            if incomplete_count > 0:
+                logger.warning(f"Tasks did not complete in-flight work within {timeout}s, cancelling {incomplete_count} task(s)...")
+                
+                for task in self._worker_tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # Wait for cancellations
+                await asyncio.gather(*self._worker_tasks, return_exceptions=True)
+                logger.info("Tasks cancelled")
+            else:
+                # All tasks are done but gather timed out - likely a race condition
+                logger.debug(f"All tasks completed but gather timed out after {timeout}s")
         
         # Report queue status
         if self._work_queue:
@@ -455,10 +470,14 @@ class ThreadPoolManager:
                 logger.info(f"{remaining} work item(s) left in queue (not started)")
         
         # Clear worker list and reset state
+        logger.debug("Clearing worker tasks list and resetting state...")
         self._worker_tasks = []
+        self._workers_stopped = True  # Mark that workers have been stopped
         self._shutdown_event.clear()
+        logger.debug("Acquiring lock to reset active work count...")
         async with self._lock:
             self._active_work_count = 0
+        logger.debug("Shutdown state reset complete")
     
     async def shutdown(self, wait: bool = True) -> None:
         """

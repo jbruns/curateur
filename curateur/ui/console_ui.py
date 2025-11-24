@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from typing import Optional, Dict, Any, Tuple, Set
+from typing import Optional, Dict, Any, Tuple, Set, Deque
 from datetime import timedelta
 
 from curateur import __version__
@@ -23,6 +23,14 @@ from rich.table import Table
 from rich.text import Text
 
 logger = logging.getLogger(__name__)
+
+LEVEL_NUMERIC_MAP = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
 
 
 def _create_sparkline(data: list, width: int = 30, color: str = "cyan") -> Text:
@@ -216,7 +224,7 @@ class ConsoleUI:
             'scanner': {'count': 0},
             'hashing': {'active': False, 'current': 0, 'total': 0, 'details': '', 'completed': 0},
             'api_fetch': {'active_roms': [], 'max_concurrent': 3, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0, 'total_fetches': 0},
-            'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'by_type': {}, 'total_downloads': 0},
+            'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'validation_failed': 0, 'by_type': {}, 'total_downloads': 0},
             'completed': {'count': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
@@ -225,16 +233,22 @@ class ConsoleUI:
         self.unmatched_count = 0
         self.integrity_score = None  # Gamelist integrity percentage
         self.is_throttled = False  # Whether currently rate limited
+        self.is_shutting_down = False  # Whether graceful shutdown in progress
         self.last_pipeline_update = 0.0
         
         # Log panel tracking
-        self.log_buffer: deque = deque(maxlen=200)  # Increased for filtering
+        self.log_buffer: Deque[Tuple[int, int, Text]] = deque(maxlen=400)
+        self._visible_logs: Deque[Text] = deque(maxlen=120)
+        self._visible_log_limit = 120
+        self._log_sequence = 0
         
         # Log filtering state
         self.current_log_level: int = 20  # INFO level
         self.log_level_map = {1: 40, 2: 30, 3: 20, 4: 10}  # ERROR, WARNING, INFO, DEBUG
         self._filtered_logs_cache: Optional[Text] = None
         self._cache_invalidation_pending: bool = False
+        self._log_cache_dirty: bool = True
+        self._log_cache_level: int = self.current_log_level
         self.last_cache_invalidation: float = 0.0
         
         # Game spotlight state
@@ -247,6 +261,12 @@ class ConsoleUI:
         
         # Authentication status
         self.auth_status: Optional[str] = None  # None, 'in_progress', 'complete'
+        
+        # Prompt state
+        self.prompt_active: bool = False
+        self.prompt_message: str = ""
+        self.prompt_options: str = ""
+        self.prompt_response: Optional[bool] = None  # Set by keyboard listener
         
         # Animation tracking for interval-based refresh
         self.spinner_state = 0
@@ -304,7 +324,7 @@ class ConsoleUI:
         self.layout["logs"].update(
             Panel(
                 Text("Logs will appear here", style="dim"),
-                title="▣ LOGS [1]ERR [2]WARN [3]INFO* [4]DBG | ←→ Navigate Spotlight",
+                title="▣ LOGS [1]ERR [2]WARN [3]INFO* [4]DBG | [N/B] Navigate Spotlight",
                 border_style=RETRO_THEME['primary'],
                 box=box.ROUNDED
             )
@@ -505,6 +525,8 @@ class ConsoleUI:
             active_items.append(item)
         elif action == 'complete' and item in active_items:
             active_items.remove(item)
+            # Increment total downloads counter when download completes
+            self.pipeline_stages['media_download']['total_downloads'] += 1
         self._render_pipeline_panel()
     
     def increment_media_validated(self, media_type: Optional[str] = None) -> None:
@@ -521,6 +543,23 @@ class ConsoleUI:
         if media_type:
             by_type = self.pipeline_stages['media_download']['by_type']
             by_type[media_type] = by_type.get(media_type, 0) + 1
+        
+        self._render_pipeline_panel()
+    
+    def increment_media_validation_failed(self, media_type: Optional[str] = None) -> None:
+        """
+        Increment media validation failure counter (hash mismatch requiring re-download)
+        
+        Args:
+            media_type: Optional media type that failed validation
+        """
+        self.pipeline_stages['media_download']['validation_failed'] += 1
+        
+        # Track by type for detailed breakdown
+        if media_type:
+            by_type = self.pipeline_stages['media_download']['by_type']
+            failed_key = f"{media_type}_failed"
+            by_type[failed_key] = by_type.get(failed_key, 0) + 1
         
         self._render_pipeline_panel()
     
@@ -580,45 +619,42 @@ class ConsoleUI:
             game_info: Game metadata from API response
         """
         try:
-            # Validate required fields with quality checks
+            # Validate required fields - only name is mandatory
             if not game_info.get('name'):
+                logger.debug(f"Skipping spotlight: missing name")
                 return
             
             # Validate descriptions - must have at least one entry with substantial text
             descriptions = game_info.get('descriptions', {})
-            if not descriptions:
-                return
+            if descriptions:
+                has_quality_desc = any(len(desc) > 20 for desc in descriptions.values() if desc)
+                if not has_quality_desc:
+                    logger.debug(f"Skipping spotlight for {game_info['name']}: descriptions too short")
+                    return
+            # If no descriptions at all, allow it through (optional field)
             
-            # Check for substantial description text (> 20 chars)
-            has_quality_desc = any(len(desc) > 20 for desc in descriptions.values() if desc)
-            if not has_quality_desc:
-                return
-            
-            # Validate release dates - must have parseable year in valid range
+            # Validate release dates - optional but if present, must have valid year
             release_dates = game_info.get('release_dates', {})
-            if not release_dates:
-                return
+            if release_dates:
+                # Try to extract and validate year from any release date
+                valid_year = False
+                for date_str in release_dates.values():
+                    if date_str:
+                        try:
+                            # Extract year from date string (format: YYYY-MM-DD or just YYYY)
+                            year = int(date_str.split('-')[0])
+                            if 1970 <= year <= 2030:
+                                valid_year = True
+                                break
+                        except (ValueError, IndexError):
+                            continue
+                
+                if not valid_year:
+                    logger.debug(f"Skipping spotlight for {game_info['name']}: invalid year in release dates")
+                    return
+            # If no release dates, allow it through (optional field)
             
-            # Try to extract and validate year from any release date
-            valid_year = False
-            for date_str in release_dates.values():
-                if date_str:
-                    try:
-                        # Extract year from date string (format: YYYY-MM-DD or just YYYY)
-                        year = int(date_str.split('-')[0])
-                        if 1970 <= year <= 2030:
-                            valid_year = True
-                            break
-                    except (ValueError, IndexError):
-                        continue
-            
-            if not valid_year:
-                return
-            
-            # Validate genres - must be non-empty
-            genres = game_info.get('genres', [])
-            if not genres:
-                return
+            # Genres are optional - no validation needed
             
             # All validations passed - queue the game
             if self.recent_games_queue:
@@ -628,8 +664,10 @@ class ConsoleUI:
                 except asyncio.QueueFull:
                     # Silently drop oldest - newer games take priority
                     logger.debug(f"Spotlight queue full, dropping: {game_info['name']}")
+            else:
+                logger.debug(f"Spotlight queue not initialized, cannot add: {game_info['name']}")
         except Exception as e:
-            logger.debug(f"Error adding game to spotlight: {e}")
+            logger.debug(f"Error adding game to spotlight: {e}", exc_info=True)
     
     def spotlight_next(self) -> None:
         """Navigate to next game in spotlight"""
@@ -656,6 +694,8 @@ class ConsoleUI:
         """
         if level_key in self.log_level_map:
             self.current_log_level = self.log_level_map[level_key]
+            self._log_cache_level = self.current_log_level
+            self._rebuild_visible_logs()
             self._cache_invalidation_pending = True
             logger.debug(f"Log level filter set to: {self.current_log_level}")
             self._render_logs_panel()
@@ -716,7 +756,7 @@ class ConsoleUI:
             'scanner': {'count': 0},
             'hashing': {'active': False, 'current': 0, 'total': 0, 'details': '', 'completed': 0},
             'api_fetch': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0, 'total_fetches': 0},
-            'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'by_type': {}, 'total_downloads': 0},
+            'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'validation_failed': 0, 'by_type': {}, 'total_downloads': 0},
             'completed': {'count': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
@@ -831,6 +871,7 @@ class ConsoleUI:
             'CRITICAL': 'bold red'
         }
         color = level_colors.get(level, 'white')
+        numeric_level = LEVEL_NUMERIC_MAP.get(level, logging.INFO)
         
         # Create Text object with styled level prefix and plain message
         # This avoids escaping issues - level uses markup, message is plain text
@@ -838,8 +879,24 @@ class ConsoleUI:
         text_entry.append(f"[{level:8}] ", style=color)
         text_entry.append(str(message))
         
-        # Add to buffer (automatically removes oldest if full)
-        self.log_buffer.append(text_entry)
+        # Track overflow so we can keep visible logs in sync without rebuilding everything
+        dropped_entry = None
+        if len(self.log_buffer) == self.log_buffer.maxlen:
+            dropped_entry = self.log_buffer.popleft()
+        
+        self._log_sequence += 1
+        entry = (self._log_sequence, numeric_level, text_entry)
+        self.log_buffer.append(entry)
+        
+        # Keep visible log window aligned with current filter
+        if dropped_entry and self._visible_logs and self._visible_logs[0] is dropped_entry[2]:
+            self._visible_logs.popleft()
+            self._log_cache_dirty = True
+        
+        if numeric_level >= self.current_log_level:
+            self._visible_logs.append(text_entry)
+            # deque already caps length, but we still mark cache dirty if oldest fell off
+            self._log_cache_dirty = True
         
         # Mark cache for invalidation (batched at 50ms intervals)
         self._cache_invalidation_pending = True
@@ -847,53 +904,48 @@ class ConsoleUI:
         # Note: Don't call _render_logs_panel() here - let background refresh handle it
         # This prevents blocking on every log entry
     
+    def _rebuild_visible_logs(self) -> None:
+        """Rebuild the filtered log window based on the current level without parsing strings"""
+        filtered_entries = []
+        for _, level_num, entry in reversed(self.log_buffer):
+            if level_num >= self.current_log_level:
+                filtered_entries.append(entry)
+                if len(filtered_entries) >= self._visible_log_limit:
+                    break
+        filtered_entries.reverse()
+        self._visible_logs = deque(filtered_entries, maxlen=self._visible_log_limit)
+        self._log_cache_dirty = True
+    
     def _render_logs_panel(self) -> None:
         """Render the logs panel with filtered log entries and batched cache invalidation"""
         try:
-            # Batch cache invalidation - only rebuild if 50ms elapsed and invalidation pending
             now = time.time()
+            
+            # If filter changed since last render, rebuild visible list first
+            if self._log_cache_level != self.current_log_level:
+                self._log_cache_level = self.current_log_level
+                self._rebuild_visible_logs()
+                self._cache_invalidation_pending = True
+            
+            # Batch cache invalidation - only rebuild if 30ms elapsed or cache is dirty
             should_rebuild = (
-                self._cache_invalidation_pending and 
-                (now - self.last_cache_invalidation) > 0.05  # Reduced from 0.1 to 0.05 (50ms)
+                (self._cache_invalidation_pending or self._log_cache_dirty or self._filtered_logs_cache is None)
+                and (now - self.last_cache_invalidation) > 0.03
             )
             
-            if should_rebuild or self._filtered_logs_cache is None:
-                if not self.log_buffer:
+            if should_rebuild:
+                if not self._visible_logs:
                     self._filtered_logs_cache = Text("No recent activity", style="dim")
                 else:
-                    # Build filtered log text based on current level
                     log_text = Text()
-                    
-                    # Map level names to numeric values for comparison
-                    level_numeric_map = {
-                        'DEBUG': 10,
-                        'INFO': 20,
-                        'WARNING': 30,
-                        'ERROR': 40,
-                        'CRITICAL': 50
-                    }
-                    
-                    for entry in self.log_buffer:
-                        # Extract level from entry text
-                        # Entry format is "[LEVEL    ] message"
-                        entry_str = entry.plain
-                        try:
-                            level_str = entry_str.split(']')[0].strip('[').strip()
-                            entry_level = level_numeric_map.get(level_str, 20)
-                            
-                            # Only include entries at or above current filter level
-                            if entry_level >= self.current_log_level:
-                                log_text.append(entry)
-                                log_text.append("\n")
-                        except (IndexError, KeyError):
-                            # If parsing fails, include the entry
-                            log_text.append(entry)
-                            log_text.append("\n")
-                    
+                    for entry in self._visible_logs:
+                        log_text.append(entry)
+                        log_text.append("\n")
                     self._filtered_logs_cache = log_text
                 
                 # Reset cache state
                 self._cache_invalidation_pending = False
+                self._log_cache_dirty = False
                 self.last_cache_invalidation = now
             
             # Build title with level indicators
@@ -903,9 +955,7 @@ class ConsoleUI:
                 20: "[3]INFO*",
                 10: "[4]DBG*"
             }
-            active_indicator = level_indicators.get(self.current_log_level, "[3]INFO*")
             
-            # Replace * in active indicator, dim others
             title_parts = []
             for level_num, indicator in level_indicators.items():
                 if level_num == self.current_log_level:
@@ -913,7 +963,7 @@ class ConsoleUI:
                 else:
                     title_parts.append(indicator.replace('*', ' '))
             
-            title = f"▣ LOGS {' '.join(title_parts)} | ←→ Navigate Spotlight"
+            title = f"▣ LOGS {' '.join(title_parts)} | [N/B] Navigate Spotlight"
             
             self.layout["logs"].update(
                 Panel(
@@ -1044,16 +1094,19 @@ class ConsoleUI:
             header_text.append(f"curateur v{__version__}", style=f"bold {RETRO_THEME['primary']}")
             header_text.append(" | ", style="dim")
             
+            # Show shutdown status if in progress
+            if self.is_shutting_down:
+                header_text.append("⏹ Shutting Down...", style=f"bold {RETRO_THEME['warning']}")
             # Show authentication status if in progress
-            if self.auth_status == 'in_progress':
+            elif self.auth_status == 'in_progress':
                 header_text.append("🔐 Authenticating with ScreenScraper...", style=f"bold {RETRO_THEME['warning']}")
             elif self.auth_status == 'complete':
                 header_text.append("✓ Authenticated", style=f"{RETRO_THEME['success']}")
                 header_text.append(" | ", style="dim")
                 # Fall through to show system progress
             
-            # System progress (only show if not authenticating)
-            if self.auth_status != 'in_progress':
+            # System progress (only show if not authenticating or shutting down)
+            if self.auth_status != 'in_progress' and not self.is_shutting_down:
                 if self.current_system:
                     percentage = (self.current_system_num - 1) / self.total_systems * 100 if self.total_systems > 0 else 0
                     header_text.append(f"{self.current_system.upper()} ", style=f"bold {RETRO_THEME['secondary']}")
@@ -1066,8 +1119,14 @@ class ConsoleUI:
             if self.keyboard_listener_enabled and self.keyboard_listener.is_paused:
                 header_text.append(" ⏸", style=f"bold {RETRO_THEME['warning']}")
             
-            # Add keyboard controls inline
-            if self.keyboard_listener_enabled:
+            # Show prompt message if prompting, otherwise show keyboard controls
+            if self.prompt_active:
+                header_text.append(" | ", style="dim")
+                header_text.append("⚠️  ", style="yellow")
+                header_text.append(self.prompt_message, style="bold yellow")
+                header_text.append(" ", style="")
+                header_text.append(self.prompt_options, style="dim yellow")
+            elif self.keyboard_listener_enabled:
                 header_text.append(" | ", style="dim")
                 header_text.append("[P]", style=f"bold {RETRO_THEME['secondary']}")
                 header_text.append("ause ", style="dim")
@@ -1111,6 +1170,11 @@ class ConsoleUI:
         if self.keyboard_listener_enabled:
             self.keyboard_listener.clear_quit_request()
     
+    def set_shutting_down(self) -> None:
+        """Set shutdown state and update header display"""
+        self.is_shutting_down = True
+        self._render_header()
+    
     def _render_pipeline_panel(self) -> None:
         """Render compact 3-column pipeline panel showing stage names, status, and totals"""
         try:
@@ -1134,22 +1198,26 @@ class ConsoleUI:
             
             spinner = self.spinner_frames[self.spinner_state]
             
-            # 1. Scanner
+            # Overall Progress Summary
             scanner = self.pipeline_stages['scanner']
             scanner_count = scanner['count']
+            completed_count = self.pipeline_stages['completed']['count']
+            
             if scanner_count > 0:
-                status = f"→ {scanner_count} files queued"
-                style = RETRO_THEME['success']
+                progress_pct = int((completed_count / scanner_count * 100)) if scanner_count > 0 else 0
+                progress_text = f"{completed_count}/{scanner_count} ({progress_pct}%)"
+                progress_style = RETRO_THEME['success'] if progress_pct > 0 else "dim"
             else:
-                status = "→ Waiting..."
-                style = "dim"
+                progress_text = "—"
+                progress_style = "dim"
+            
             pipeline_table.add_row(
-                Text("📂 Scanner", style="bold"),
-                Text(status, style=style),
-                Text(f"{scanner_count}", style="dim")
+                Text("📊 Progress", style="bold"),
+                Text(progress_text, style=progress_style),
+                Text("", style="dim")  # Empty totals column for summary row
             )
             
-            # 2. Hashing
+            # 1. Hashing
             hashing = self.pipeline_stages['hashing']
             hashed_count = hashing.get('completed', 0)
             if hashing['active']:
@@ -1170,7 +1238,7 @@ class ConsoleUI:
                 Text(f"{hashed_count}", style=RETRO_THEME['secondary'] if hashed_count > 0 else "dim")
             )
             
-            # 3. API Fetch
+            # 3. API Fetch - show cache/API/search breakdown
             api_fetch = self.pipeline_stages['api_fetch']
             active_roms = api_fetch['active_roms']
             cache_hits = api_fetch.get('cache_hits', 0)
@@ -1192,21 +1260,28 @@ class ConsoleUI:
                 status = "→ Idle"
                 style = "dim"
             
-            # Show total fetches + searches in parentheses
-            total_text = f"{total_fetches}"
+            # Total: cache/API/search breakdown
+            api_hits = cache_misses  # API hits = cache misses
+            total_parts = []
+            if cache_hits > 0:
+                total_parts.append(f"{cache_hits}c")
+            if api_hits > 0:
+                total_parts.append(f"{api_hits}a")
             if search_fallback > 0:
-                total_text += f" ({search_fallback}s)"
+                total_parts.append(f"{search_fallback}s")
+            total_text = "/".join(total_parts) if total_parts else "0"
             
             pipeline_table.add_row(
                 Text("🔍 API Fetch", style="bold"),
                 Text(status, style=style),
-                Text(total_text, style=RETRO_THEME['warning'] if total_fetches > 0 else "dim")
+                Text(total_text, style=RETRO_THEME['warning'] if total_requests > 0 else "dim")
             )
             
-            # 4. Media DL
+            # 4. Media - show downloads/validate success/validate fail
             media_dl = self.pipeline_stages['media_download']
             active_items = media_dl['active_roms']
             validated_count = media_dl.get('validated', 0)
+            validation_failed = media_dl.get('validation_failed', 0)
             total_downloads = media_dl.get('total_downloads', 0)
             
             if active_items:
@@ -1216,30 +1291,34 @@ class ConsoleUI:
                 status = f"→ {spinner} [{len(active_items)}/{media_dl['max_concurrent']}] {rom_name}: {media_type}{extra}"
                 style = RETRO_THEME['success']
             elif validated_count > 0:
-                status = f"→ {validated_count} validated"
-                style = "dim"
+                # Show validation stats: passed/failed
+                if validation_failed > 0:
+                    status = f"→ {validated_count} ok, {validation_failed} failed"
+                    style = RETRO_THEME['warning']
+                else:
+                    status = f"→ {validated_count} validated"
+                    style = "dim"
             else:
                 status = "→ Idle"
                 style = "dim"
+            
+            # Total: downloads/validate-ok/validate-fail
+            total_parts = []
+            if total_downloads > 0:
+                total_parts.append(f"{total_downloads}d")
+            if validated_count > 0:
+                total_parts.append(f"{validated_count}✓")
+            if validation_failed > 0:
+                total_parts.append(f"{validation_failed}✗")
+            total_text = "/".join(total_parts) if total_parts else "0"
+            
             pipeline_table.add_row(
-                Text("📥 Media DL", style="bold"),
+                Text("📥 Media", style="bold"),
                 Text(status, style=style),
-                Text(f"{total_downloads}", style=RETRO_THEME['success'] if total_downloads > 0 else "dim")
+                Text(total_text, style=RETRO_THEME['warning'] if validation_failed > 0 else (RETRO_THEME['success'] if total_downloads > 0 else "dim"))
             )
             
-            # 5. Complete
-            completed_count = self.pipeline_stages['completed']['count']
-            if completed_count > 0:
-                status = f"→ {completed_count} ROMs"
-                style = RETRO_THEME['success']
-            else:
-                status = "→ 0 ROMs"
-                style = "dim"
-            pipeline_table.add_row(
-                Text("✅ Complete", style="bold"),
-                Text(status, style=style),
-                Text(f"{completed_count}", style=RETRO_THEME['success'] if completed_count > 0 else "dim")
-            )
+            # 5. Complete - removed from table
             
             self.layout["threads"].update(
                 Panel(
@@ -1306,8 +1385,8 @@ class ConsoleUI:
             current_api_rate = performance_metrics.get('api_calls_per_minute', 0) if performance_metrics else 0
             
             # Row 1: Sparklines with current rates + cache metrics
-            throughput_sparkline = _create_sparkline(throughput_history if len(throughput_history) > 0 else [0], width=30, color=RETRO_THEME['success'])
-            api_sparkline = _create_sparkline(api_rate_history if len(api_rate_history) > 0 else [0], width=30, color=RETRO_THEME['warning'])
+            throughput_sparkline = _create_sparkline(throughput_history if len(throughput_history) > 0 else [0], width=10, color=RETRO_THEME['success'])
+            api_sparkline = _create_sparkline(api_rate_history if len(api_rate_history) > 0 else [0], width=10, color=RETRO_THEME['warning'])
             
             row1_parts = [
                 ("Throughput: ", RETRO_THEME['primary']),
@@ -1320,12 +1399,18 @@ class ConsoleUI:
             ]
             
             # Add cache metrics to row 1 if available
-            if cache_metrics and cache_metrics.get('enabled'):
+            # Use pipeline stage stats for consistency with pipeline view
+            api_fetch = self.pipeline_stages.get('api_fetch', {})
+            pipeline_cache_hits = api_fetch.get('cache_hits', 0)
+            pipeline_cache_misses = api_fetch.get('cache_misses', 0)
+            pipeline_total = pipeline_cache_hits + pipeline_cache_misses
+            
+            if cache_metrics and cache_metrics.get('enabled') and pipeline_total > 0:
                 total_entries = cache_metrics.get('total_entries', 0)
-                hit_rate = cache_metrics.get('hit_rate', 0.0)
-                hits = cache_metrics.get('hits', 0)
-                misses = cache_metrics.get('misses', 0)
-                total_requests = hits + misses
+                hit_rate = (pipeline_cache_hits / pipeline_total * 100) if pipeline_total > 0 else 0.0
+                hits = pipeline_cache_hits
+                misses = pipeline_cache_misses
+                total_requests = pipeline_total
                 
                 # Color code hit rate
                 if hit_rate >= 70:
@@ -1416,12 +1501,11 @@ class ConsoleUI:
                 Panel(error_text, title="Statistics", border_style="red", box=box.ROUNDED)
             )
     
-    def prompt_confirm(self, message: str, default: str = 'n') -> bool:
+    async def prompt_confirm(self, message: str, default: str = 'n') -> bool:
         """
-        Show confirmation prompt with y/n response
+        Show confirmation prompt with y/n response in header line
         
-        Temporarily stops Live display to show styled prompt panel,
-        captures user input with thread-safe locking, then restarts display.
+        Uses existing keyboard listener for input capture (no terminal mode changes).
         
         Args:
             message: Prompt message to display
@@ -1431,67 +1515,46 @@ class ConsoleUI:
             True if user confirms (y/yes), False otherwise
         
         Example:
-            if ui.prompt_confirm("Skip this system?", default='n'):
+            if await ui.prompt_confirm("Skip this system?", default='n'):
                 # User confirmed
                 skip_system()
         """
-        # Import prompt lock for thread safety
-        from curateur.ui.prompts import _prompt_lock
+        # Set prompt state to update header
+        self.prompt_active = True
+        self.prompt_message = message
+        self.prompt_options = f"[{default.upper()}/n]" if default.lower() == 'y' else f"[y/{default.upper()}]"
+        self.prompt_response = None  # Will be set by keyboard listener
         
-        # Build prompt string
-        if default.lower() == 'y':
-            prompt_str = f"{message} [Y/n]: "
-        elif default.lower() == 'n':
-            prompt_str = f"{message} [y/N]: "
-        else:
-            prompt_str = f"{message} [y/n]: "
-        
-        # Stop Live display for prompt
-        if self.live:
-            self.live.stop()
+        # Force header update to show prompt
+        self._render_header()
         
         try:
-            # Use thread-safe prompt lock
-            with _prompt_lock:
-                # Show styled prompt panel
-                prompt_panel = Panel(
-                    Text(prompt_str, style="bold yellow"),
-                    title="Confirmation Required",
-                    border_style="yellow"
-                )
-                self.console.print(prompt_panel)
-                
-                # Get user input
-                while True:
-                    try:
-                        response = input().strip().lower()
-                        
-                        # Handle empty response (use default)
-                        if not response:
-                            if default is None:
-                                self.console.print("[yellow]Please enter 'y' or 'n'[/yellow]")
-                                continue
-                            response = default.lower()
-                        
-                        # Validate response
-                        if response in ('y', 'yes'):
-                            logger.debug(f"User confirmed: {message}")
-                            return True
-                        elif response in ('n', 'no'):
-                            logger.debug(f"User declined: {message}")
-                            return False
-                        else:
-                            self.console.print("[yellow]Please enter 'y' or 'n'[/yellow]")
-                    
-                    except (KeyboardInterrupt, EOFError):
-                        logger.info("User interrupted prompt")
-                        self.console.print("\n[yellow]Cancelled[/yellow]")
-                        return False
+            # Wait for keyboard listener to set response
+            timeout = 30.0
+            elapsed = 0.0
+            
+            while elapsed < timeout:
+                if self.prompt_response is not None:
+                    # Got a response from keyboard listener
+                    result = self.prompt_response
+                    logger.debug(f"User {'confirmed' if result else 'declined'}: {message}")
+                    return result
+                await asyncio.sleep(0.05)  # Check every 50ms, yield control to event loop
+                elapsed += 0.05
+            
+            # Timeout - use default
+            logger.info(f"Prompt timed out, using default: {default}")
+            return default.lower() == 'y'
         
         finally:
-            # Restart Live display
-            if self.live:
-                self.live.start()
+            # Clear prompt state
+            self.prompt_active = False
+            self.prompt_message = ""
+            self.prompt_options = ""
+            self.prompt_response = None
+            
+            # Force header update to restore keyboard controls
+            self._render_header()
     
     def show_error(self, message: str) -> None:
         """

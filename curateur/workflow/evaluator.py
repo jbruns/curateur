@@ -186,26 +186,27 @@ class WorkflowEvaluator:
         gamelist_entry: Optional[GameEntry]
     ) -> bool:
         """
-        Check if calculated hash matches stored hash.
+        Check if calculated hash matches stored hash in cache.
         
         Args:
             calculated_hash: Hash calculated from ROM file
-            gamelist_entry: Gamelist entry with stored hash
+            gamelist_entry: Gamelist entry (for reference, not used for hash)
         
         Returns:
-            True if hashes match, False otherwise
+            True if ROM hash exists in cache (indicating ROM is unchanged), False otherwise
         """
         if calculated_hash is None:
             # No hash calculated (file too large or error)
             return False
         
-        if gamelist_entry is None:
-            # No gamelist entry
+        if not self.cache:
+            # No cache available - assume ROM changed
             return False
         
-        # Hash validation is now handled by cache layer
-        # If we got here without a cache hit, assume ROM changed
-        return False
+        # Check if this ROM hash exists in the cache
+        # If it exists, the ROM is unchanged and we have metadata cached
+        cached_data = self.cache.get(calculated_hash)
+        return cached_data is not None
     
     def _get_stored_hash(self, gamelist_entry: Optional[GameEntry]) -> Optional[str]:
         """
