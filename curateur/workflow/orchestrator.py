@@ -529,7 +529,6 @@ class WorkflowOrchestrator:
                 f"Evaluator decision for {rom_info.filename}: "
                 f"fetch_metadata={decision.fetch_metadata}, "
                 f"update_metadata={decision.update_metadata}, "
-                f"update_media={decision.update_media}, "
                 f"media_to_download={decision.media_to_download}, "
                 f"media_to_validate={decision.media_to_validate}, "
                 f"clean_disabled_media={decision.clean_disabled_media}, "
@@ -1720,6 +1719,11 @@ class WorkflowOrchestrator:
         if self.throttle_manager:
             api_quota = self.throttle_manager.get_quota_stats()
         
+        # Get cache metrics if available
+        cache_metrics = None
+        if self.api_client and self.api_client.cache:
+            cache_metrics = self.api_client.cache.get_metrics()
+        
         self.console_ui.update_footer(
             stats={
                 'successful': successful_count,
@@ -1729,7 +1733,8 @@ class WorkflowOrchestrator:
             api_quota=api_quota,
             thread_stats=thread_stats,
             performance_metrics=performance_metrics,
-            queue_pending=queue_stats['pending']
+            queue_pending=queue_stats['pending'],
+            cache_metrics=cache_metrics
         )
     
     def _prompt_gamelist_validation_failure(

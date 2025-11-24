@@ -67,6 +67,10 @@ class MetadataCache:
         self._memory_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_loaded = False
         
+        # Metrics tracking
+        self._hits: int = 0
+        self._misses: int = 0
+        
         logger.debug(
             f"MetadataCache initialized: cache_dir={self.cache_dir}, "
             f"ttl_days={ttl_days}, enabled={enabled}"
@@ -149,6 +153,7 @@ class MetadataCache:
         # Check if entry exists
         if rom_hash not in self._memory_cache:
             logger.debug(f"Cache miss: {rom_hash}")
+            self._misses += 1
             return None
         
         entry = self._memory_cache[rom_hash]
@@ -158,6 +163,7 @@ class MetadataCache:
             logger.debug(f"Cache expired: {rom_hash}")
             # Remove expired entry
             del self._memory_cache[rom_hash]
+            self._misses += 1
             return None
         
         # Validate ROM size if provided (quick validation without rehashing)
@@ -170,9 +176,11 @@ class MetadataCache:
                 )
                 # Remove invalid entry
                 del self._memory_cache[rom_hash]
+                self._misses += 1
                 return None
         
         logger.debug(f"Cache hit: {rom_hash}")
+        self._hits += 1
         return entry
     
     def put(
@@ -354,6 +362,19 @@ class MetadataCache:
         
         # Save to disk
         self._save_cache()
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get cache performance metrics."""
+        self._load_cache()
+        total_requests = self._hits + self._misses
+        hit_rate = (self._hits / total_requests * 100) if total_requests > 0 else 0.0
+        return {
+            'hits': self._hits,
+            'misses': self._misses,
+            'total_entries': len(self._memory_cache),
+            'hit_rate': hit_rate,
+            'enabled': self.enabled
+        }
     
     def get_stats(self) -> Dict[str, Any]:
         """

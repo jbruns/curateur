@@ -6,9 +6,8 @@ PyYAML>=6.0
 lxml>=4.9.0
 httpx>=0.24.0
 Pillow>=10.0.0
-rich>=13.0.0
+rich>=14.2.0  # Latest stable release
 psutil>=5.9.0
-pynput>=1.7.6  # Keyboard controls for pause/skip/quit
 
 # Development dependencies (optional)
 # Testing

@@ -19,11 +19,47 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TaskID
-from rich.sparkline import Sparkline
 from rich.table import Table
 from rich.text import Text
 
 logger = logging.getLogger(__name__)
+
+
+def _create_sparkline(data: list, width: int = 30, color: str = "cyan") -> Text:
+    """
+    Create a sparkline visualization using Unicode block characters
+    
+    Args:
+        data: List of numeric values to visualize
+        width: Maximum width in characters
+        color: Color for the sparkline
+    
+    Returns:
+        Rich Text object with sparkline visualization
+    """
+    if not data or len(data) == 0:
+        return Text("▁" * min(width, 10), style=f"dim {color}")
+    
+    # Take last 'width' values
+    values = data[-width:]
+    
+    # Normalize to 0-7 range (8 block characters)
+    min_val = min(values)
+    max_val = max(values)
+    
+    if max_val == min_val:
+        # All values same - show middle bar
+        chars = "▄" * len(values)
+    else:
+        # Map to block characters: ▁▂▃▄▅▆▇█
+        blocks = "▁▂▃▄▅▆▇█"
+        chars = ""
+        for val in values:
+            normalized = (val - min_val) / (max_val - min_val)
+            block_idx = int(normalized * 7)
+            chars += blocks[block_idx]
+    
+    return Text(chars, style=color)
 
 
 # Retro theme color palette
@@ -178,9 +214,9 @@ class ConsoleUI:
         # Pipeline stage tracking
         self.pipeline_stages = {
             'scanner': {'count': 0},
-            'hashing': {'active': False, 'current': 0, 'total': 0, 'details': ''},
-            'api_fetch': {'active_roms': [], 'max_concurrent': 3, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0},
-            'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'by_type': {}},
+            'hashing': {'active': False, 'current': 0, 'total': 0, 'details': '', 'completed': 0},
+            'api_fetch': {'active_roms': [], 'max_concurrent': 3, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0, 'total_fetches': 0},
+            'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'by_type': {}, 'total_downloads': 0},
             'completed': {'count': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
@@ -209,6 +245,9 @@ class ConsoleUI:
         self.spotlight_auto_cycle: bool = True
         self.spotlight_auto_cycle_pause_until: float = 0.0
         
+        # Authentication status
+        self.auth_status: Optional[str] = None  # None, 'in_progress', 'complete'
+        
         # Animation tracking for interval-based refresh
         self.spinner_state = 0
         self.spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -236,7 +275,7 @@ class ConsoleUI:
         layout = Layout()
         layout.split_column(
             Layout(name="header", size=1),
-            Layout(name="threads", size=3),
+            Layout(name="threads", size=7),  # 5 stages + 2 for borders/title
             Layout(name="spotlight", size=5),
             Layout(name="logs", ratio=1),  # Take remaining space
             Layout(name="footer", size=4)
@@ -254,7 +293,7 @@ class ConsoleUI:
                 Text("Ready to begin processing", style="dim"),
                 title="⚡ PIPELINE",
                 border_style=RETRO_THEME['success'],
-                box=box.SIMPLE
+                box=box.ROUNDED
             )
         )
         
@@ -267,7 +306,7 @@ class ConsoleUI:
                 Text("Logs will appear here", style="dim"),
                 title="▣ LOGS [1]ERR [2]WARN [3]INFO* [4]DBG | ←→ Navigate Spotlight",
                 border_style=RETRO_THEME['primary'],
-                box=box.SIMPLE
+                box=box.ROUNDED
             )
         )
         
@@ -293,7 +332,7 @@ class ConsoleUI:
             self.live = Live(
                 self.layout,
                 console=self.console,
-                refresh_per_second=10,
+                refresh_per_second=20,  # Increased from 10 to 20 for more responsive updates
                 screen=False
             )
             self.live.start()
@@ -359,14 +398,14 @@ class ConsoleUI:
     
     async def _background_refresh(self) -> None:
         """
-        Background task that updates UI every 250ms for spinner animation and spotlight cycling
+        Background task that updates UI every 200ms for spinner animation and spotlight cycling
         
         This ensures the UI updates even when no progress is being made,
         keeping spinners animated for active operations and cycling spotlight display.
         """
         try:
             while True:
-                await asyncio.sleep(0.25)  # 250ms refresh interval
+                await asyncio.sleep(0.2)  # Reduced from 250ms to 200ms for snappier updates
                 
                 # Increment spinner state
                 self.spinner_state = (self.spinner_state + 1) % len(self.spinner_frames)
@@ -399,6 +438,10 @@ class ConsoleUI:
                 
                 # Update spotlight panel
                 self._render_spotlight_panel()
+                
+                # Update logs panel if cache invalidation is pending
+                if self._cache_invalidation_pending:
+                    self._render_logs_panel()
         except asyncio.CancelledError:
             # Task was cancelled (UI stopped) - this is expected
             logger.debug("Background refresh task cancelled")
@@ -418,6 +461,10 @@ class ConsoleUI:
         self.pipeline_stages['hashing']['current'] = current
         self.pipeline_stages['hashing']['total'] = total
         self.pipeline_stages['hashing']['details'] = details
+        # Increment completed count when advancing
+        if current > self.pipeline_stages['hashing'].get('_last_current', 0):
+            self.pipeline_stages['hashing']['completed'] = current
+        self.pipeline_stages['hashing']['_last_current'] = current
         self._render_pipeline_panel()
     
     def update_api_fetch_stage(self, rom_name: str, action: str, cache_hit: bool = False) -> None:
@@ -440,6 +487,7 @@ class ConsoleUI:
                 self.pipeline_stages['api_fetch']['cache_hits'] += 1
             else:
                 self.pipeline_stages['api_fetch']['cache_misses'] += 1
+            self.pipeline_stages['api_fetch']['total_fetches'] += 1
         self._render_pipeline_panel()
     
     def update_media_download_stage(self, rom_name: str, media_type: str, action: str) -> None:
@@ -467,6 +515,7 @@ class ConsoleUI:
             media_type: Optional media type (box, screenshot, video, etc.) for breakdown tracking
         """
         self.pipeline_stages['media_download']['validated'] += 1
+        self.pipeline_stages['media_download']['total_downloads'] += 1
         
         # Track by type for detailed breakdown
         if media_type:
@@ -665,9 +714,9 @@ class ConsoleUI:
         
         self.pipeline_stages = {
             'scanner': {'count': 0},
-            'hashing': {'active': False, 'current': 0, 'total': 0, 'details': ''},
-            'api_fetch': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0},
-            'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'by_type': {}},
+            'hashing': {'active': False, 'current': 0, 'total': 0, 'details': '', 'completed': 0},
+            'api_fetch': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0, 'total_fetches': 0},
+            'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'by_type': {}, 'total_downloads': 0},
             'completed': {'count': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
@@ -792,20 +841,20 @@ class ConsoleUI:
         # Add to buffer (automatically removes oldest if full)
         self.log_buffer.append(text_entry)
         
-        # Mark cache for invalidation (batched at 100ms intervals)
+        # Mark cache for invalidation (batched at 50ms intervals)
         self._cache_invalidation_pending = True
         
-        # Update log panel
-        self._render_logs_panel()
+        # Note: Don't call _render_logs_panel() here - let background refresh handle it
+        # This prevents blocking on every log entry
     
     def _render_logs_panel(self) -> None:
         """Render the logs panel with filtered log entries and batched cache invalidation"""
         try:
-            # Batch cache invalidation - only rebuild if 100ms elapsed and invalidation pending
+            # Batch cache invalidation - only rebuild if 50ms elapsed and invalidation pending
             now = time.time()
             should_rebuild = (
                 self._cache_invalidation_pending and 
-                (now - self.last_cache_invalidation) > 0.1
+                (now - self.last_cache_invalidation) > 0.05  # Reduced from 0.1 to 0.05 (50ms)
             )
             
             if should_rebuild or self._filtered_logs_cache is None:
@@ -871,7 +920,7 @@ class ConsoleUI:
                     self._filtered_logs_cache,
                     title=title,
                     border_style=RETRO_THEME['primary'],
-                    box=box.SIMPLE
+                    box=box.ROUNDED
                 )
             )
         except Exception as e:
@@ -882,7 +931,7 @@ class ConsoleUI:
                     Text(f"Error rendering logs: {e}", style="red"),
                     title="▣ LOGS",
                     border_style=RETRO_THEME['error'],
-                    box=box.SIMPLE
+                    box=box.ROUNDED
                 )
             )
     
@@ -897,7 +946,7 @@ class ConsoleUI:
                         init_text,
                         title="◈ SPOTLIGHT",
                         border_style=RETRO_THEME['secondary'],
-                        box=box.SIMPLE
+                        box=box.ROUNDED
                     )
                 )
                 return
@@ -963,7 +1012,7 @@ class ConsoleUI:
                     spotlight_text,
                     title=f"◈ SPOTLIGHT ({self.spotlight_index + 1}/{len(self.recent_games)})",
                     border_style=RETRO_THEME['secondary'],
-                    box=box.SIMPLE
+                    box=box.ROUNDED
                 )
             )
         except Exception as e:
@@ -973,9 +1022,19 @@ class ConsoleUI:
                     Text(f"Error rendering spotlight: {e}", style="red"),
                     title="◈ SPOTLIGHT",
                     border_style=RETRO_THEME['error'],
-                    box=box.SIMPLE
+                    box=box.ROUNDED
                 )
             )
+    
+    def set_auth_status(self, status: str) -> None:
+        """
+        Set authentication status indicator
+        
+        Args:
+            status: One of 'in_progress', 'complete', or None to clear
+        """
+        self.auth_status = status
+        self._render_header()
     
     def _render_header(self) -> None:
         """Render compact single-line header with system progress and inline controls"""
@@ -985,14 +1044,23 @@ class ConsoleUI:
             header_text.append(f"curateur v{__version__}", style=f"bold {RETRO_THEME['primary']}")
             header_text.append(" | ", style="dim")
             
-            # System progress
-            if self.current_system:
-                percentage = (self.current_system_num - 1) / self.total_systems * 100 if self.total_systems > 0 else 0
-                header_text.append(f"{self.current_system.upper()} ", style=f"bold {RETRO_THEME['secondary']}")
-                header_text.append(f"({self.current_system_num}/{self.total_systems}) ", style="dim")
-                header_text.append(f"{percentage:.0f}%", style=RETRO_THEME['success'] if percentage > 0 else "dim")
-            else:
-                header_text.append("Initializing...", style="dim")
+            # Show authentication status if in progress
+            if self.auth_status == 'in_progress':
+                header_text.append("🔐 Authenticating with ScreenScraper...", style=f"bold {RETRO_THEME['warning']}")
+            elif self.auth_status == 'complete':
+                header_text.append("✓ Authenticated", style=f"{RETRO_THEME['success']}")
+                header_text.append(" | ", style="dim")
+                # Fall through to show system progress
+            
+            # System progress (only show if not authenticating)
+            if self.auth_status != 'in_progress':
+                if self.current_system:
+                    percentage = (self.current_system_num - 1) / self.total_systems * 100 if self.total_systems > 0 else 0
+                    header_text.append(f"{self.current_system.upper()} ", style=f"bold {RETRO_THEME['secondary']}")
+                    header_text.append(f"({self.current_system_num}/{self.total_systems}) ", style="dim")
+                    header_text.append(f"{percentage:.0f}%", style=RETRO_THEME['success'] if percentage > 0 else "dim")
+                else:
+                    header_text.append("Initializing...", style="dim")
             
             # Add pause badge if paused
             if self.keyboard_listener_enabled and self.keyboard_listener.is_paused:
@@ -1044,15 +1112,15 @@ class ConsoleUI:
             self.keyboard_listener.clear_quit_request()
     
     def _render_pipeline_panel(self) -> None:
-        """Render compact 2-column pipeline panel showing stage names and status"""
+        """Render compact 3-column pipeline panel showing stage names, status, and totals"""
         try:
-            # Throttle updates to every 100ms
+            # Throttle updates to every 50ms (reduced from 100ms for more responsive UI)
             now = time.time()
-            if now - self.last_pipeline_update < 0.1:
+            if now - self.last_pipeline_update < 0.05:
                 return
             self.last_pipeline_update = now
             
-            # Create 2-column table with auto-balanced widths
+            # Create 3-column table with auto-balanced widths
             pipeline_table = Table(
                 show_header=False,
                 show_edge=False,
@@ -1062,6 +1130,7 @@ class ConsoleUI:
             )
             pipeline_table.add_column("Stage", style="bold", overflow="fold")
             pipeline_table.add_column("Status", overflow="fold")
+            pipeline_table.add_column("Total", justify="right", overflow="fold")
             
             spinner = self.spinner_frames[self.spinner_state]
             
@@ -1076,11 +1145,13 @@ class ConsoleUI:
                 style = "dim"
             pipeline_table.add_row(
                 Text("📂 Scanner", style="bold"),
-                Text(status, style=style)
+                Text(status, style=style),
+                Text(f"{scanner_count}", style="dim")
             )
             
             # 2. Hashing
             hashing = self.pipeline_stages['hashing']
+            hashed_count = hashing.get('completed', 0)
             if hashing['active']:
                 current = hashing['current']
                 total = hashing['total']
@@ -1095,7 +1166,8 @@ class ConsoleUI:
                 style = "dim"
             pipeline_table.add_row(
                 Text("⚡ Hashing", style="bold"),
-                Text(status, style=style)
+                Text(status, style=style),
+                Text(f"{hashed_count}", style=RETRO_THEME['secondary'] if hashed_count > 0 else "dim")
             )
             
             # 3. API Fetch
@@ -1104,6 +1176,8 @@ class ConsoleUI:
             cache_hits = api_fetch.get('cache_hits', 0)
             cache_misses = api_fetch.get('cache_misses', 0)
             total_requests = cache_hits + cache_misses
+            total_fetches = api_fetch.get('total_fetches', 0)
+            search_fallback = api_fetch.get('search_fallback', 0)
             
             if active_roms:
                 rom_name = self._truncate_rom_name(active_roms[0], 20)
@@ -1117,15 +1191,23 @@ class ConsoleUI:
             else:
                 status = "→ Idle"
                 style = "dim"
+            
+            # Show total fetches + searches in parentheses
+            total_text = f"{total_fetches}"
+            if search_fallback > 0:
+                total_text += f" ({search_fallback}s)"
+            
             pipeline_table.add_row(
                 Text("🔍 API Fetch", style="bold"),
-                Text(status, style=style)
+                Text(status, style=style),
+                Text(total_text, style=RETRO_THEME['warning'] if total_fetches > 0 else "dim")
             )
             
             # 4. Media DL
             media_dl = self.pipeline_stages['media_download']
             active_items = media_dl['active_roms']
             validated_count = media_dl.get('validated', 0)
+            total_downloads = media_dl.get('total_downloads', 0)
             
             if active_items:
                 rom_name = self._truncate_rom_name(active_items[0][0], 15)
@@ -1141,7 +1223,8 @@ class ConsoleUI:
                 style = "dim"
             pipeline_table.add_row(
                 Text("📥 Media DL", style="bold"),
-                Text(status, style=style)
+                Text(status, style=style),
+                Text(f"{total_downloads}", style=RETRO_THEME['success'] if total_downloads > 0 else "dim")
             )
             
             # 5. Complete
@@ -1154,7 +1237,8 @@ class ConsoleUI:
                 style = "dim"
             pipeline_table.add_row(
                 Text("✅ Complete", style="bold"),
-                Text(status, style=style)
+                Text(status, style=style),
+                Text(f"{completed_count}", style=RETRO_THEME['success'] if completed_count > 0 else "dim")
             )
             
             self.layout["threads"].update(
@@ -1162,7 +1246,7 @@ class ConsoleUI:
                     pipeline_table,
                     title="⚡ PIPELINE",
                     border_style=RETRO_THEME['success'],
-                    box=box.SIMPLE
+                    box=box.ROUNDED
                 )
             )
         except Exception as e:
@@ -1191,13 +1275,14 @@ class ConsoleUI:
         api_quota: Dict[str, Any],
         thread_stats: Optional[Dict[str, Any]] = None,
         performance_metrics: Optional[Dict[str, Any]] = None,
-        queue_pending: int = 0
+        queue_pending: int = 0,
+        cache_metrics: Optional[Dict[str, Any]] = None
     ) -> None:
         """
         Update footer panel with sparklines and compact metrics
         
         Two-row format:
-        Row 1: Throughput sparkline + current rate | API rate sparkline + current rate
+        Row 1: Throughput sparkline + current rate | API rate sparkline + current rate | Cache metrics (if enabled)
         Row 2: API quota progress bar + percentage | Active threads + ETA
         
         Args:
@@ -1206,6 +1291,7 @@ class ConsoleUI:
             thread_stats: Optional thread pool stats (active_threads, max_threads)
             performance_metrics: Optional performance metrics (throughput_history, api_rate_history, eta)
             queue_pending: Number of pending items in work queue
+            cache_metrics: Optional cache metrics (hits, misses, total_entries, hit_rate, enabled)
         """
         try:
             self.current_stats = stats
@@ -1216,22 +1302,48 @@ class ConsoleUI:
             # Extract time-series data for sparklines
             throughput_history = performance_metrics.get('throughput_history', []) if performance_metrics else []
             api_rate_history = performance_metrics.get('api_rate_history', []) if performance_metrics else []
-            current_throughput = performance_metrics.get('roms_per_second', 0) if performance_metrics else 0
-            current_api_rate = performance_metrics.get('api_calls_per_second', 0) if performance_metrics else 0
+            current_throughput = performance_metrics.get('roms_per_hour', 0) if performance_metrics else 0
+            current_api_rate = performance_metrics.get('api_calls_per_minute', 0) if performance_metrics else 0
             
-            # Row 1: Sparklines with current rates
-            throughput_sparkline = Sparkline(throughput_history if len(throughput_history) > 0 else [0], width=30)
-            api_sparkline = Sparkline(api_rate_history if len(api_rate_history) > 0 else [0], width=30)
+            # Row 1: Sparklines with current rates + cache metrics
+            throughput_sparkline = _create_sparkline(throughput_history if len(throughput_history) > 0 else [0], width=30, color=RETRO_THEME['success'])
+            api_sparkline = _create_sparkline(api_rate_history if len(api_rate_history) > 0 else [0], width=30, color=RETRO_THEME['warning'])
             
-            row1 = Text.assemble(
+            row1_parts = [
                 ("Throughput: ", RETRO_THEME['primary']),
                 throughput_sparkline,
-                (f" {current_throughput:.2f} ROMs/s", RETRO_THEME['success']),
+                (f" {current_throughput:.1f} ROMs/hr", RETRO_THEME['success']),
                 ("  |  ", "dim"),
                 ("API Rate: ", RETRO_THEME['primary']),
                 api_sparkline,
-                (f" {current_api_rate:.1f} calls/s", RETRO_THEME['warning'])
-            )
+                (f" {current_api_rate:.1f} calls/min", RETRO_THEME['warning'])
+            ]
+            
+            # Add cache metrics to row 1 if available
+            if cache_metrics and cache_metrics.get('enabled'):
+                total_entries = cache_metrics.get('total_entries', 0)
+                hit_rate = cache_metrics.get('hit_rate', 0.0)
+                hits = cache_metrics.get('hits', 0)
+                misses = cache_metrics.get('misses', 0)
+                total_requests = hits + misses
+                
+                # Color code hit rate
+                if hit_rate >= 70:
+                    hit_rate_color = RETRO_THEME['success']
+                elif hit_rate >= 40:
+                    hit_rate_color = RETRO_THEME['warning']
+                else:
+                    hit_rate_color = RETRO_THEME['error']
+                
+                row1_parts.extend([
+                    ("  |  ", "dim"),
+                    ("Cache: ", RETRO_THEME['primary']),
+                    (f"{total_entries} entries, ", RETRO_THEME['accent']),
+                    (f"{hit_rate:.0f}%", hit_rate_color),
+                    (f" ({hits}/{total_requests})", "dim")
+                ])
+            
+            row1 = Text.assemble(*row1_parts)
             
             # Row 2: API quota progress bar + threads + ETA
             # Note: Keys match ScreenScraper API field names (lowercase, no underscores)
@@ -1294,14 +1406,14 @@ class ConsoleUI:
             footer_content = Text.assemble(row1, "\n", row2)
             
             self.layout["footer"].update(
-                Panel(footer_content, title="📊 Performance", border_style=RETRO_THEME['primary'], box=box.SIMPLE)
+                Panel(footer_content, title="📊 Performance", border_style=RETRO_THEME['primary'], box=box.ROUNDED)
             )
         except Exception as e:
             logger.error(f"Error updating footer: {e}", exc_info=True)
             # Show error state in panel
             error_text = Text(f"Error rendering statistics: {str(e)[:50]}", style="red")
             self.layout["footer"].update(
-                Panel(error_text, title="Statistics", border_style="red")
+                Panel(error_text, title="Statistics", border_style="red", box=box.ROUNDED)
             )
     
     def prompt_confirm(self, message: str, default: str = 'n') -> bool:

@@ -21,9 +21,9 @@ class PerformanceMetrics:
     elapsed_seconds: float = 0.0
     estimated_total_seconds: float = 0.0
     
-    # Throughput
-    roms_per_second: float = 0.0
-    api_calls_per_second: float = 0.0
+    # Throughput (display units)
+    roms_per_hour: float = 0.0
+    api_calls_per_minute: float = 0.0
     downloads_per_second: float = 0.0
     
     # Counts
@@ -45,8 +45,8 @@ class PerformanceMetrics:
     avg_rom_time: float = 0.0  # Average total ROM processing time in seconds
     
     # Time-series for sparklines (10-second window at 0.25s refresh = 40 samples)
-    throughput_history: list = field(default_factory=list)  # ROMs/second history
-    api_rate_history: list = field(default_factory=list)  # API calls/second history
+    throughput_history: list = field(default_factory=list)  # ROMs/hour history
+    api_rate_history: list = field(default_factory=list)  # API calls/minute history
     
 
 class PerformanceMonitor:
@@ -176,6 +176,10 @@ class PerformanceMonitor:
         api_per_sec = self.api_calls / elapsed if elapsed > 0 else 0.0
         downloads_per_sec = self.downloads / elapsed if elapsed > 0 else 0.0
         
+        # Convert to display units
+        roms_per_hour = roms_per_sec * 3600  # ROMs per hour
+        api_per_minute = api_per_sec * 60  # API calls per minute
+        
         # Calculate completion
         percent = (
             (self.roms_processed / self.total_roms * 100)
@@ -188,8 +192,8 @@ class PerformanceMonitor:
         avg_rom_time = self._calculate_average_with_outlier_exclusion(self.rom_times)
         
         # Append current rates to history for sparkline visualization
-        self.throughput_history.append(roms_per_sec)
-        self.api_rate_history.append(api_per_sec)
+        self.throughput_history.append(roms_per_hour)
+        self.api_rate_history.append(api_per_minute)
         
         # Calculate ETA with caching to reduce jitter
         remaining_roms = self.total_roms - self.roms_processed
@@ -218,8 +222,8 @@ class PerformanceMonitor:
         return PerformanceMetrics(
             elapsed_seconds=elapsed,
             estimated_total_seconds=elapsed + eta,
-            roms_per_second=roms_per_sec,
-            api_calls_per_second=api_per_sec,
+            roms_per_hour=roms_per_hour,
+            api_calls_per_minute=api_per_minute,
             downloads_per_second=downloads_per_sec,
             roms_processed=self.roms_processed,
             roms_total=self.total_roms,
@@ -242,14 +246,14 @@ class PerformanceMonitor:
         logger.info(
             f"Performance: {metrics.roms_processed}/{metrics.roms_total} ROMs "
             f"({metrics.percent_complete:.1f}%) | "
-            f"{metrics.roms_per_second:.2f} ROMs/s | "
+            f"{metrics.roms_per_hour:.1f} ROMs/hr | "
             f"ETA: {metrics.eta_seconds / 60:.1f} min"
         )
         
         logger.debug(
             f"Resources: {metrics.memory_mb:.1f} MB memory, "
             f"{metrics.cpu_percent:.1f}% CPU | "
-            f"API: {metrics.api_calls} calls ({metrics.api_calls_per_second:.2f}/s) | "
+            f"API: {metrics.api_calls} calls ({metrics.api_calls_per_minute:.1f}/min) | "
             f"Downloads: {metrics.downloads} ({metrics.downloads_per_second:.2f}/s)"
         )
     

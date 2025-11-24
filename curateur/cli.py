@@ -337,12 +337,19 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     
     # Authenticate with ScreenScraper and get user limits
     logger.debug(f"Starting authentication, console_ui={'active' if console_ui else 'disabled'}")
-    # Authentication UI update removed - now handled by pipeline stages
+    
+    # Show authentication status in UI
+    if console_ui:
+        console_ui.set_auth_status('in_progress')
     
     try:
         logger.debug("Calling api_client.get_user_info()")
         user_limits = await api_client.get_user_info()
         logger.debug(f"Authentication successful: {user_limits}")
+        
+        # Mark authentication as complete
+        if console_ui:
+            console_ui.set_auth_status('complete')
         
         # Initialize thread pool with actual API limits
         thread_manager.initialize_pools(user_limits)

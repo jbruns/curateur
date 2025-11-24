@@ -46,7 +46,8 @@ def scan_system(
     
     # Check if directory exists
     if not rom_path.exists():
-        raise ScannerError(f"ROM directory not found: {rom_path}")
+        logger.info(f"ROM directory not found, skipping system: {rom_path}")
+        return []
     
     if not rom_path.is_dir():
         raise ScannerError(f"ROM path is not a directory: {rom_path}")
