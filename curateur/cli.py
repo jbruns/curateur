@@ -360,9 +360,10 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             max_concurrent = user_limits['maxthreads']
             # Close old client and create new one with scaled pool
             await client.aclose()
-            client = pool_manager.create_client(max_connections=max_concurrent * 2)
+            pool_size = max_concurrent + 1 if max_concurrent >= 1 else max_concurrent
+            client = pool_manager.create_client(max_connections=pool_size)
             api_client.client = client  # Update API client's reference
-            logger.info(f"Scaled connection pool to {max_concurrent * 2} connections (2x concurrency limit)")
+            logger.info(f"Scaled connection pool to {pool_size} connections (aligned to API concurrency limit)")
         
         # Update throttle manager concurrency limit to match API maxthreads
         if 'maxthreads' in user_limits:

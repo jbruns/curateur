@@ -63,27 +63,28 @@ class ConnectionPoolManager:
         limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=max_connections,
-            keepalive_expiry=60.0  # Keep connections alive for 60 seconds
+            keepalive_expiry=300.0  # Keep connections alive for 5 minutes to avoid re-handshakes
         )
         
         # Configure timeout
         timeout_config = httpx.Timeout(
-            connect=10.0,
+            connect=1.5,
             read=timeout,
-            write=30.0,
-            pool=None  # No timeout for acquiring connection from pool
+            write=5.0,
+            pool=1.0  # Fail fast if pool is exhausted or a connection is unhealthy
         )
         
-        # Configure transport with retries
+        # Configure transport without built-in retries (handled by higher-level backoff)
         transport = httpx.AsyncHTTPTransport(
             limits=limits,
-            retries=3
+            retries=0
         )
         
         client = httpx.AsyncClient(
             timeout=timeout_config,
             transport=transport,
-            follow_redirects=True
+            follow_redirects=False,
+            http2=False  # Explicit HTTP/1.1 (ScreenScraper does not support HTTP/2)
         )
         
         logger.info(

@@ -70,6 +70,12 @@ class ScreenScraperClient:
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
         self._quota_warning_threshold = config.get('api', {}).get('quota_warning_threshold', 0.95)
+        self._timeout = httpx.Timeout(
+            connect=1.5,
+            read=self.request_timeout,
+            write=5.0,
+            pool=1.0
+        )
         
         # Scrape mode for cache behavior
         self.scrape_mode = config.get('scraping', {}).get('scrape_mode', 'changed')
@@ -212,7 +218,7 @@ class ScreenScraperClient:
             response = await self.client.get(
                 url,
                 params=params,
-                timeout=self.request_timeout
+                timeout=self._timeout
             )
         except httpx.TimeoutException:
             logger.error("Authentication failed: Request timeout - network error, retry possible")
@@ -345,7 +351,7 @@ class ScreenScraperClient:
                     self.client.get(
                         url,
                         params=params,
-                        timeout=self.request_timeout
+                        timeout=self._timeout
                     )
                 )
                 
@@ -579,7 +585,7 @@ class ScreenScraperClient:
                     self.client.get(
                         url,
                         params=params,
-                        timeout=self.request_timeout
+                        timeout=self._timeout
                     )
                 )
                 
@@ -692,4 +698,3 @@ class ScreenScraperClient:
                           requestskotoday, maxrequestskoperday
         """
         return self._user_limits
-
