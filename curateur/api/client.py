@@ -166,7 +166,7 @@ class ScreenScraperClient:
             )
             
             if not is_match:
-                # Log verification failure
+                # Log verification failure with formatted details
                 print(format_verification_result(
                     rom_info.filename,
                     game_data['name'],
@@ -174,7 +174,8 @@ class ScreenScraperClient:
                     similarity,
                     reason
                 ))
-                raise SkippableAPIError("Name verification failed")
+                # Include API name in error message for logging
+                raise SkippableAPIError(f"Name verification failed (API returned: '{game_data['name']}')")
         
         return game_data
     
