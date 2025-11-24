@@ -5,6 +5,7 @@ Parses existing gamelist.xml files and merges with new scraped data,
 preserving user edits.
 """
 
+from copy import deepcopy
 from pathlib import Path
 from typing import List, Dict, Optional
 from lxml import etree
@@ -86,7 +87,6 @@ class GamelistParser:
             playcount=self._get_int(game_elem, "playcount"),
             lastplayed=self._get_text(game_elem, "lastplayed"),
             hidden=self._get_bool(game_elem, "hidden"),
-            hash=self._parse_hash_element(game_elem),
             extra_fields=self._get_extra_fields(game_elem)
         )
         
@@ -107,69 +107,27 @@ class GamelistParser:
                 return None
         return None
     
-    def _get_int(self, element: etree.Element, tag: str) -> int:
+    def _get_int(self, element: etree.Element, tag: str) -> Optional[int]:
         """Get integer value of child element."""
         text = self._get_text(element, tag)
         if text:
             try:
                 return int(text)
             except ValueError:
-                return 0
-        return 0
+                return None
+        return None
     
     def _get_bool(self, element: etree.Element, tag: str) -> bool:
         """Get boolean value of child element."""
         text = self._get_text(element, tag)
         return text and text.lower() == "true"
     
-    def _parse_hash_element(self, element: etree.Element) -> Optional[Dict[str, Dict[str, str]]]:
-        """
-        Parse <hash> element with ROM and media hash information.
-        
-        Structure:
-            <hash crc32="ABC123" md5="..." sha1="...">
-                <cover>DEF456</cover>
-                <miximage>789ABC</miximage>
-            </hash>
-        
-        Returns:
-            Dict with structure: {'rom': {'crc32': '...', ...}, 'media': {'cover': '...', ...}}
-            Returns None if hash element not present or empty
-        """
-        hash_elem = element.find("hash")
-        if hash_elem is None:
-            return None
-        
-        hash_data = {}
-        
-        # Extract ROM hashes from attributes
-        rom_hashes = {}
-        for algorithm in ['crc32', 'md5', 'sha1']:
-            if hash_elem.get(algorithm):
-                rom_hashes[algorithm] = hash_elem.get(algorithm)
-        
-        if rom_hashes:
-            hash_data['rom'] = rom_hashes
-        
-        # Extract media hashes from child elements
-        media_hashes = {}
-        for child in hash_elem:
-            if child.text:
-                # Child tag is singular media type (e.g., 'cover', 'miximage')
-                media_hashes[child.tag] = child.text
-        
-        if media_hashes:
-            hash_data['media'] = media_hashes
-        
-        return hash_data if hash_data else None
-    
     def _get_extra_fields(self, element: etree.Element) -> dict:
         """Extract unknown XML fields not managed by curateur."""
         # Fields that curateur actively manages and updates
         managed_fields = {
             'path', 'name', 'desc', 'rating', 'releasedate',
-            'developer', 'publisher', 'genre', 'players',
-            'hash'  # ES-DE compatibility element
+            'developer', 'publisher', 'genre', 'players'
         }
         
         # User-editable fields that curateur reads and preserves but doesn't write
@@ -188,8 +146,17 @@ class GamelistParser:
         
         extra = {}
         for child in element:
-            if child.tag not in known_fields and child.text:
+            if child.tag in known_fields:
+                continue
+            
+            if len(child) > 0 or child.attrib:
+                # Preserve full element (attributes/children) for unknown structured fields
+                extra[child.tag] = deepcopy(child)
+            elif child.text:
                 extra[child.tag] = child.text
+            else:
+                # Empty element without text/children - keep structure
+                extra[child.tag] = deepcopy(child)
         
         return extra
 
@@ -296,7 +263,7 @@ class GamelistMerger:
             lastplayed=existing.lastplayed,
             hidden=existing.hidden,
             # Preserve unknown fields from existing
-            extra_fields=existing.extra_fields.copy()
+            extra_fields=deepcopy(existing.extra_fields)
         )
         
         return merged
