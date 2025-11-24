@@ -222,10 +222,11 @@ class ConsoleUI:
         # Pipeline stage tracking
         self.pipeline_stages = {
             'scanner': {'count': 0},
+            'system': {'gamelist_exists': False, 'existing_entries': 0, 'added': 0, 'updated': 0, 'removed': 0},
             'hashing': {'active': False, 'current': 0, 'total': 0, 'details': '', 'completed': 0},
             'api_fetch': {'active_roms': [], 'max_concurrent': 3, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0, 'total_fetches': 0},
             'media_download': {'active_roms': [], 'max_concurrent': 3, 'validated': 0, 'validation_failed': 0, 'by_type': {}, 'total_downloads': 0},
-            'completed': {'count': 0},
+            'completed': {'success': 0, 'failed': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
         
@@ -250,6 +251,8 @@ class ConsoleUI:
         self._log_cache_dirty: bool = True
         self._log_cache_level: int = self.current_log_level
         self.last_cache_invalidation: float = 0.0
+        self._last_render_sequence: int = 0
+        self._skipped_since_render: int = 0
         
         # Game spotlight state
         self.recent_games: deque = deque(maxlen=10)
@@ -531,13 +534,13 @@ class ConsoleUI:
     
     def increment_media_validated(self, media_type: Optional[str] = None) -> None:
         """
-        Increment media validation counter
+        Increment media validation counter for files that already exist on disk
         
         Args:
             media_type: Optional media type (box, screenshot, video, etc.) for breakdown tracking
         """
         self.pipeline_stages['media_download']['validated'] += 1
-        self.pipeline_stages['media_download']['total_downloads'] += 1
+        # Note: Do NOT increment total_downloads here - validated means file already existed
         
         # Track by type for detailed breakdown
         if media_type:
@@ -701,11 +704,44 @@ class ConsoleUI:
             self._render_logs_panel()
         self._render_pipeline_panel()
     
-    def increment_completed(self) -> None:
+    def set_system_info(self, gamelist_exists: bool, existing_entries: int) -> None:
+        """
+        Set system gamelist information
+        
+        Args:
+            gamelist_exists: Whether gamelist.xml exists for this system
+            existing_entries: Number of existing entries in gamelist.xml
+        """
+        self.pipeline_stages['system']['gamelist_exists'] = gamelist_exists
+        self.pipeline_stages['system']['existing_entries'] = existing_entries
+        self._render_pipeline_panel()
+    
+    def increment_gamelist_added(self) -> None:
+        """Increment count of games added to gamelist"""
+        self.pipeline_stages['system']['added'] += 1
+        self._render_pipeline_panel()
+    
+    def increment_gamelist_updated(self) -> None:
+        """Increment count of games updated in gamelist"""
+        self.pipeline_stages['system']['updated'] += 1
+        self._render_pipeline_panel()
+    
+    def increment_gamelist_removed(self) -> None:
+        """Increment count of games removed from gamelist"""
+        self.pipeline_stages['system']['removed'] += 1
+        self._render_pipeline_panel()
+    
+    def increment_completed(self, success: bool = True) -> None:
         """
         Increment completed ROM counter
+        
+        Args:
+            success: True if ROM was successfully scraped, False if failed
         """
-        self.pipeline_stages['completed']['count'] += 1
+        if success:
+            self.pipeline_stages['completed']['success'] += 1
+        else:
+            self.pipeline_stages['completed']['failed'] += 1
         self._render_pipeline_panel()
     
     def set_system_operation(self, operation: str, details: str) -> None:
@@ -754,10 +790,11 @@ class ConsoleUI:
         
         self.pipeline_stages = {
             'scanner': {'count': 0},
+            'system': {'gamelist_exists': False, 'existing_entries': 0, 'added': 0, 'updated': 0, 'removed': 0},
             'hashing': {'active': False, 'current': 0, 'total': 0, 'details': '', 'completed': 0},
             'api_fetch': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'cache_hits': 0, 'cache_misses': 0, 'search_fallback': 0, 'total_fetches': 0},
             'media_download': {'active_roms': [], 'max_concurrent': current_max_concurrent, 'validated': 0, 'validation_failed': 0, 'by_type': {}, 'total_downloads': 0},
-            'completed': {'count': 0},
+            'completed': {'success': 0, 'failed': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
         
@@ -915,6 +952,8 @@ class ConsoleUI:
         filtered_entries.reverse()
         self._visible_logs = deque(filtered_entries, maxlen=self._visible_log_limit)
         self._log_cache_dirty = True
+        self._last_render_sequence = self.log_buffer[-1][0] if self.log_buffer else 0
+        self._skipped_since_render = 0
     
     def _render_logs_panel(self) -> None:
         """Render the logs panel with filtered log entries and batched cache invalidation"""
@@ -927,6 +966,33 @@ class ConsoleUI:
                 self._rebuild_visible_logs()
                 self._cache_invalidation_pending = True
             
+            # Fast-forward through bursts: if a lot of new lines arrived, rebuild from tail and track skips
+            new_filtered = 0
+            newest_seq = self._last_render_sequence
+            for seq, level_num, _ in self.log_buffer:
+                if seq > newest_seq:
+                    newest_seq = seq
+                if seq > self._last_render_sequence and level_num >= self.current_log_level:
+                    new_filtered += 1
+            
+            if new_filtered > self._visible_log_limit:
+                self._skipped_since_render += new_filtered - self._visible_log_limit
+                self._rebuild_visible_logs()
+                self._cache_invalidation_pending = True
+            else:
+                # Append only new visible entries to avoid rebuilding whole buffer
+                appended = False
+                for seq, level_num, entry in self.log_buffer:
+                    if seq <= self._last_render_sequence:
+                        continue
+                    if level_num >= self.current_log_level:
+                        self._visible_logs.append(entry)
+                        appended = True
+                if appended:
+                    self._log_cache_dirty = True
+            
+            self._last_render_sequence = newest_seq
+            
             # Batch cache invalidation - only rebuild if 30ms elapsed or cache is dirty
             should_rebuild = (
                 (self._cache_invalidation_pending or self._log_cache_dirty or self._filtered_logs_cache is None)
@@ -938,6 +1004,9 @@ class ConsoleUI:
                     self._filtered_logs_cache = Text("No recent activity", style="dim")
                 else:
                     log_text = Text()
+                    if self._skipped_since_render > 0:
+                        log_text.append(f"... skipped {self._skipped_since_render} log lines ...\n", style="dim")
+                        self._skipped_since_render = 0
                     for entry in self._visible_logs:
                         log_text.append(entry)
                         log_text.append("\n")
@@ -1019,7 +1088,7 @@ class ConsoleUI:
                     except IndexError:
                         pass
             
-            title_line = f"Now Scraped: {name}"
+            title_line = f"Now Scraping: {name}"
             if year:
                 title_line += f" ({year})"
             spotlight_text.append(title_line + "\n", style=RETRO_THEME['accent'])
@@ -1201,12 +1270,16 @@ class ConsoleUI:
             # Overall Progress Summary
             scanner = self.pipeline_stages['scanner']
             scanner_count = scanner['count']
-            completed_count = self.pipeline_stages['completed']['count']
+            completed = self.pipeline_stages['completed']
+            success_count = completed['success']
+            failed_count = completed['failed']
+            total_completed = success_count + failed_count
             
             if scanner_count > 0:
-                progress_pct = int((completed_count / scanner_count * 100)) if scanner_count > 0 else 0
-                progress_text = f"{completed_count}/{scanner_count} ({progress_pct}%)"
-                progress_style = RETRO_THEME['success'] if progress_pct > 0 else "dim"
+                progress_pct = int((total_completed / scanner_count * 100)) if scanner_count > 0 else 0
+                # Show success/failed/total
+                progress_text = f"{success_count}✓ {failed_count}✗ / {scanner_count} ({progress_pct}%)"
+                progress_style = RETRO_THEME['success'] if success_count > 0 else "dim"
             else:
                 progress_text = "—"
                 progress_style = "dim"
@@ -1217,7 +1290,42 @@ class ConsoleUI:
                 Text("", style="dim")  # Empty totals column for summary row
             )
             
-            # 1. Hashing
+            # 1. System - show gamelist.xml info and entry modifications
+            system_stage = self.pipeline_stages['system']
+            gamelist_exists = system_stage['gamelist_exists']
+            existing_entries = system_stage['existing_entries']
+            added = system_stage['added']
+            updated = system_stage['updated']
+            removed = system_stage['removed']
+            
+            if gamelist_exists:
+                if added > 0 or updated > 0 or removed > 0:
+                    status = f"→ {existing_entries} existing"
+                    style = RETRO_THEME['secondary']
+                else:
+                    status = f"→ {existing_entries} entries"
+                    style = "dim"
+            else:
+                status = "→ No gamelist.xml - will create"
+                style = "dim"
+            
+            # Total: added/updated/removed breakdown
+            total_parts = []
+            if added > 0:
+                total_parts.append(f"{added}+")
+            if updated > 0:
+                total_parts.append(f"{updated}~")
+            if removed > 0:
+                total_parts.append(f"{removed}-")
+            total_text = "/".join(total_parts) if total_parts else "0"
+            
+            pipeline_table.add_row(
+                Text("📋 System", style="bold"),
+                Text(status, style=style),
+                Text(total_text, style=RETRO_THEME['secondary'] if total_parts else "dim")
+            )
+            
+            # 2. Hashing
             hashing = self.pipeline_stages['hashing']
             hashed_count = hashing.get('completed', 0)
             if hashing['active']:

@@ -316,6 +316,10 @@ class WorkflowOrchestrator:
                 existing_entries = parser.parse_gamelist(gamelist_path)
                 logger.info(f"Parsed {len(existing_entries)} entries from existing gamelist")
                 
+                # Update UI: Set system info (gamelist exists, number of entries)
+                if self.console_ui:
+                    self.console_ui.set_system_info(gamelist_exists=True, existing_entries=len(existing_entries))
+                
                 # Validate gamelist integrity
                 rom_paths = [rom_info.path for rom_info in rom_entries]
                 validation_result = self.integrity_validator.validate(existing_entries, rom_paths)
@@ -353,6 +357,9 @@ class WorkflowOrchestrator:
                 existing_entries = []
         else:
             logger.info("Gamelist validation: not applicable (no existing gamelist)")
+            # Update UI: Set system info (no gamelist)
+            if self.console_ui:
+                self.console_ui.set_system_info(gamelist_exists=False, existing_entries=0)
         
         results = []
         not_found_items = []
@@ -584,8 +591,8 @@ class WorkflowOrchestrator:
                     game_info = await self.api_client.query_game(rom_info, shutdown_event=shutdown_event)
                     api_duration = time.time() - api_start
                     
-                    # Record API timing
-                    if hasattr(self, 'performance_monitor') and self.performance_monitor:
+                    # Record API timing only if it was NOT a cache hit
+                    if hasattr(self, 'performance_monitor') and self.performance_monitor and not from_cache:
                         self.performance_monitor.record_api_call(api_duration)
                     
                     if game_info:
@@ -1054,6 +1061,14 @@ class WorkflowOrchestrator:
                         f"Metadata merged: {len(merge_result.preserved_fields)} preserved, "
                         f"{len(merge_result.updated_fields)} updated"
                     )
+                    
+                    # Track updated entry in UI
+                    if self.console_ui and len(merge_result.updated_fields) > 0:
+                        self.console_ui.increment_gamelist_updated()
+                else:
+                    # Track new entry added to gamelist
+                    if self.console_ui and game_entry:
+                        self.console_ui.increment_gamelist_added()
                 
                 # Update cache with media hashes (if cache enabled and we have hashes)
                 if self.api_client.cache and rom_hash and media_hashes:
@@ -1097,6 +1112,10 @@ class WorkflowOrchestrator:
             
         except Exception as e:
             logger.error(f"[{rom_info.filename}] Error scraping: {e}")
+            
+            # Update UI: ROM completed with failure
+            if self.console_ui:
+                self.console_ui.increment_completed(success=False)
             
             return ScrapingResult(
                 rom_path=rom_info.path,
