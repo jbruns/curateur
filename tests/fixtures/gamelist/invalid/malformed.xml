@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<gameList>
-	<game id="12345" source="ScreenScraper.fr">
-		<path>./Test.nes</path>
-		<name>Test Game
-		<desc>Missing closing tag
-	</game>
-</gameList>

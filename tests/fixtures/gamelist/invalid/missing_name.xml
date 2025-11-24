@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<gameList>
-	<game>
-		<path>./Test.nes</path>
-		<desc>Game without name field</desc>
-	</game>
-</gameList>
