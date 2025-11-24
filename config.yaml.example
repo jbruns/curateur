@@ -27,6 +27,17 @@ paths:
   es_systems: ./es_systems.xml
 
 scraping:
+  # Scrape mode for ROM metadata and media
+  # Purpose: Controls when to fetch data from API based on ROM changes
+  # Valid: new_only | changed | force | skip
+  # Default: changed
+  # Behavior:
+  #   - new_only: Only scrape ROMs not in gamelist (incremental additions)
+  #   - changed: Scrape new ROMs and ROMs with hash changes (default, efficient)
+  #   - force: Re-scrape all ROMs regardless of changes (full refresh)
+  #   - skip: Skip all ROMs that exist in gamelist (media validation only)
+  scrape_mode: changed
+
   # System short names to scrape (e.g., ["nes","snes","psx"])
   # Purpose: Limits scraping to specific systems
   # Valid: ES-DE system short names from es_systems.xml
@@ -51,26 +62,31 @@ scraping:
   # Default: 0.95
   # Note: Validation always performed; prompt if threshold not met
   gamelist_integrity_threshold: 0.95
-  
-  # Scrape mode for ROM metadata and media
-  # Purpose: Controls when to fetch data from API based on ROM changes
-  # Valid: new_only | changed | force | skip
-  # Default: changed
-  # Behavior:
-  #   - new_only: Only scrape ROMs not in gamelist (incremental additions)
-  #   - changed: Scrape new ROMs and ROMs with hash changes (default, efficient)
-  #   - force: Re-scrape all ROMs regardless of changes (full refresh)
-  #   - skip: Skip all ROMs that exist in gamelist (media validation only)
-  scrape_mode: changed
-  
+    
   # Metadata merge strategy for updates
-  # Purpose: Controls field preservation during metadata updates
-  # Valid: preserve_user_edits | overwrite_all
+  # Purpose: Controls how scraped data merges with existing gamelist entries
+  # Valid: preserve_user_edits | refresh_metadata | reset_all
   # Default: preserve_user_edits
   # Behavior:
-  #   - preserve_user_edits: Preserve all existing fields, update only scraped fields
-  #   - overwrite_all: Replace scraped fields, preserve only user fields (favorite, playcount, etc.)
+  #   - preserve_user_edits: Keep ALL existing fields unchanged, update only path (safest)
+  #   - refresh_metadata: Update curateur fields (name, desc, rating, etc.), preserve all others
+  #   - reset_all: Complete reset to API data + path only (discards user fields, custom fields)
+  # Note: Cache updates handled separately by scrape_mode setting
   merge_strategy: preserve_user_edits
+  
+  # Auto-favorite based on rating threshold
+  # Purpose: Automatically set favorite=true for highly-rated games
+  # Valid: true | false
+  # Default: false
+  # Note: Only applies in refresh_metadata and reset_all modes
+  auto_favorite_enabled: false
+  
+  # Rating threshold for auto-favorite
+  # Purpose: Minimum rating (0.0-1.0) to trigger auto-favorite
+  # Valid: 0.0 - 1.0 (0.9 = 90% rating)
+  # Default: 0.9
+  # Note: ScreenScraper ratings are normalized to 0.0-1.0 scale
+  auto_favorite_threshold: 0.9
   
   # Name verification strictness
   # Purpose: How strictly to match game names during API verification
@@ -201,6 +217,14 @@ runtime:
   # Default: 1073741824 (1 GiB)
   # Note: Large ISO/CHD ROM files may be slow to hash; does not apply to media files
   crc_size_limit: 1073741824
+  
+  # Enable API response cache
+  # Purpose: Cache API responses to avoid re-querying for unchanged ROMs
+  # Valid: true | false
+  # Default: true
+  # Note: If false, existing cache is ignored (not deleted) and no new entries are added
+  #       Use --clear-cache flag to delete cache for systems in scope
+  enable_cache: true
   
   # Advanced: Rate limit override (use with caution)
   # Purpose: Override API-provided rate limits for advanced scenarios

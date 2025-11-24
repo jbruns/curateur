@@ -209,22 +209,40 @@ class WorkflowOrchestrator:
         )
         
         # Initialize metadata cache for this system
-        cache_enabled = self.config.get('scraping', {}).get('enable_metadata_cache', True)
+        enable_cache = self.config.get('runtime', {}).get('enable_cache', True)
+        
+        # Log warning if cache is disabled
+        if not enable_cache:
+            logger.warning(
+                f"Metadata cache is DISABLED by configuration (runtime.enable_cache=false). "
+                f"All API queries will be performed even for unchanged ROMs. "
+                f"Existing cache will be ignored but not deleted."
+            )
+        
         cache = MetadataCache(
             gamelist_directory=gamelist_dir,
             ttl_days=7,
-            enabled=cache_enabled
+            enabled=enable_cache
         )
         
         # Handle cache operations
         if self.clear_cache:
-            cleared_count = cache.clear()
-            logger.info(f"Cleared metadata cache: {cleared_count} entries removed")
+            if enable_cache:
+                # Clear cache and start fresh
+                cleared_count = cache.clear()
+                logger.info(f"Cleared metadata cache: {cleared_count} entries removed, building new cache")
+            else:
+                # Cache disabled - clear would be meaningless
+                logger.warning(
+                    f"--clear-cache specified but cache is disabled (runtime.enable_cache=false). "
+                    f"No cache will be cleared or created."
+                )
         else:
-            # Cleanup expired entries on startup
-            expired_count = cache.cleanup_expired()
-            if expired_count > 0:
-                logger.info(f"Cleaned up {expired_count} expired cache entries")
+            # Cleanup expired entries on startup (only if cache enabled)
+            if enable_cache:
+                expired_count = cache.cleanup_expired()
+                if expired_count > 0:
+                    logger.info(f"Cleaned up {expired_count} expired cache entries")
         
         # Log cache stats
         cache_stats = cache.get_stats()
@@ -233,6 +251,8 @@ class WorkflowOrchestrator:
                 f"Metadata cache: {cache_stats['valid_entries']} valid entries, "
                 f"{cache_stats['expired_entries']} expired"
             )
+        elif not cache_stats['enabled']:
+            logger.info("Metadata cache: DISABLED")
         
         # Update API client with cache for this system
         self.api_client.cache = cache
@@ -936,8 +956,16 @@ class WorkflowOrchestrator:
                 
                 # Merge with existing entry if present
                 if gamelist_entry and decision.update_metadata:
-                    merge_strategy = self.config.get('scraping', {}).get('merge_strategy', 'preserve_user_edits')
-                    merger = MetadataMerger(merge_strategy=merge_strategy)
+                    scraping_config = self.config.get('scraping', {})
+                    merge_strategy = scraping_config.get('merge_strategy', 'preserve_user_edits')
+                    auto_favorite_enabled = scraping_config.get('auto_favorite_enabled', False)
+                    auto_favorite_threshold = scraping_config.get('auto_favorite_threshold', 0.9)
+                    
+                    merger = MetadataMerger(
+                        merge_strategy=merge_strategy,
+                        auto_favorite_enabled=auto_favorite_enabled,
+                        auto_favorite_threshold=auto_favorite_threshold
+                    )
                     
                     merge_result = merger.merge_entries(gamelist_entry, game_entry)
                     

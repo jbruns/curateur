@@ -136,11 +136,23 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
     # Validate merge_strategy
     if 'merge_strategy' in section:
         strategy = section['merge_strategy']
-        valid_strategies = ['preserve_user_edits', 'overwrite_all']
+        valid_strategies = ['preserve_user_edits', 'refresh_metadata', 'reset_all']
         if strategy not in valid_strategies:
             errors.append(
                 f"scraping.merge_strategy must be one of: {', '.join(valid_strategies)}"
             )
+    
+    # Validate auto_favorite settings
+    if 'auto_favorite_enabled' in section:
+        if not isinstance(section['auto_favorite_enabled'], bool):
+            errors.append("scraping.auto_favorite_enabled must be a boolean")
+    
+    if 'auto_favorite_threshold' in section:
+        threshold = section['auto_favorite_threshold']
+        if not isinstance(threshold, (int, float)):
+            errors.append("scraping.auto_favorite_threshold must be a number")
+        elif threshold < 0.0 or threshold > 1.0:
+            errors.append("scraping.auto_favorite_threshold must be between 0.0 and 1.0")
     
     # Validate name_verification
     if 'name_verification' in section:
@@ -262,6 +274,12 @@ def _validate_runtime(section: Dict[str, Any]) -> List[str]:
         interval = section['checkpoint_interval']
         if not isinstance(interval, int) or interval < 0:
             errors.append("runtime.checkpoint_interval must be a non-negative integer")
+    
+    # Validate enable_cache flag
+    if 'enable_cache' in section:
+        enable_cache = section['enable_cache']
+        if not isinstance(enable_cache, bool):
+            errors.append("runtime.enable_cache must be a boolean")
     
     # Validate threads
     threads = section.get('threads', 1)

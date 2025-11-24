@@ -1,11 +1,13 @@
 """
 Metadata Merger - Intelligent merging of API data with user edits
 
-Preserves user-editable fields while updating scraper-managed fields.
-Implements field categorization and merge strategies.
+Implements three merge strategies:
+- preserve_user_edits: Truly conservative, changes nothing
+- refresh_metadata: Update only curateur-managed fields
+- reset_all: Complete clean slate (API data + path only)
 """
 
-from typing import List, Set
+from typing import List, Set, Optional
 from dataclasses import dataclass, replace
 import logging
 
@@ -30,15 +32,14 @@ class MetadataMerger:
     Field Categories:
     - User-editable: favorite, playcount, lastplayed, hidden, kidgame
     - Scraper-managed: name, desc, rating, releasedate, developer, publisher, 
-                       genre, players, media paths
+                       genre, players
     - Provider: screenscraper_id
     - Required: path
     
-    Merge Strategy:
-    1. Preserve all user-editable fields from existing entry
-    2. Update scraper-managed fields from API response
-    3. Keep provider fields unchanged
-    4. Preserve custom/unknown fields (in extra_fields)
+    Merge Strategies:
+    1. preserve_user_edits: Keep ALL existing fields, only update path (most conservative)
+    2. refresh_metadata: Update SCRAPED_FIELDS only, preserve user and provider fields
+    3. reset_all: Complete reset - use API data + path only (nuclear option)
     """
     
     # Field categorization
@@ -59,15 +60,27 @@ class MetadataMerger:
         'path'
     }
     
-    def __init__(self, merge_strategy: str = 'preserve_user_edits'):
+    def __init__(
+        self,
+        merge_strategy: str = 'preserve_user_edits',
+        auto_favorite_enabled: bool = False,
+        auto_favorite_threshold: float = 0.9
+    ):
         """
         Initialize metadata merger
         
         Args:
-            merge_strategy: Merge strategy ('preserve_user_edits' or 'overwrite_all')
+            merge_strategy: Merge strategy ('preserve_user_edits', 'refresh_metadata', 'reset_all')
+            auto_favorite_enabled: Enable automatic favorite flag for highly-rated games
+            auto_favorite_threshold: Rating threshold (0.0-1.0) for auto-favorite
         """
         self.merge_strategy = merge_strategy
-        logger.info(f"Metadata Merger initialized (strategy={self.merge_strategy})")
+        self.auto_favorite_enabled = auto_favorite_enabled
+        self.auto_favorite_threshold = auto_favorite_threshold
+        logger.info(
+            f"Metadata Merger initialized (strategy={self.merge_strategy}, "
+            f"auto_favorite={self.auto_favorite_enabled}, threshold={self.auto_favorite_threshold})"
+        )
     
     def merge_entries(self, existing: GameEntry, scraped: GameEntry) -> MergeResult:
         """
@@ -100,11 +113,14 @@ class MetadataMerger:
         
         # Apply merge strategy
         if self.merge_strategy == 'preserve_user_edits':
-            # Preserve all existing fields, update only scraped fields
+            # Most conservative: keep ALL existing fields, only update path
             merged_data.update(self._merge_preserve_user_edits(existing, scraped, preserved_fields, updated_fields, conflicts))
-        elif self.merge_strategy == 'overwrite_all':
-            # Replace scraped fields, preserve only user fields and hash
-            merged_data.update(self._merge_overwrite_all(existing, scraped, preserved_fields, updated_fields, conflicts))
+        elif self.merge_strategy == 'refresh_metadata':
+            # Balanced: update only SCRAPED_FIELDS, preserve user and provider fields
+            merged_data.update(self._merge_refresh_metadata(existing, scraped, preserved_fields, updated_fields, conflicts))
+        elif self.merge_strategy == 'reset_all':
+            # Nuclear: complete reset to API data + path only
+            merged_data.update(self._merge_reset_all(existing, scraped, preserved_fields, updated_fields, conflicts))
         else:
             # Default to preserve_user_edits
             logger.warning(f"Unknown merge strategy '{self.merge_strategy}', using 'preserve_user_edits'")
@@ -134,8 +150,54 @@ class MetadataMerger:
         conflicts: Set[str]
     ) -> dict:
         """
-        Merge strategy: preserve all existing fields, update only scraped fields.
+        Merge strategy: preserve ALL existing fields, make NO changes.
         
+        This is the most conservative strategy - existing entry is untouched.
+        Only path is guaranteed to be set (already handled by merge_entries).
+        Preserves extra_fields dict.
+        """
+        merged_data = {}
+        
+        # Process all fields from existing entry
+        for field_name in dir(existing):
+            # Skip private/magic methods and non-field attributes
+            if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
+                continue
+            
+            # Skip methods
+            attr = getattr(existing, field_name, None)
+            if callable(attr):
+                continue
+            
+            existing_value = getattr(existing, field_name, None)
+            
+            # Preserve everything from existing
+            if existing_value is not None:
+                merged_data[field_name] = existing_value
+                preserved_fields.add(field_name)
+        
+        # Preserve extra_fields
+        if hasattr(existing, 'extra_fields') and existing.extra_fields:
+            merged_data['extra_fields'] = existing.extra_fields.copy()
+            preserved_fields.add('extra_fields')
+        else:
+            merged_data['extra_fields'] = {}
+        
+        return merged_data
+    
+    def _merge_refresh_metadata(
+        self,
+        existing: GameEntry,
+        scraped: GameEntry,
+        preserved_fields: Set[str],
+        updated_fields: Set[str],
+        conflicts: Set[str]
+    ) -> dict:
+        """
+        Merge strategy: update SCRAPED_FIELDS only, preserve user and provider fields.
+        
+        This is the balanced strategy - updates curateur-managed metadata while
+        preserving user edits and provider IDs. Applies auto-favorite if enabled.
         Preserves extra_fields dict.
         """
         merged_data = {}
@@ -157,7 +219,7 @@ class MetadataMerger:
             category = self._get_field_category(field_name)
             
             if category == 'user' or category == 'provider':
-                # Always preserve user and provider fields
+                # Preserve user and provider fields from existing
                 merged_data[field_name] = existing_value
                 if existing_value is not None:
                     preserved_fields.add(field_name)
@@ -178,6 +240,19 @@ class MetadataMerger:
                     merged_data[field_name] = existing_value
                     preserved_fields.add(field_name)
         
+        # Apply auto-favorite logic
+        if self.auto_favorite_enabled:
+            rating = merged_data.get('rating')
+            if rating is not None:
+                try:
+                    rating_float = float(rating)
+                    if rating_float >= self.auto_favorite_threshold:
+                        merged_data['favorite'] = True
+                        updated_fields.add('favorite')
+                        logger.debug(f"Auto-favorite applied (rating={rating_float})")
+                except (ValueError, TypeError):
+                    pass
+        
         # Preserve extra_fields
         if hasattr(existing, 'extra_fields') and existing.extra_fields:
             merged_data['extra_fields'] = existing.extra_fields.copy()
@@ -187,7 +262,7 @@ class MetadataMerger:
         
         return merged_data
     
-    def _merge_overwrite_all(
+    def _merge_reset_all(
         self,
         existing: GameEntry,
         scraped: GameEntry,
@@ -196,13 +271,15 @@ class MetadataMerger:
         conflicts: Set[str]
     ) -> dict:
         """
-        Merge strategy: replace scraped fields, preserve only user fields.
+        Merge strategy: complete reset to API data + path only.
         
+        This is the nuclear option - discards all existing metadata and user edits.
+        Uses only scraped data. Applies auto-favorite if enabled.
         Discards extra_fields dict.
         """
         merged_data = {}
         
-        # Process all fields
+        # Use all scraped fields
         for field_name in dir(scraped):
             # Skip private/magic methods and non-field attributes
             if field_name.startswith('_') or field_name in ('from_api_response', 'path', 'hash'):
@@ -213,34 +290,29 @@ class MetadataMerger:
             if callable(attr):
                 continue
             
-            existing_value = getattr(existing, field_name, None)
             scraped_value = getattr(scraped, field_name, None)
             
-            category = self._get_field_category(field_name)
-            
-            if category == 'user':
-                # Preserve user fields from existing
-                merged_data[field_name] = existing_value
-                if existing_value is not None:
-                    preserved_fields.add(field_name)
-            elif category == 'scraped' or category == 'provider':
-                # Overwrite with scraped value
-                if scraped_value is not None:
-                    if existing_value is not None and existing_value != scraped_value:
-                        conflicts.add(field_name)
-                    merged_data[field_name] = scraped_value
-                    updated_fields.add(field_name)
-            else:
-                # Unknown fields - use scraped if available
-                if scraped_value is not None:
-                    merged_data[field_name] = scraped_value
-                    updated_fields.add(field_name)
+            if scraped_value is not None:
+                merged_data[field_name] = scraped_value
+                updated_fields.add(field_name)
         
-        # Discard extra_fields in overwrite_all mode
+        # Apply auto-favorite logic
+        if self.auto_favorite_enabled:
+            rating = merged_data.get('rating')
+            if rating is not None:
+                try:
+                    rating_float = float(rating)
+                    if rating_float >= self.auto_favorite_threshold:
+                        merged_data['favorite'] = True
+                        updated_fields.add('favorite')
+                        logger.debug(f"Auto-favorite applied (rating={rating_float})")
+                except (ValueError, TypeError):
+                    pass
+        
+        # Discard extra_fields in reset_all mode
         merged_data['extra_fields'] = {}
         
         return merged_data
-        
     
     def batch_merge(
         self,
@@ -287,50 +359,3 @@ class MetadataMerger:
             return 'required'
         else:
             return 'unknown'
-    
-    def _detect_user_edits(self, existing: GameEntry, scraped: GameEntry) -> Set[str]:
-        """
-        Detect which fields user has edited
-        
-        Args:
-            existing: Existing GameEntry
-            scraped: Newly scraped GameEntry
-        
-        Returns:
-            Set of field names that appear to be user-edited
-        """
-        edited = set()
-        
-        # User fields are always considered user-edited if they have values
-        for field in self.USER_FIELDS:
-            existing_value = getattr(existing, field, None)
-            if existing_value is not None:
-                # Check defaults
-                if field == 'favorite' and existing_value != False:
-                    edited.add(field)
-                elif field == 'playcount' and existing_value != 0:
-                    edited.add(field)
-                elif field == 'hidden' and existing_value != False:
-                    edited.add(field)
-                elif field == 'lastplayed' and existing_value:
-                    edited.add(field)
-        
-        return edited
-    
-    def _determine_update_policy(self, field_name: str) -> str:
-        """
-        Determine update policy for a field
-        
-        Returns: 'preserve' | 'update'
-        """
-        category = self._get_field_category(field_name)
-        
-        if category == 'user' or category == 'provider':
-            return 'preserve'
-        elif category == 'scraped':
-            return 'update'
-        elif category == 'required':
-            return 'preserve'
-        else:
-            return 'preserve'  # Unknown fields preserved by default
-
