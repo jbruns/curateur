@@ -18,16 +18,29 @@ class ConnectionPoolManager:
     Manages HTTP connection pooling for efficient parallel requests
     
     Features:
-    - Persistent connections
+    - Persistent connections with balanced keepalive (90s)
     - Connection reuse across async tasks
-    - Automatic retry logic
-    - Timeout configuration
+    - Automatic stale connection detection
+    - Automatic pool reset after consecutive timeouts (threshold: 5)
+    - Aggressive timeout configuration for fast failure
+    
+    Connection Health:
+    - Tracks consecutive timeout failures
+    - Automatically resets pool after 5 consecutive timeouts
+    - Balances keepalive duration (90s) vs connection freshness
+    - Self-healing: failed connections trigger automatic recovery
     
     Example:
         manager = ConnectionPoolManager(config)
-        async with manager.get_client() as client:
-            # Use client for requests
+        client = await manager.get_client()
+        
+        try:
             response = await client.get('https://api.example.com/data')
+            manager.record_success()  # Reset timeout counter
+        except httpx.TimeoutException:
+            if manager.record_timeout():  # Returns True if threshold exceeded
+                await manager.reset_client()  # Automatic reset triggered
+                client = await manager.get_client()  # Get fresh client
     """
     
     def __init__(self, config: dict):
@@ -40,6 +53,10 @@ class ConnectionPoolManager:
         self.config = config
         self.client: Optional[httpx.AsyncClient] = None
         self.lock = asyncio.Lock()
+        
+        # Track connection health for automatic recovery
+        self.consecutive_timeouts = 0
+        self.timeout_threshold = 5  # Reset pool after N consecutive timeouts
     
     def create_client(self, max_connections: int = 10) -> httpx.AsyncClient:
         """
@@ -60,18 +77,21 @@ class ConnectionPoolManager:
         timeout = self.config.get('api', {}).get('request_timeout', 30)
         
         # Configure connection limits
+        # Balance: 90s keepalive balances latency savings vs stale connection risk
+        # For 150ms+ latency, this saves ~300ms per request (TLS handshake)
+        # but refreshes often enough to avoid prolonged stale connection issues
         limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=max_connections,
-            keepalive_expiry=300.0  # Keep connections alive for 5 minutes to avoid re-handshakes
+            keepalive_expiry=90.0  # 90s: balance between reuse and staleness
         )
         
-        # Configure timeout
+        # Configure timeout with aggressive failure detection
         timeout_config = httpx.Timeout(
-            connect=1.5,
+            connect=2.0,  # Allow for high latency, but not too patient
             read=timeout,
             write=5.0,
-            pool=1.0  # Fail fast if pool is exhausted or a connection is unhealthy
+            pool=0.5  # Fail very fast if pool is exhausted or connection is unhealthy
         )
         
         # Configure transport without built-in retries (handled by higher-level backoff)
@@ -119,6 +139,49 @@ class ConnectionPoolManager:
                 self.client = None
                 logger.info("Connection pool closed")
     
+    async def reset_client(self, max_connections: Optional[int] = None) -> httpx.AsyncClient:
+        """
+        Reset client by closing and recreating connection pool.
+        
+        Useful for recovering from sustained connection issues or stale connections.
+        
+        Args:
+            max_connections: Maximum connections for new pool
+            
+        Returns:
+            Fresh httpx.AsyncClient
+        """
+        async with self.lock:
+            if self.client and not self.client.is_closed:
+                logger.warning("Resetting connection pool due to potential connection issues")
+                await self.client.aclose()
+            
+            conn_count = max_connections or 10
+            self.client = self.create_client(conn_count)
+            self.consecutive_timeouts = 0  # Reset counter
+            return self.client
+    
+    def record_timeout(self) -> bool:
+        """
+        Record a timeout occurrence.
+        
+        Returns:
+            True if threshold exceeded and pool should be reset
+        """
+        self.consecutive_timeouts += 1
+        if self.consecutive_timeouts >= self.timeout_threshold:
+            logger.warning(
+                f"Detected {self.consecutive_timeouts} consecutive timeouts - "
+                "connection pool may have stale connections"
+            )
+            return True
+        return False
+    
+    def record_success(self) -> None:
+        """Record a successful request (resets timeout counter)."""
+        if self.consecutive_timeouts > 0:
+            self.consecutive_timeouts = 0
+    
     def get_stats(self) -> dict:
         """
         Get connection pool statistics
@@ -128,5 +191,7 @@ class ConnectionPoolManager:
         """
         return {
             'client_active': self.client is not None and not self.client.is_closed,
-            'config_timeout': self.config.get('api', {}).get('request_timeout', 30)
+            'config_timeout': self.config.get('api', {}).get('request_timeout', 30),
+            'consecutive_timeouts': self.consecutive_timeouts,
+            'health_status': 'healthy' if self.consecutive_timeouts < 3 else 'degraded'
         }

@@ -52,7 +52,8 @@ class ScreenScraperClient:
         config: Dict[str, Any],
         throttle_manager: ThrottleManager,
         client: Optional[httpx.AsyncClient] = None,
-        cache: Optional[MetadataCache] = None
+        cache: Optional[MetadataCache] = None,
+        connection_pool_manager: Optional[Any] = None
     ):
         """
         Initialize API client.
@@ -62,6 +63,7 @@ class ScreenScraperClient:
             throttle_manager: ThrottleManager instance for rate limiting
             client: Optional httpx.AsyncClient for connection pooling
             cache: Optional MetadataCache for response caching
+            connection_pool_manager: Optional ConnectionPoolManager for health tracking
         """
         # Authentication
         self.devid = config['screenscraper']['devid']
@@ -94,6 +96,9 @@ class ScreenScraperClient:
 
         # Metadata cache (optional)
         self.cache = cache
+        
+        # Connection pool manager for health tracking (optional)
+        self.connection_pool_manager = connection_pool_manager
 
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
@@ -233,6 +238,9 @@ class ScreenScraperClient:
             )
         except httpx.TimeoutException:
             logger.error("Authentication failed: Request timeout - network error, retry possible")
+            if self.connection_pool_manager:
+                if self.connection_pool_manager.record_timeout():
+                    logger.warning("Connection pool health degraded, consider restarting")
             raise SystemExit(1)
         except httpx.ConnectError:
             logger.error("Authentication failed: Connection error - network error, retry possible")
@@ -402,8 +410,18 @@ class ScreenScraperClient:
                             # Expected when cancelling task during shutdown
                 raise
             except httpx.TimeoutException:
+                if self.connection_pool_manager:
+                    if self.connection_pool_manager.record_timeout():
+                        logger.warning("Multiple consecutive timeouts detected - resetting connection pool")
+                        await self.connection_pool_manager.reset_client()
+                        self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Request timeout")
             except httpx.ConnectError:
+                if self.connection_pool_manager:
+                    if self.connection_pool_manager.record_timeout():
+                        logger.warning("Multiple consecutive connection errors - resetting connection pool")
+                        await self.connection_pool_manager.reset_client()
+                        self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Connection error")
             except Exception as e:
                 raise Exception(f"Network error: {e}")
@@ -426,6 +444,9 @@ class ScreenScraperClient:
             # Reset backoff on successful request
             if response.status_code == 200:
                 self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_INFOS.value)
+                # Record successful request for connection health tracking
+                if self.connection_pool_manager:
+                    self.connection_pool_manager.record_success()
 
             # Validate and parse response
             try:
@@ -636,8 +657,18 @@ class ScreenScraperClient:
                             # Expected when cancelling task during shutdown
                 raise
             except httpx.TimeoutException:
+                if self.connection_pool_manager:
+                    if self.connection_pool_manager.record_timeout():
+                        logger.warning("Multiple consecutive timeouts detected - resetting connection pool")
+                        await self.connection_pool_manager.reset_client()
+                        self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Request timeout")
             except httpx.ConnectError:
+                if self.connection_pool_manager:
+                    if self.connection_pool_manager.record_timeout():
+                        logger.warning("Multiple consecutive connection errors - resetting connection pool")
+                        await self.connection_pool_manager.reset_client()
+                        self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Connection error")
             except Exception as e:
                 raise Exception(f"Network error: {e}")
@@ -660,6 +691,9 @@ class ScreenScraperClient:
             # Reset backoff on successful request
             if response.status_code == 200:
                 self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_RECHERCHE.value)
+                # Record successful request for connection health tracking
+                if self.connection_pool_manager:
+                    self.connection_pool_manager.record_success()
 
             # Validate and parse response
             try:

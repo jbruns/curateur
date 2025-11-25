@@ -313,7 +313,12 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     work_queue = WorkQueueManager(max_retries=max_retries)
 
     # Initialize API client with throttle_manager
-    api_client = ScreenScraperClient(config, throttle_manager=throttle_manager, client=client)
+    api_client = ScreenScraperClient(
+        config,
+        throttle_manager=throttle_manager,
+        client=client,
+        connection_pool_manager=pool_manager
+    )
 
     # Phase D: Initialize console UI early for login message
     from curateur.ui.console_ui import ConsoleUI
