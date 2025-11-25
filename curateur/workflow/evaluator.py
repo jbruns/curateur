@@ -142,12 +142,23 @@ class WorkflowEvaluator:
                 )
                 
             else:
-                # Hash matches - ROM unchanged, skip
-                decision.skip_reason = "ROM hash matches; scrape_mode is 'changed'"
-                logger.info(
-                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
-                )
-                return decision
+                # Hash matches - ROM unchanged
+                # Still need to check media if validation is enabled
+                if self.validation_mode != 'disabled':
+                    logger.debug(
+                        f"ROM unchanged but media validation enabled for {rom_info.filename}"
+                    )
+                    # Don't fetch new metadata, but validate existing media
+                    decision.fetch_metadata = False
+                    decision.update_metadata = False
+                    # Media operations will be determined below
+                else:
+                    # No validation - skip entirely
+                    decision.skip_reason = "ROM hash matches; scrape_mode is 'changed'"
+                    logger.info(
+                        f"Skipping {rom_info.filename}: {decision.skip_reason}"
+                    )
+                    return decision
         
         elif self.scrape_mode == 'new_only':
             if gamelist_entry is None:
@@ -155,15 +166,41 @@ class WorkflowEvaluator:
                 decision.fetch_metadata = True
                 decision.update_metadata = True
             else:
-                # ROM exists in gamelist - skip (even if hash changed)
+                # ROM exists in gamelist - skip entirely (no validation)
                 decision.skip_reason = "scrape_mode is 'new_only'; ROM exists in gamelist"
-                logger.info(
+                logger.debug(
                     f"Skipping {rom_info.filename}: {decision.skip_reason}"
                 )
                 return decision
         
+        elif self.scrape_mode == 'skip':
+            # Skip mode: Only validate media, never fetch metadata
+            if gamelist_entry is None:
+                # ROM not in gamelist - skip entirely (can't validate without entry)
+                decision.skip_reason = "scrape_mode is 'skip'; ROM not in gamelist"
+                logger.debug(
+                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
+                )
+                return decision
+            else:
+                # ROM exists - validate media only (no metadata operations)
+                if self.validation_mode == 'disabled':
+                    decision.skip_reason = "scrape_mode is 'skip' but validation_mode is 'disabled'"
+                    logger.info(
+                        f"Skipping {rom_info.filename}: {decision.skip_reason}"
+                    )
+                    return decision
+                else:
+                    logger.debug(
+                        f"Skip mode: validating media only for {rom_info.filename}"
+                    )
+                    decision.fetch_metadata = False
+                    decision.update_metadata = False
+                    # Media operations will be determined below
+        
         # Step 4: Determine media operations
-        if decision.fetch_metadata:
+        # Do this even if not fetching metadata (for validation-only scenarios)
+        if decision.fetch_metadata or self.validation_mode != 'disabled':
             decision.media_to_download, decision.media_to_validate = \
                 self._determine_media_operations(gamelist_entry, hash_matches, rom_hash)
             
@@ -252,7 +289,11 @@ class WorkflowEvaluator:
         
         # Validation enabled (normal or strict)
         if gamelist_entry is None or not hash_matches:
-            # New ROM or changed ROM - download all enabled media types
+            # New ROM or changed ROM - but we can still validate existing media
+            # against fresh API data if validation is enabled
+            # Note: We don't have API response yet, so orchestrator will need to
+            # handle validation after fetching metadata. For now, queue all for download
+            # but orchestrator can skip downloads for media that validates successfully.
             media_to_download = self.enabled_media_types.copy()
             return media_to_download, media_to_validate
         
