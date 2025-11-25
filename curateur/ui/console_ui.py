@@ -1254,7 +1254,12 @@ class ConsoleUI:
                     header_text.append("[Q]", style=f"bold {RETRO_THEME['error']}")
                     header_text.append("uit", style="dim")
 
-                self.layout["header"].update(header_text)
+            # Always update header regardless of state
+            self.layout["header"].update(header_text)
+
+            # Force immediate refresh when showing prompt
+            if self.prompt_active and self.live:
+                self.live.refresh()
         except Exception as e:
             logger.error(f"Error rendering header: {e}", exc_info=True)
 
