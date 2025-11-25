@@ -153,6 +153,14 @@ class WorkflowOrchestrator:
         integrity_threshold = self.config.get('scraping', {}).get('gamelist_integrity_threshold', 0.95)
         self.integrity_validator = IntegrityValidator(threshold=integrity_threshold)
 
+        # Initialize metadata merger (reused for all ROMs)
+        scraping_config = self.config.get('scraping', {})
+        self.metadata_merger = MetadataMerger(
+            merge_strategy=scraping_config.get('merge_strategy', 'preserve_user_edits'),
+            auto_favorite_enabled=scraping_config.get('auto_favorite_enabled', False),
+            auto_favorite_threshold=scraping_config.get('auto_favorite_threshold', 0.9)
+        )
+
         # Store paths for easy access
         self.paths = {
             'roms': self.rom_directory,
@@ -257,6 +265,18 @@ class WorkflowOrchestrator:
             crc_size_limit=crc_size_limit
         )
         logger.info(f"ROM scan complete: {len(rom_entries)} files found")
+
+        # Early exit if no ROMs found - don't create any directories or files
+        if len(rom_entries) == 0:
+            logger.info(f"No ROMs found for {system.name}, skipping all filesystem operations")
+            return SystemResult(
+                system_name=system.fullname,
+                total_roms=0,
+                scraped=0,
+                failed=0,
+                skipped=0,
+                results=[]
+            )
 
         # Update UI with scanner count
         if self.console_ui:
@@ -381,14 +401,14 @@ class WorkflowOrchestrator:
                 print(f"Warning: Failed to generate gamelist: {e}")
 
         # Step 6: Write unmatched ROMs log if any
-        if system.name in self.unmatched_roms and self.unmatched_roms[system.name]:
+        if len(rom_entries) > 0 and system.name in self.unmatched_roms and self.unmatched_roms[system.name]:
             try:
                 self._write_unmatched_roms(system.name)
             except Exception as e:
                 logger.warning(f"Failed to write unmatched ROMs log for {system.name}: {e}")
 
         # Step 7: Write not-found items log if any
-        if not_found_items:
+        if len(rom_entries) > 0 and not_found_items:
             try:
                 self._write_not_found_summary(system, not_found_items)
             except Exception as e:
@@ -399,8 +419,9 @@ class WorkflowOrchestrator:
             self.work_queue.reset_for_new_system()
             logger.debug(f"Work queue reset after completing {system.name}")
 
-        # Step 9: Write summary log
-        self._write_summary_log(system, results, scraped_count, skipped_count, failed_count)
+        # Step 9: Write summary log (only if ROMs were processed)
+        if len(rom_entries) > 0:
+            self._write_summary_log(system, results, scraped_count, skipped_count, failed_count)
 
         logger.info(
             f"System complete: {system.name} - "
@@ -534,8 +555,9 @@ class WorkflowOrchestrator:
                     cached_data = self.api_client.cache.get(rom_hash, rom_size=rom_info.path.stat().st_size)
                     from_cache = cached_data is not None
 
+                source_label = "CACHED" if from_cache else "API"
                 logger.info(
-                    f"[{rom_info.filename}] Fetching metadata "
+                    f"[{rom_info.filename}] Fetching metadata [{source_label}] "
                     f"(hash={rom_hash}, size={rom_info.path.stat().st_size})"
                 )
                 logger.debug(
@@ -700,9 +722,11 @@ class WorkflowOrchestrator:
                     # E.g., 'cover' -> 'covers' -> 'box-2D'
                     from ..media.media_types import to_plural, convert_directory_names_to_media_types
 
-                    # Check which media already exists on disk (skip redownloading)
+                    # Check which media already exists on disk
+                    # If validation enabled, we'll validate these against fresh API hashes
                     rom_basename = media_downloader.organizer.get_rom_basename(str(rom_info.path))
                     existing_media = {}
+                    existing_media_paths = {}
 
                     for media_type_singular in decision.media_to_download:
                         # Convert singular to ScreenScraper type for path lookup
@@ -721,6 +745,7 @@ class WorkflowOrchestrator:
                                 )
                                 if media_downloader.organizer.file_exists(media_path):
                                     existing_media[media_type_singular] = True
+                                    existing_media_paths[media_type_singular] = Path(media_path)
                                     logger.debug(
                                         "[%s] Media %s already exists at %s",
                                         rom_info.filename,
@@ -736,23 +761,110 @@ class WorkflowOrchestrator:
                             )
                             existing_media[media_type_singular] = False
 
-                    # Filter out media that already exists (only download missing ones)
+                    # Validate existing media if validation mode is enabled
+                    # This handles the case where cache expired or ROM changed but media may still be good
+                    validated_media = []
+                    failed_validation = []
+                    
+                    if validation_mode != 'disabled' and existing_media:
+                        # We have fresh API response with media URLs - we can extract expected hashes
+                        # from the API response to validate existing files
+                        for media_type_singular in existing_media:
+                            if not existing_media[media_type_singular]:
+                                continue
+                                
+                            media_path = existing_media_paths.get(media_type_singular)
+                            if not media_path or not media_path.exists():
+                                continue
+                            
+                            # Validate based on mode
+                            validation_passed = False
+                            
+                            # Non-image media types (PDFs, videos) can't be validated with Pillow
+                            is_image_type = media_type_singular not in ['manual', 'video']
+                            
+                            if validation_mode == 'strict':
+                                # Strict mode: dimension check + hash validation (images only)
+                                logger.debug(
+                                    "[%s] Validating existing media (strict): %s",
+                                    rom_info.filename,
+                                    media_type_singular
+                                )
+                                
+                                # First check dimensions and image integrity (only for images)
+                                if is_image_type:
+                                    is_valid, validation_error = media_downloader.downloader.validate_existing_file(media_path)
+                                    if not is_valid:
+                                        logger.debug(
+                                            "[%s] Media validation failed (dimensions/integrity): %s - %s",
+                                            rom_info.filename,
+                                            media_type_singular,
+                                            validation_error
+                                        )
+                                        failed_validation.append(media_type_singular)
+                                        continue
+                                
+                                # Then validate hash (for all types)
+                                current_hash = calculate_hash(
+                                    media_path,
+                                    algorithm=hash_algorithm,
+                                    size_limit=0
+                                )
+                                
+                                # Store hash for this media file
+                                media_hashes[media_type_singular] = current_hash
+                                validation_passed = True
+                                
+                            elif validation_mode == 'normal':
+                                # Normal mode: dimension check and image integrity only (images only)
+                                logger.debug(
+                                    "[%s] Validating existing media (normal): %s",
+                                    rom_info.filename,
+                                    media_type_singular
+                                )
+                                
+                                # Only validate images; PDFs and videos just pass in normal mode
+                                if is_image_type:
+                                    is_valid, validation_error = media_downloader.downloader.validate_existing_file(media_path)
+                                    if not is_valid:
+                                        logger.debug(
+                                            "[%s] Media validation failed (dimensions/integrity): %s - %s",
+                                            rom_info.filename,
+                                            media_type_singular,
+                                            validation_error
+                                        )
+                                        failed_validation.append(media_type_singular)
+                                        continue
+                                
+                                validation_passed = True
+                            
+                            if validation_passed:
+                                # We validated it - keep the file
+                                media_paths[media_type_singular] = str(media_path)
+                                validated_media.append(media_type_singular)
+                                
+                                if self.console_ui:
+                                    self.console_ui.increment_media_validated(media_type_singular)
+                    
+                    # Log validation summary if we validated anything
+                    if validated_media:
+                        logger.info(
+                            "[%s] Validated existing media (%s): %s",
+                            rom_info.filename,
+                            validation_mode,
+                            ", ".join(validated_media)
+                        )
+
+                    # Filter out media that was validated successfully
                     media_types_to_download = [
                         mt for mt in decision.media_to_download
-                        if not existing_media.get(mt, False)
+                        if mt not in validated_media
                     ]
-
-                    # Count skipped media as validated (they exist on disk)
-                    skipped_media = [
-                        mt for mt in decision.media_to_download
-                        if existing_media.get(mt, False)
-                    ]
-                    for media_type in skipped_media:
-                        if self.console_ui:
-                            self.console_ui.increment_media_validated(media_type)
 
                     if not media_types_to_download:
                         logger.info(f"[{rom_info.filename}] All media already exists on disk, skipping downloads")
+                        # Clear download list and skip all download logic
+                        decision.media_to_download = []
                     else:
                         if len(media_types_to_download) < len(decision.media_to_download):
                             skipped = len(decision.media_to_download) - len(media_types_to_download)
@@ -764,118 +876,153 @@ class WorkflowOrchestrator:
                                 ", ".join(media_types_to_download)
                             )
 
-                    # Update decision to only download missing media
-                    decision.media_to_download = media_types_to_download
+                        # Update decision to only download missing media
+                        decision.media_to_download = media_types_to_download
 
-                    # First convert singular to plural directory names
-                    plural_dirs = [to_plural(t) for t in decision.media_to_download]
+                        # First convert singular to plural directory names
+                        plural_dirs = [to_plural(t) for t in decision.media_to_download]
 
-                    # Then convert directory names to ScreenScraper media types
-                    screenscraper_types = convert_directory_names_to_media_types(plural_dirs)
+                        # Then convert directory names to ScreenScraper media types
+                        screenscraper_types = convert_directory_names_to_media_types(plural_dirs)
 
-                    logger.debug(
-                        f"[{rom_info.filename}] Media type conversion: "
-                        f"singular={decision.media_to_download} -> "
-                        f"plural_dirs={plural_dirs} -> "
-                        f"screenscraper={screenscraper_types}"
-                    )
-
-                    # Filter media list to only include types we want to download
-                    filtered_media_list = [
-                        m for m in media_list
-                        if m.get('type') in screenscraper_types
-                    ]
-
-                    # Identify media types that were requested but not available in API
-                    available_types = {m.get('type') for m in filtered_media_list}
-                    unavailable_types = [
-                        mt for mt, ss_type in zip(decision.media_to_download, screenscraper_types)
-                        if ss_type not in available_types
-                    ]
-                    
-                    if unavailable_types:
-                        logger.info(
-                            "[%s] %s media type(s) not available in API response: %s",
-                            rom_info.filename,
-                            len(unavailable_types),
-                            ", ".join(unavailable_types)
+                        logger.debug(
+                            f"[{rom_info.filename}] Media type conversion: "
+                            f"singular={decision.media_to_download} -> "
+                            f"plural_dirs={plural_dirs} -> "
+                            f"screenscraper={screenscraper_types}"
                         )
 
-                    if filtered_media_list:
-                        # Count actual media types being downloaded (exclude unavailable ones)
-                        actual_types_to_download = [mt for mt in decision.media_to_download
-                                                   if mt not in unavailable_types]
-                        logger.info(
-                            "[%s] Downloading %s media types concurrently: %s",
-                            rom_info.filename,
-                            len(actual_types_to_download),
-                            ", ".join(actual_types_to_download)
-                        )
+                        # Filter media list to only include types we want to download
+                        filtered_media_list = [
+                            m for m in media_list
+                            if m.get('type') in screenscraper_types
+                        ]
 
-                        # Create progress callback to update UI during download
-                        def media_progress_callback(media_type: str, current_idx: int, total_count: int):
-                            # Update pipeline UI
-                            if self.console_ui:
-                                self.console_ui.update_media_download_stage(
-                                    rom_info.filename,
-                                    media_type,
-                                    'start'
-                                )
+                        # Identify media types that were requested but not available in API
+                        available_types = {m.get('type') for m in filtered_media_list}
+                        unavailable_types = [
+                            mt for mt, ss_type in zip(decision.media_to_download, screenscraper_types)
+                            if ss_type not in available_types
+                        ]
+                        
+                        if unavailable_types:
+                            logger.info(
+                                "[%s] %s media type(s) not available in API response: %s",
+                                rom_info.filename,
+                                len(unavailable_types),
+                                ", ".join(unavailable_types)
+                            )
 
-                        # Download all media concurrently
-                        download_results, _ = await media_downloader.download_media_for_game(
-                            media_list=filtered_media_list,
-                            rom_path=str(rom_info.path),
-                            system=system.name,
-                            progress_callback=media_progress_callback,
-                            shutdown_event=shutdown_event
-                        )
+                        if filtered_media_list:
+                            # Count actual media types being downloaded (exclude unavailable ones)
+                            actual_types_to_download = [mt for mt in decision.media_to_download
+                                                       if mt not in unavailable_types]
+                            logger.info(
+                                "[%s] Downloading %s media types concurrently: %s",
+                                rom_info.filename,
+                                len(actual_types_to_download),
+                                ", ".join(actual_types_to_download)
+                            )
 
-                        # Process results
-                        for result in download_results:
-                            if result.success and result.file_path:
-                                # Convert ScreenScraper media type to ES-DE singular form for logging/tracking
-                                from ..media.media_types import get_directory_for_media_type, to_singular
-                                plural_dir = get_directory_for_media_type(result.media_type)
-                                media_type_singular = to_singular(plural_dir)
-
-                                # Update UI: Media download complete
+                            # Create progress callback to update UI during download
+                            def media_progress_callback(media_type: str, current_idx: int, total_count: int):
+                                # Update pipeline UI
                                 if self.console_ui:
                                     self.console_ui.update_media_download_stage(
                                         rom_info.filename,
-                                        result.media_type,
-                                        'complete'
+                                        media_type,
+                                        'start'
                                     )
 
-                                # Track using singular ES-DE type
-                                media_paths[media_type_singular] = result.file_path
-                                media_count += 1
-                                completed_tasks += 1
+                            # Download all media concurrently
+                            download_results, _ = await media_downloader.download_media_for_game(
+                                media_list=filtered_media_list,
+                                rom_path=str(rom_info.path),
+                                system=system.name,
+                                progress_callback=media_progress_callback,
+                                shutdown_event=shutdown_event
+                            )
 
-                                # Log successful download with ES-DE singular type
-                                logger.info(
-                                    f"[{rom_info.filename}] Downloaded {media_type_singular}"
-                                )
+                            # Process results - track successes and failures
+                            successful_downloads = []
+                            failed_downloads = []
+                            
+                            for result in download_results:
+                                if result.success and result.file_path:
+                                    # Convert ScreenScraper media type to ES-DE singular form for tracking
+                                    from ..media.media_types import get_directory_for_media_type, to_singular
+                                    plural_dir = get_directory_for_media_type(result.media_type)
+                                    media_type_singular = to_singular(plural_dir)
 
-                                # Store hash from download result (already calculated by media_downloader)
-                                if result.hash_value:
-                                    media_hashes[media_type_singular] = result.hash_value
-                                    logger.debug(
-                                        f"[{rom_info.filename}] Media hash: {media_type_singular} = {result.hash_value}"
-                                    )
+                                    # Update UI: Media download complete
+                                    if self.console_ui:
+                                        self.console_ui.update_media_download_stage(
+                                            rom_info.filename,
+                                            result.media_type,
+                                            'complete'
+                                        )
+
+                                    # Track using singular ES-DE type
+                                    media_paths[media_type_singular] = result.file_path
+                                    media_count += 1
+                                    completed_tasks += 1
+                                    successful_downloads.append(media_type_singular)
+
+                                    # Store hash from download result (already calculated by media_downloader)
+                                    if result.hash_value:
+                                        media_hashes[media_type_singular] = result.hash_value
+                                        logger.debug(
+                                            f"[{rom_info.filename}] Media hash: "
+                                            f"{media_type_singular} = {result.hash_value}"
+                                        )
+                                    else:
+                                        logger.debug(
+                                            f"[{rom_info.filename}] "
+                                            f"No hash available for {media_type_singular}"
+                                        )
                                 else:
-                                    logger.debug(f"[{rom_info.filename}] No hash available for {media_type_singular}")
-                    else:
-                        logger.info(
-                            "[%s] No media to download (all requested types unavailable in API)",
-                            rom_info.filename
-                        )
+                                    # Track failed download
+                                    from ..media.media_types import get_directory_for_media_type, to_singular
+                                    plural_dir = get_directory_for_media_type(result.media_type)
+                                    media_type_singular = to_singular(plural_dir)
+                                    failed_downloads.append((media_type_singular, result.error))
+                            
+                            # Log consolidated download summary
+                            if successful_downloads or failed_downloads:
+                                summary_parts = []
+                                if successful_downloads:
+                                    summary_parts.append(
+                                        f"{len(successful_downloads)} succeeded ({', '.join(successful_downloads)})"
+                                    )
+                                if failed_downloads:
+                                    failed_types = [
+                                        f"{mt} ({err})" for mt, err in failed_downloads
+                                    ]
+                                    summary_parts.append(
+                                        f"{len(failed_downloads)} failed ({'; '.join(failed_types)})"
+                                    )
+                                
+                                logger.info(
+                                    f"[{rom_info.filename}] Media downloads: {' | '.join(summary_parts)}"
+                                )
+                        else:
+                            logger.info(
+                                "[%s] No media to download (all requested types unavailable)",
+                                rom_info.filename
+                            )
 
-                    # Clear download list - validation may add items back if needed
-                    decision.media_to_download = []
+                        # Clear download list - validation may add items back if needed
+                        decision.media_to_download = []
 
                     # Validate existing media (only in normal or strict mode)
                     if decision.media_to_validate and validation_mode != 'disabled':
+                        # Track validation results for summary logging
+                        validated_passed = []
+                        validated_failed = []
+                        validated_missing = []
+                        validated_no_hash = []
+                        validated_trusted = []
+
                         for media_type_singular in decision.media_to_validate:
                             # Check if media file exists
                             media_path = self._get_media_path(system, media_type_singular, rom_info.path)
@@ -886,78 +1033,146 @@ class WorkflowOrchestrator:
                                     rom_info.filename,
                                     media_type_singular
                                 )
+                                validated_missing.append(media_type_singular)
                                 if media_type_singular not in decision.media_to_download:
                                     decision.media_to_download.append(media_type_singular)
                                 continue
+
+                            # Non-image media types (PDFs, videos) can't be validated with Pillow
+                            is_image_type = media_type_singular not in ['manual', 'video']
 
                             # Get expected hash from cache
                             expected_hash = None
                             if self.api_client.cache and rom_hash:
                                 expected_hash = self.api_client.cache.get_media_hash(rom_hash, media_type_singular)
 
-                                if not expected_hash:
-                                    # No hash in cache
-                                    if validation_mode == 'strict':
-                                        # Strict mode: re-download files without cached hashes
-                                        logger.debug(
-                                            "[%s] No cached hash for %s in strict mode, will re-download",
-                                            rom_info.filename,
-                                            media_type_singular
-                                        )
+                            if not expected_hash:
+                                # No hash in cache
+                                if validation_mode == 'strict':
+                                    # Strict mode: re-download files without cached hashes
+                                    validated_no_hash.append(media_type_singular)
                                     if media_type_singular not in decision.media_to_download:
                                         decision.media_to_download.append(media_type_singular)
                                 else:
-                                    # Normal mode: accept existing file
-                                    logger.debug(
-                                        "[%s] Media exists (no cached hash): %s",
-                                        rom_info.filename,
-                                        media_type_singular
-                                    )
+                                    # Normal mode: accept existing file without hash
+                                    validated_trusted.append(media_type_singular)
                                     media_paths[media_type_singular] = str(media_path)
                                     if self.console_ui:
                                         self.console_ui.increment_media_validated(media_type_singular)
-                                    continue
+                                continue
 
-                            # Strict mode: Calculate current hash and compare
+                            # Validate based on mode
                             if validation_mode == 'strict':
-                                current_hash = calculate_hash(
-                                media_path,
-                                algorithm=hash_algorithm,
-                                size_limit=0
-                            )
-
-                            if current_hash == expected_hash:
-                                # Hash matches - keep existing file
-                                logger.info(
-                                    "[%s] Media validated: %s (hash=%s)",
+                                # Strict mode: hash validation (for all media types)
+                                logger.debug(
+                                    "[%s] Media validation (strict): Calculating hash for %s",
                                     rom_info.filename,
-                                    media_type_singular,
-                                    current_hash
+                                    media_type_singular
                                 )
-                                media_paths[media_type_singular] = str(media_path)
-                                media_hashes[media_type_singular] = current_hash
+                                current_hash = calculate_hash(
+                                    media_path,
+                                    algorithm=hash_algorithm,
+                                    size_limit=0
+                                )
 
-                                if self.console_ui:
-                                    self.console_ui.increment_media_validated(media_type_singular)
+                                if current_hash == expected_hash:
+                                    # Hash matches - keep existing file
+                                    validated_passed.append(media_type_singular)
+                                    media_paths[media_type_singular] = str(media_path)
+                                    media_hashes[media_type_singular] = current_hash
+
+                                    if self.console_ui:
+                                        self.console_ui.increment_media_validated(media_type_singular)
+                                else:
+                                    # Hash mismatch - re-download
+                                    validated_failed.append((media_type_singular, expected_hash, current_hash))
+                                    if media_type_singular not in decision.media_to_download:
+                                        decision.media_to_download.append(media_type_singular)
+
+                                    # Track validation failure in UI
+                                    if self.console_ui:
+                                        self.console_ui.increment_media_validation_failed(media_type_singular)
                             else:
-                                # Hash mismatch - re-download
-                                logger.info(
-                                    f"[{rom_info.filename}] Media hash mismatch: {media_type_singular} "
-                                    f"(expected: {expected_hash}, got: {current_hash}) - will re-download"
+                                # Normal mode: dimension and integrity check (images only), trust files otherwise
+                                logger.debug(
+                                    "[%s] Media validation (normal): Checking %s",
+                                    rom_info.filename,
+                                    media_type_singular
                                 )
-                                if media_type_singular not in decision.media_to_download:
-                                    decision.media_to_download.append(media_type_singular)
+                                
+                                # Only validate images; PDFs and videos just pass in normal mode
+                                if is_image_type:
+                                    # Use media_downloader to validate dimensions and integrity
+                                    # (we don't have media_downloader in this scope, need to create it)
+                                    from ..media.downloader import ImageDownloader
+                                    temp_downloader = ImageDownloader(
+                                        client=self.api_client.client,
+                                        min_width=image_min_dimension,
+                                        min_height=image_min_dimension,
+                                        validation_mode=validation_mode
+                                    )
+                                    
+                                    is_valid, validation_error = temp_downloader.validate_existing_file(media_path)
+                                    if is_valid:
+                                        # Validation passed - keep file
+                                        validated_trusted.append(media_type_singular)
+                                        media_paths[media_type_singular] = str(media_path)
+                                        media_hashes[media_type_singular] = expected_hash
+                                        if self.console_ui:
+                                            self.console_ui.increment_media_validated(media_type_singular)
+                                    else:
+                                        # Validation failed - re-download
+                                        logger.debug(
+                                            "[%s] Media validation failed (dimensions/integrity): %s - %s",
+                                            rom_info.filename,
+                                            media_type_singular,
+                                            validation_error
+                                        )
+                                        validated_failed.append((media_type_singular, "cached", "dimension/integrity check failed"))
+                                        if media_type_singular not in decision.media_to_download:
+                                            decision.media_to_download.append(media_type_singular)
+                                        
+                                        if self.console_ui:
+                                            self.console_ui.increment_media_validation_failed(media_type_singular)
+                                else:
+                                    # Non-image types (manual, video) - trust they exist in normal mode
+                                    validated_trusted.append(media_type_singular)
+                                    media_paths[media_type_singular] = str(media_path)
+                                    media_hashes[media_type_singular] = expected_hash
+                                    if self.console_ui:
+                                        self.console_ui.increment_media_validated(media_type_singular)
 
-                                # Track validation failure in UI
-                                if self.console_ui:
-                                    self.console_ui.increment_media_validation_failed(media_type_singular)
-                        else:
-                            # Normal mode: trust cached hash, no file validation
-                            logger.debug(f"[{rom_info.filename}] Media exists with cached hash: {media_type_singular}")
-                            media_paths[media_type_singular] = str(media_path)
-                            media_hashes[media_type_singular] = expected_hash
-                            if self.console_ui:
-                                self.console_ui.increment_media_validated(media_type_singular)
+                        # Log consolidated validation summary
+                        if validated_passed or validated_failed or validated_missing or validated_no_hash:
+                            summary_parts = []
+                            if validated_passed:
+                                summary_parts.append(
+                                    f"{len(validated_passed)} passed ({', '.join(validated_passed)})"
+                                )
+                            if validated_trusted:
+                                summary_parts.append(
+                                    f"{len(validated_trusted)} trusted ({', '.join(validated_trusted)})"
+                                )
+                            if validated_failed:
+                                failed_details = [f"{mt}" for mt, exp, got in validated_failed]
+                                summary_parts.append(
+                                    f"{len(validated_failed)} mismatch ({', '.join(failed_details)})"
+                                )
+                            if validated_no_hash:
+                                summary_parts.append(
+                                    f"{len(validated_no_hash)} no cached hash ({', '.join(validated_no_hash)})"
+                                )
+                            if validated_missing:
+                                summary_parts.append(
+                                    f"{len(validated_missing)} missing ({', '.join(validated_missing)})"
+                                )
+
+                            logger.info(
+                                "[%s] Media validation (%s): %s",
+                                rom_info.filename,
+                                validation_mode,
+                                " | ".join(summary_parts)
+                            )
 
                     # Re-download any media that failed validation or is missing
                     if decision.media_to_download:
@@ -1082,18 +1297,7 @@ class WorkflowOrchestrator:
 
                 # Merge with existing entry if present
                 if gamelist_entry and decision.update_metadata:
-                    scraping_config = self.config.get('scraping', {})
-                    merge_strategy = scraping_config.get('merge_strategy', 'preserve_user_edits')
-                    auto_favorite_enabled = scraping_config.get('auto_favorite_enabled', False)
-                    auto_favorite_threshold = scraping_config.get('auto_favorite_threshold', 0.9)
-
-                    merger = MetadataMerger(
-                        merge_strategy=merge_strategy,
-                        auto_favorite_enabled=auto_favorite_enabled,
-                        auto_favorite_threshold=auto_favorite_threshold
-                    )
-
-                    merge_result = merger.merge_entries(gamelist_entry, game_entry)
+                    merge_result = self.metadata_merger.merge_entries(gamelist_entry, game_entry)
 
                     game_entry = merge_result.merged_entry
 
@@ -1257,10 +1461,14 @@ class WorkflowOrchestrator:
 
         total = len(rom_entries)
         hashed_count = 0
+        last_log_time = time.time()
+        log_interval = 10.0  # Log every 10 seconds minimum
 
         # Update UI: Start hashing stage
         if self.console_ui:
             self.console_ui.update_hashing_progress(0, total, 'Starting...')
+
+        logger.info(f"Starting ROM hash calculation: {total} ROMs in batches of {batch_size}")
 
         for i in range(0, total, batch_size):
             batch = rom_entries[i:i + batch_size]
@@ -1311,6 +1519,15 @@ class WorkflowOrchestrator:
 
             # Execute batch concurrently
             if hash_tasks:
+                # Log what we're about to hash (for large files, show size)
+                large_files = [rom_info for rom_info, _ in hash_tasks if rom_info.file_size > 100_000_000]  # > 100MB
+                if large_files:
+                    largest_gb = max(rom_info.file_size for rom_info in large_files) / (1024**3)
+                    logger.info(
+                        f"Hashing batch {(i // batch_size) + 1}: {len(hash_tasks)} files "
+                        f"({len(large_files)} files > 100MB, largest: {largest_gb:.2f} GB)"
+                    )
+
                 results = await asyncio.gather(*[task for _, task in hash_tasks], return_exceptions=True)
 
                 # Assign hash values to ROM entries
@@ -1321,20 +1538,32 @@ class WorkflowOrchestrator:
                         rom_info.hash_value = result
                         hashed_count += 1
 
-            # Progress logging every 1000 ROMs
-            if (i + batch_size) % 1000 == 0 or (i + batch_size) >= total:
-                logger.debug(f"Hashed {min(i + batch_size, total)}/{total} ROMs ({hashed_count} successful)")
+            # Progress logging - update frequently (every 10 ROMs or 10 seconds)
+            current_count = min(i + batch_size, total)
+            current_time = time.time()
+            should_log = (
+                (current_count % 10 == 0) or  # Every 10 ROMs
+                (current_time - last_log_time >= log_interval) or  # Every 10 seconds
+                (current_count >= total)  # Always log completion
+            )
 
-                # Update UI with current progress
-                if self.console_ui:
-                    current_count = min(i + batch_size, total)
-                    batch_num = (i // batch_size) + 1
-                    total_batches = (total + batch_size - 1) // batch_size
-                    self.console_ui.update_hashing_progress(
-                        current_count,
-                        total,
-                        f'batch {batch_num}/{total_batches}'
-                    )
+            if should_log:
+                logger.info(
+                    f"Hashing progress: {current_count}/{total} ROMs processed "
+                    f"({hashed_count} hashed, {current_count - hashed_count} skipped) "
+                    f"[{(current_count / total * 100):.1f}%]"
+                )
+                last_log_time = current_time
+
+            # Update UI with current progress (always update UI)
+            if self.console_ui:
+                batch_num = (i // batch_size) + 1
+                total_batches = (total + batch_size - 1) // batch_size
+                self.console_ui.update_hashing_progress(
+                    current_count,
+                    total,
+                    f'batch {batch_num}/{total_batches}'
+                )
 
         # Mark hashing complete
         if self.console_ui:
@@ -1751,7 +1980,7 @@ class WorkflowOrchestrator:
                 f.write("# These ROMs returned 404 (Not Found) from the API\n")
                 f.write("#\n\n")
 
-                for item in sorted(not_found_items, key=lambda x: x['rom_info'].filename):
+                for item in sorted(not_found_items, key=lambda x: x['rom_info'].filename.lower()):
                     rom_info = item['rom_info']
                     error = item['error']
                     f.write(f"ROM: {rom_info.filename}\n")
@@ -2026,7 +2255,7 @@ class WorkflowOrchestrator:
                 successful_results = [r for r in results if r.success and not r.error]
                 if successful_results:
                     f.write("=== Successful ===\n")
-                    for result in successful_results:
+                    for result in sorted(successful_results, key=lambda r: r.rom_path.name.lower()):
                         f.write(f"✓ {result.rom_path.name}\n")
                     f.write("\n")
 
@@ -2034,7 +2263,7 @@ class WorkflowOrchestrator:
                 skipped_results = [r for r in results if hasattr(r, 'skipped') and r.skipped]
                 if skipped_results:
                     f.write("=== Skipped ===\n")
-                    for result in skipped_results:
+                    for result in sorted(skipped_results, key=lambda r: r.rom_path.name.lower()):
                         reason = getattr(result, 'skip_reason', 'Unknown reason')
                         f.write(f"○ {result.rom_path.name} - {reason}\n")
                     f.write("\n")
@@ -2043,7 +2272,7 @@ class WorkflowOrchestrator:
                 failed_results = [r for r in results if not r.success]
                 if failed_results:
                     f.write("=== Failed ===\n")
-                    for result in failed_results:
+                    for result in sorted(failed_results, key=lambda r: r.rom_path.name.lower()):
                         f.write(f"✗ {result.rom_path.name} - {result.error}\n")
                     f.write("\n")
 
