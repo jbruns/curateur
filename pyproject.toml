@@ -12,12 +12,12 @@ authors = [
     {name = "jbruns"}
 ]
 dependencies = [
-    "PyYAML>=6.0",
-    "lxml>=4.9.0",
-    "httpx>=0.24.0",
-    "Pillow>=10.0.0",
-    "rich>=13.0.0",
-    "psutil>=5.9.0",
+    "PyYAML>=6.0.3,<7.0.0",
+    "lxml>=6.0.2,<7.0.0",
+    "httpx>=0.28.1,<0.29",
+    "Pillow>=11.3.0,<12.0.0",
+    "rich>=14.2.0,<15.0.0",
+    "psutil>=7.1.3,<8.0.0",
 ]
 
 [project.scripts]
@@ -25,11 +25,11 @@ curateur = "curateur.cli:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-mock>=3.10.0",
-    "respx>=0.20.0",  # HTTP mocking for httpx
+    "pytest>=8.4.2,<9.0.0",
+    "pytest-cov>=7.0.0,<8.0.0",
+    "pytest-asyncio>=1.2.0,<2.0.0",
+    "pytest-mock>=3.15.1,<4.0.0",
+    "respx>=0.22.0,<0.23",  # HTTP mocking for httpx
 ]
 
 [tool.setuptools]

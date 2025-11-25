@@ -73,6 +73,12 @@ Outputs:
 - Testing approach is detailed in `TESTING_STRATEGY.md` (taxonomy, fixtures, and marker guidance).
 - Package entrypoint is `curateur`; during development you can also run `python -m curateur.cli ...`.
 
+### Dependencies & constraints
+- Ranges are bounded to allow patch/minor updates while blocking breaking majors (`requirements.txt`, `pyproject.toml`).
+- For reproducible installs, use the pinned set: `pip install -e .[dev] -c constraints.txt` (or `pip install -r requirements.txt -c constraints.txt`).
+- To refresh pins: create a clean venv, install from `requirements.txt`, run the test suite, then `pip freeze | grep -vE '^(pip|setuptools|wheel)==|^-e ' > constraints.txt`.
+- Keep the ranges and the constraints file in sync when updating dependencies.
+
 ### Maintainer tools
 - Code quality scanner: `python3 curateur/tools/code_quality_check.py curateur/` (see `curateur/tools/README.md`).
 - Update ScreenScraper platform mapping: `python -m curateur.tools.generate_system_map --es-systems es_systems.xml --systemes-liste systemesListe.xml`.
