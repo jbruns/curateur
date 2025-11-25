@@ -179,6 +179,21 @@ class PathHandler:
             return os.path.splitext(name)[0]
         
         return name
+
+    def to_absolute_rom_path(self, rom_path: str) -> Path:
+        """
+        Convert a relative ROM path (from gamelist) to an absolute path.
+        
+        Args:
+            rom_path: Relative ROM path (e.g., './Game.zip') or absolute path
+        
+        Returns:
+            Absolute Path to the ROM
+        """
+        path_obj = Path(rom_path)
+        if path_obj.is_absolute():
+            return path_obj
+        return self.resolve_rom_path(rom_path)
     
     def get_media_basename(self, rom_path: Path) -> str:
         """

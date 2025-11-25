@@ -40,3 +40,6 @@ async def test_mark_processed_and_complete():
     assert manager.is_empty() is True
     manager.mark_system_complete()
     assert await manager.get_work_async() is None
+
+    stats = manager.get_stats()
+    assert stats["processed"] == 1

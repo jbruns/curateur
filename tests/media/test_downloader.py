@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import httpx
 
 from curateur.media.downloader import ImageDownloader
 
@@ -35,6 +36,18 @@ def _make_png_bytes(width=2, height=2):
     return buf.getvalue()
 
 
+class FailingClient(DummyClient):
+    def __init__(self, content: bytes, content_type: str = "image/png", errors_before_success=1):
+        super().__init__(content, content_type=content_type)
+        self._errors_before_success = errors_before_success
+
+    async def get(self, url, timeout=None, headers=None):
+        if self._errors_before_success > 0:
+            self._errors_before_success -= 1
+            raise httpx.TimeoutException("timeout")
+        return await super().get(url, timeout=timeout, headers=headers)
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_image_downloader_downloads_and_validates(tmp_path):
@@ -63,3 +76,30 @@ async def test_image_downloader_rejects_small_images(tmp_path):
 
     assert ok is False
     assert "Image too small" in err
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_image_downloader_rejects_bad_content_type(tmp_path):
+    png_bytes = _make_png_bytes()
+    client = DummyClient(png_bytes, content_type="text/html")
+    downloader = ImageDownloader(client=client, validation_mode="normal", max_retries=1)
+
+    out = tmp_path / "bad.png"
+    ok, err = await downloader.download("http://example/bad.png", out)
+    assert ok is False
+    assert "Invalid content type" in err
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_image_downloader_retries_on_timeout(tmp_path):
+    png_bytes = _make_png_bytes()
+    client = FailingClient(png_bytes, errors_before_success=1)
+    downloader = ImageDownloader(client=client, validation_mode="disabled", max_retries=2)
+
+    out = tmp_path / "retry.png"
+    ok, err = await downloader.download("http://example/retry.png", out)
+
+    assert ok is True
+    assert client.calls >= 1
