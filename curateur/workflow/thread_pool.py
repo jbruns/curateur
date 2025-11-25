@@ -398,9 +398,12 @@ class ThreadPoolManager:
             while not self._work_queue.queue.empty() and not self._workers_stopped:
                 try:
                     # Wait up to 1 second at a time, allows checking _workers_stopped
+                    # Note: drain() will log a warning if timeout is hit, but this is
+                    # expected during periodic checks - we catch TimeoutError to continue
                     await asyncio.wait_for(self._work_queue.drain(timeout=1.0), timeout=1.0)
                 except asyncio.TimeoutError:
                     # Timeout checking if queue empty, loop will check _workers_stopped
+                    # This is expected behavior during periodic polling
                     pass
 
         if self._workers_stopped:
