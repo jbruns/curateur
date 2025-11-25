@@ -1533,7 +1533,7 @@ class WorkflowOrchestrator:
                 # Assign hash values to ROM entries
                 for (rom_info, _), result in zip(hash_tasks, results):
                     if isinstance(result, Exception):
-                        logger.warning(f"Failed to hash {rom_info.name}: {result}")
+                        logger.warning(f"Failed to hash {rom_info.filename}: {result}")
                     else:
                         rom_info.hash_value = result
                         hashed_count += 1
