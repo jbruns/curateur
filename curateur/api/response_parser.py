@@ -16,20 +16,20 @@ def validate_response(
 ) -> etree.Element:
     """
     Validate and parse API response.
-    
+
     Args:
         response_content: Raw response bytes
         expected_format: Expected format ('xml')
-        
+
     Returns:
         Parsed XML root element
-        
+
     Raises:
         ResponseError: If validation fails
     """
     if not response_content:
         raise ResponseError("Empty response body received")
-    
+
     # Parse XML
     try:
         root = etree.fromstring(response_content)
@@ -37,32 +37,32 @@ def validate_response(
         raise ResponseError(f"Malformed XML: {e}")
     except Exception as e:
         raise ResponseError(f"Failed to parse response: {e}")
-    
+
     # Validate root element
     if root.tag != 'Data':
         raise ResponseError(f"Invalid root element: expected 'Data', got '{root.tag}'")
-    
+
     return root
 
 
 def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
     """
     Parse a <jeu> element into game metadata.
-    
+
     Args:
         jeu_elem: <jeu> XML element
-        
+
     Returns:
         Dictionary with game metadata
     """
     # Extract basic metadata
     game_data = {}
-    
+
     # Game ID
     game_id = jeu_elem.get('id')
     if game_id:
         game_data['id'] = game_id
-    
+
     # Names (multiple language support)
     noms = jeu_elem.find('noms')
     if noms is not None:
@@ -73,7 +73,7 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
             if text:
                 names[region] = decode_html_entities(text)
         game_data['names'] = names
-    
+
     # Get primary name (prefer 'us', then 'wor', then first available)
     if 'names' in game_data:
         if 'us' in game_data['names']:
@@ -82,12 +82,12 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
             game_data['name'] = game_data['names']['wor']
         elif game_data['names']:
             game_data['name'] = list(game_data['names'].values())[0]
-    
+
     # System name
     systeme = jeu_elem.find('systeme')
     if systeme is not None and systeme.text:
         game_data['system'] = systeme.text
-    
+
     # Descriptions
     synopsis = jeu_elem.find('synopsis')
     if synopsis is not None:
@@ -99,7 +99,7 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
                 descriptions[langue] = decode_html_entities(text)
         if descriptions:
             game_data['descriptions'] = descriptions
-    
+
     # Dates
     dates = jeu_elem.find('dates')
     if dates is not None:
@@ -111,7 +111,7 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
                 release_dates[region] = text
         if release_dates:
             game_data['release_dates'] = release_dates
-    
+
     # Genres
     genres_elem = jeu_elem.find('genres')
     if genres_elem is not None:
@@ -131,22 +131,22 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
                     break  # Just take the first one
         if genres:
             game_data['genres'] = genres
-    
+
     # Developer
     developpeur = jeu_elem.find('developpeur')
     if developpeur is not None and developpeur.text:
         game_data['developer'] = decode_html_entities(developpeur.text)
-    
+
     # Publisher
     editeur = jeu_elem.find('editeur')
     if editeur is not None and editeur.text:
         game_data['publisher'] = decode_html_entities(editeur.text)
-    
+
     # Players
     joueurs = jeu_elem.find('joueurs')
     if joueurs is not None and joueurs.text:
         game_data['players'] = joueurs.text
-    
+
     # Rating
     note = jeu_elem.find('note')
     if note is not None and note.text:
@@ -155,55 +155,55 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
         except ValueError:
             # Invalid rating format - skip this field
             pass
-    
+
     # Media URLs
     medias = jeu_elem.find('medias')
     if medias is not None:
         game_data['media'] = parse_media_urls(medias)
-    
+
     return game_data
 
 
 def parse_game_info(root: etree.Element) -> Dict[str, Any]:
     """
     Parse game information from jeuInfos.php response.
-    
+
     Args:
         root: Parsed XML root element
-        
+
     Returns:
         Dictionary with game metadata
-        
+
     Raises:
         ResponseError: If game not found or response invalid
     """
     # Check for <jeu> element
     jeu_elem = root.find('jeu')
-    
+
     if jeu_elem is None:
         # Game not found
         raise ResponseError("Game not found in database (<jeu> element missing)")
-    
+
     return _parse_jeu_element(jeu_elem)
 
 
 def parse_search_results(root: etree.Element) -> list[Dict[str, Any]]:
     """
     Parse game list from jeuRecherche.php response.
-    
+
     Args:
         root: Parsed XML root element with <jeux> container
-        
+
     Returns:
         List of game metadata dictionaries
     """
     results = []
-    
+
     # Find <jeux> container
     jeux = root.find('jeux')
     if jeux is None:
         return results
-    
+
     # Parse each <jeu> element
     for jeu_elem in jeux.findall('jeu'):
         try:
@@ -212,27 +212,27 @@ def parse_search_results(root: etree.Element) -> list[Dict[str, Any]]:
         except Exception:
             # Skip malformed entries
             continue
-    
+
     return results
 
 
 def parse_media_urls(medias_elem: etree.Element) -> Dict[str, List[Dict[str, Any]]]:
     """
     Parse media URLs from response.
-    
+
     Args:
         medias_elem: <medias> XML element
-        
+
     Returns:
         Dictionary mapping media type to list of media items
     """
     media_dict = {}
-    
+
     for media in medias_elem.findall('media'):
         media_type = media.get('type')
         if not media_type:
             continue
-        
+
         # Extract media info
         media_info = {
             'type': media_type,
@@ -240,35 +240,35 @@ def parse_media_urls(medias_elem: etree.Element) -> Dict[str, List[Dict[str, Any
             'format': media.get('format'),
             'region': media.get('region'),
         }
-        
+
         # Add to appropriate list
         if media_type not in media_dict:
             media_dict[media_type] = []
-        
+
         media_dict[media_type].append(media_info)
-    
+
     return media_dict
 
 
 def parse_user_info(root: etree.Element) -> Dict[str, Any]:
     """
     Parse user information from API response header.
-    
+
     Args:
         root: Parsed XML root element
-        
+
     Returns:
         Dictionary with user info and rate limits
     """
     ssuser_elem = root.find('.//ssuser')
-    
+
     if ssuser_elem is None:
         return {}
-    
+
     user_info = {}
-    
+
     # Extract rate limits and quota info
-    for field in ['id', 'niveau', 'contribution', 'maxthreads', 
+    for field in ['id', 'niveau', 'contribution', 'maxthreads',
                   'maxrequestspermin', 'requeststoday', 'maxrequestsperday',
                   'requestskotoday', 'maxrequestskoperday']:
         elem = ssuser_elem.find(field)
@@ -277,45 +277,45 @@ def parse_user_info(root: etree.Element) -> Dict[str, Any]:
                 user_info[field] = int(elem.text)
             except ValueError:
                 user_info[field] = elem.text
-    
+
     import logging
     logger = logging.getLogger(__name__)
     logger.debug(f"Parsed user_info from API response: {user_info}")
-    
+
     return user_info
 
 
 def decode_html_entities(text: str) -> str:
     """
     Decode HTML entities in API response text.
-    
+
     ScreenScraper returns text with HTML entities that must be decoded.
-    
+
     Args:
         text: Text with HTML entities
-        
+
     Returns:
         Decoded text
     """
     if not text:
         return text
-    
+
     return html.unescape(text)
 
 
 def extract_error_message(root: etree.Element) -> Optional[str]:
     """
     Extract error message from API response.
-    
+
     Args:
         root: Parsed XML root element
-        
+
     Returns:
         Error message or None
     """
     error_elem = root.find('.//erreur')
-    
+
     if error_elem is not None and error_elem.text:
         return decode_html_entities(error_elem.text)
-    
+
     return None

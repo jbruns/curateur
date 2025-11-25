@@ -40,32 +40,34 @@ def check_escaped_newlines(file_path: Path) -> List[Tuple[int, str]]:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
             lines = content.splitlines()
-            
+
         for line_num, line in enumerate(lines, 1):
             # Look for patterns that indicate corruption, not intentional escapes:
             # 1. String ending with literal \n followed by actual newline
             # 2. Code statement ending with \n (not in a string)
             # 3. Multiple \n with whitespace between them
-            
+
             # Skip if it's in a comment
             if '#' in line:
                 code_part = line.split('#')[0]
             else:
                 code_part = line
-            
+
             # Pattern 1: Ends with \n and next line continues the statement
-            if code_part.rstrip().endswith('\\n') and not code_part.strip().startswith(('r"', "r'")):
-                # Check if this looks like a corrupted continuation
-                if line_num < len(lines):
-                    next_line = lines[line_num] if line_num < len(lines) else ""
-                    # If next line is indented at same level and doesn't start a new statement
-                    if next_line and not next_line.lstrip().startswith(('def ', 'class ', 'if ', 'for ', 'while ', '@')):
-                        issues.append((line_num, line.rstrip()))
-            
+                if code_part.rstrip().endswith('\\n') and not code_part.strip().startswith(('r"', "r'")):
+                    # Check if this looks like a corrupted continuation
+                    if line_num < len(lines):
+                        next_line = lines[line_num] if line_num < len(lines) else ""
+                        # If next line is indented at same level and doesn't start a new statement
+                        if next_line and not next_line.lstrip().startswith(
+                            ('def ', 'class ', 'if ', 'for ', 'while ', '@')
+                        ):
+                            issues.append((line_num, line.rstrip()))
+
             # Pattern 2: \n followed by whitespace and more code on same line
             if re.search(r'\\n\s+\w', code_part):
                 issues.append((line_num, line.rstrip()))
-                
+
     except Exception as e:
         issues.append((0, f"Error reading file: {str(e)}"))
     return issues
@@ -86,7 +88,7 @@ def check_escaped_quotes(file_path: Path) -> List[Tuple[int, str]]:
                         # 1. f\\" instead of f"
                         # 2. Line starting with \\" (corrupted string start)
                         # 3. Multiple \\" in sequence
-                        if (re.search(r'f\\"', code_part) or 
+                        if (re.search(r'f\\"', code_part) or
                             re.search(r'^\s+\\"', code_part) or
                             re.search(r'\\".*\\".*\\"', code_part)):
                             issues.append((line_num, line.rstrip()))
@@ -102,21 +104,21 @@ def check_string_literal_newlines(file_path: Path) -> List[Tuple[int, str]]:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
             lines = content.splitlines()
-        
+
         # Look for non-triple-quoted strings split across lines
         for line_num, line in enumerate(lines, 1):
             # Skip docstrings and intentional multi-line strings
             if '"""' in line or "'''" in line:
                 continue
-            
+
             # Skip comments
             if line.strip().startswith('#'):
                 continue
-                
+
             # Look for unclosed string at end of line (corruption indicator)
             # Pattern: string starts but doesn't end, and line doesn't end with \
             stripped = line.rstrip()
-            
+
             # Count unescaped quotes
             single_quotes = 0
             double_quotes = 0
@@ -130,9 +132,9 @@ def check_string_literal_newlines(file_path: Path) -> List[Tuple[int, str]]:
                 elif stripped[i] == "'":
                     single_quotes += 1
                 i += 1
-            
+
             # If odd number of quotes and doesn't end with continuation
-            if ((single_quotes % 2 == 1 or double_quotes % 2 == 1) and 
+            if ((single_quotes % 2 == 1 or double_quotes % 2 == 1) and
                 not stripped.endswith('\\') and
                 not stripped.endswith(',') and
                 stripped):  # non-empty line
@@ -140,11 +142,11 @@ def check_string_literal_newlines(file_path: Path) -> List[Tuple[int, str]]:
                 if line_num < len(lines):
                     next_line = lines[line_num].strip()
                     # If next line exists and doesn't start new statement
-                    if (next_line and 
+                    if (next_line and
                         not next_line.startswith(('def ', 'class ', '@', '#')) and
                         not re.match(r'^\s*[)}\]]', next_line)):
                         issues.append((line_num, line.rstrip()[:100]))
-                        
+
     except Exception as e:
         issues.append((0, f"Error reading file: {str(e)}"))
     return issues
@@ -160,7 +162,7 @@ def check_trailing_whitespace(file_path: Path) -> List[Tuple[int, str]]:
                 # line.rstrip() removes trailing whitespace, line.rstrip('\n') removes only newline
                 stripped_no_newline = line.rstrip('\n\r')
                 stripped_all = line.rstrip()
-                
+
                 # If they differ, there's trailing whitespace
                 if stripped_no_newline != stripped_all and stripped_all:
                     # Show the issue
@@ -176,11 +178,11 @@ def check_mixed_line_endings(file_path: Path) -> List[str]:
     try:
         with open(file_path, 'rb') as f:
             content = f.read()
-        
+
         has_crlf = b'\r\n' in content
         has_lf = b'\n' in content.replace(b'\r\n', b'')
         has_cr = b'\r' in content.replace(b'\r\n', b'')
-        
+
         endings = []
         if has_crlf:
             endings.append('CRLF')
@@ -188,10 +190,10 @@ def check_mixed_line_endings(file_path: Path) -> List[str]:
             endings.append('LF')
         if has_cr:
             endings.append('CR')
-        
+
         if len(endings) > 1:
             issues.append(f"Mixed line endings detected: {', '.join(endings)}")
-            
+
     except Exception as e:
         issues.append(f"Error reading file: {str(e)}")
     return issues
@@ -219,7 +221,7 @@ def check_print_statements(file_path: Path) -> List[Tuple[int, str]]:
                 # Skip comments and intentional prints (cli.py, etc.)
                 if line.strip().startswith('#'):
                     continue
-                
+
                 # Look for print() not in test files or CLI
                 if 'print(' in line and 'file=' not in line:
                     # Allow prints in specific contexts
@@ -264,12 +266,12 @@ def check_unused_imports(file_path: Path) -> List[str]:
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+
         # Parse to find imports
         try:
             tree = ast.parse(content, filename=str(file_path))
             imports = set()
-            
+
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
@@ -280,7 +282,7 @@ def check_unused_imports(file_path: Path) -> List[str]:
                         if alias.name != '*':
                             name = alias.asname if alias.asname else alias.name
                             imports.add(name)
-            
+
             # Simple check: see if imported name appears in code
             for imp in imports:
                 # Skip common false positives
@@ -292,10 +294,10 @@ def check_unused_imports(file_path: Path) -> List[str]:
                 # If only appears in import line, might be unused
                 if len(matches) <= 1:
                     issues.append(f"Potentially unused import: {imp}")
-                    
+
         except SyntaxError:
             pass  # Already caught by syntax check
-            
+
     except Exception as e:
         issues.append(f"Error reading file: {str(e)}")
     return issues
@@ -304,24 +306,24 @@ def check_unused_imports(file_path: Path) -> List[str]:
 def scan_directory(root_path: Path, pattern: str = "**/*.py", ci_mode: bool = False) -> Dict[str, Dict[str, List]]:
     """Scan directory for Python files with corruption issues."""
     results = {}
-    
+
     for file_path in root_path.glob(pattern):
         # Skip __pycache__ and hidden files
         if '__pycache__' in str(file_path) or file_path.name.startswith('.'):
             continue
-        
+
         file_results = {
             'syntax_errors': check_syntax_errors(file_path),
             # Only report other issues if there are syntax errors
             # (reduces false positives from intentional escape sequences)
         }
-        
+
         # If there are syntax errors, also check for likely causes
         if file_results['syntax_errors']:
             file_results['escaped_newlines'] = check_escaped_newlines(file_path)
             file_results['escaped_quotes'] = check_escaped_quotes(file_path)
             file_results['split_strings'] = check_string_literal_newlines(file_path)
-        
+
         # CI mode: run additional quality checks
         if ci_mode:
             file_results['trailing_whitespace'] = check_trailing_whitespace(file_path)
@@ -332,11 +334,11 @@ def scan_directory(root_path: Path, pattern: str = "**/*.py", ci_mode: bool = Fa
             # file_results['print_statements'] = check_print_statements(file_path)
             # file_results['todo_comments'] = check_todo_comments(file_path)
             # file_results['unused_imports'] = check_unused_imports(file_path)
-        
+
         # Only include files with issues
         if any(file_results.values()):
             results[str(file_path)] = file_results
-    
+
     return results
 
 
@@ -345,38 +347,38 @@ def print_results(results: Dict[str, Dict[str, List]], ci_mode: bool = False) ->
     if not results:
         print("✅ No corruption issues found!")
         return 0
-    
+
     print(f"⚠️  Found potential issues in {len(results)} file(s):\n")
-    
+
     for file_path, issues in results.items():
         print(f"{'=' * 80}")
         print(f"📁 {file_path}")
         print(f"{'=' * 80}\n")
-        
+
         if issues.get('syntax_errors'):
             print("🔴 SYNTAX ERRORS:")
             for error in issues['syntax_errors']:
                 print(f"   {error}")
             print()
-        
+
         if issues.get('escaped_newlines'):
             print("⚠️  ESCAPED NEWLINES (\\n):")
             for line_num, line in issues['escaped_newlines']:
                 print(f"   Line {line_num}: {line[:100]}")
             print()
-        
+
         if issues.get('escaped_quotes'):
             print("⚠️  ESCAPED QUOTES (\\):")
             for line_num, line in issues['escaped_quotes']:
                 print(f"   Line {line_num}: {line[:100]}")
             print()
-        
+
         if issues.get('split_strings'):
             print("⚠️  SPLIT STRING LITERALS:")
             for line_num, line in issues['split_strings']:
                 print(f"   Line {line_num}: {line[:100]}")
             print()
-        
+
         # CI mode checks
         if ci_mode:
             if issues.get('trailing_whitespace'):
@@ -384,19 +386,19 @@ def print_results(results: Dict[str, Dict[str, List]], ci_mode: bool = False) ->
                 for line_num, msg in issues['trailing_whitespace']:
                     print(f"   Line {line_num}: {msg}")
                 print()
-            
+
             if issues.get('mixed_line_endings'):
                 print("🔧 MIXED LINE ENDINGS:")
                 for msg in issues['mixed_line_endings']:
                     print(f"   {msg}")
                 print()
-            
+
             if issues.get('tab_indentation'):
                 print("🔧 TAB CHARACTERS:")
                 for line_num, msg in issues['tab_indentation']:
                     print(f"   Line {line_num}: {msg}")
                 print()
-            
+
             if issues.get('long_lines'):
                 print("📏 LONG LINES (>120 chars):")
                 for line_num, length in issues['long_lines'][:10]:  # Show first 10
@@ -404,7 +406,7 @@ def print_results(results: Dict[str, Dict[str, List]], ci_mode: bool = False) ->
                 if len(issues['long_lines']) > 10:
                     print(f"   ... and {len(issues['long_lines']) - 10} more")
                 print()
-            
+
             if issues.get('print_statements'):
                 print("🐛 DEBUG PRINT STATEMENTS:")
                 for line_num, line in issues['print_statements'][:5]:
@@ -412,7 +414,7 @@ def print_results(results: Dict[str, Dict[str, List]], ci_mode: bool = False) ->
                 if len(issues['print_statements']) > 5:
                     print(f"   ... and {len(issues['print_statements']) - 5} more")
                 print()
-            
+
             if issues.get('todo_comments'):
                 print("📝 TODO/FIXME COMMENTS:")
                 for line_num, line in issues['todo_comments'][:5]:
@@ -420,7 +422,7 @@ def print_results(results: Dict[str, Dict[str, List]], ci_mode: bool = False) ->
                 if len(issues['todo_comments']) > 5:
                     print(f"   ... and {len(issues['todo_comments']) - 5} more")
                 print()
-            
+
             if issues.get('unused_imports'):
                 print("🗑️  POTENTIALLY UNUSED IMPORTS:")
                 for msg in issues['unused_imports'][:10]:
@@ -428,14 +430,14 @@ def print_results(results: Dict[str, Dict[str, List]], ci_mode: bool = False) ->
                 if len(issues['unused_imports']) > 10:
                     print(f"   ... and {len(issues['unused_imports']) - 10} more")
                 print()
-    
+
     return len(results)
 
 
 def main():
     """Main entry point."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description='Code quality and corruption checker for Python files',
         epilog='Examples:\n'
@@ -472,19 +474,19 @@ def main():
         default=[],
         help='Paths to exclude (can be specified multiple times)'
     )
-    
+
     args = parser.parse_args()
-    
+
     if not args.path.exists():
         print(f"❌ Error: Path does not exist: {args.path}")
         return 1
-    
+
     mode_str = "CI quality checks" if args.ci else "corruption checks"
     print(f"🔍 Scanning {args.path} for {mode_str}...\n")
-    
+
     results = scan_directory(args.path, args.pattern, ci_mode=args.ci)
     issue_count = print_results(results, ci_mode=args.ci)
-    
+
     # In CI mode or strict mode, fail on any issues
     # Otherwise, only fail on syntax errors
     if args.strict or args.ci:

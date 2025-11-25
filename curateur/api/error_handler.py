@@ -57,15 +57,15 @@ HTTP_STATUS_MESSAGES = {
 def get_error_message(status_code: int) -> str:
     """
     Get user-friendly error message for HTTP status code.
-    
+
     Args:
         status_code: HTTP status code
-        
+
     Returns:
         Error message string
     """
     return HTTP_STATUS_MESSAGES.get(
-        status_code, 
+        status_code,
         f"Unknown error (HTTP {status_code})"
     )
 
@@ -79,14 +79,14 @@ def handle_http_status(
 ) -> None:
     """
     Handle HTTP status code and raise appropriate exception.
-    
+
     Args:
         status_code: HTTP status code from API
         context: Additional context for error message
         throttle_manager: Optional ThrottleManager for 429 handling
         endpoint: Optional endpoint name for throttle tracking
         retry_after: Optional Retry-After header value
-        
+
     Raises:
         FatalAPIError: For fatal errors (403, 423, 426, 430)
         RetryableAPIError: For retryable errors (401, 429)
@@ -95,11 +95,11 @@ def handle_http_status(
     msg = get_error_message(status_code)
     if context:
         msg = f"{msg} ({context})"
-    
+
     # Handle 429 with throttle manager if provided
     if status_code == 429 and throttle_manager and endpoint:
         throttle_manager.handle_rate_limit(endpoint, retry_after)
-    
+
     # Fatal errors - stop execution
     if status_code == 403:
         # Authentication failure - critical halt
@@ -107,15 +107,15 @@ def handle_http_status(
         sys.exit(1)
     elif status_code in [423, 426, 430]:
         raise FatalAPIError(msg)
-    
+
     # Retryable errors - wait and retry
     elif status_code in [401, 429]:
         raise RetryableAPIError(msg)
-    
+
     # Skippable errors - skip ROM and continue
     elif status_code in [400, 404, 431]:
         raise SkippableAPIError(msg)
-    
+
     # Unexpected error
     elif status_code != 200:
         raise APIError(msg)
@@ -124,35 +124,35 @@ def handle_http_status(
 def categorize_error(exception: Exception) -> Tuple[Exception, ErrorCategory]:
     """
     Categorize an error for selective retry logic.
-    
+
     Args:
         exception: Exception to categorize
-        
+
     Returns:
         Tuple of (exception, ErrorCategory)
     """
     # Fatal errors - halt execution
     if isinstance(exception, FatalAPIError):
         return (exception, ErrorCategory.FATAL)
-    
+
     # Check for 404 (not found) - track separately
     error_str = str(exception).lower()
     if isinstance(exception, SkippableAPIError) and ('not found' in error_str or '404' in error_str):
         return (exception, ErrorCategory.NOT_FOUND)
-    
+
     # Non-retryable skippable errors (e.g., 400 malformed request)
     if isinstance(exception, SkippableAPIError):
         return (exception, ErrorCategory.NON_RETRYABLE)
-    
+
     # Retryable errors (429, 5xx, network issues)
     if isinstance(exception, RetryableAPIError):
         return (exception, ErrorCategory.RETRYABLE)
-    
+
     # Check for network-related exceptions
     retryable_keywords = ['timeout', 'connection', 'network', 'temporary', 'unavailable', '5']
     if any(keyword in error_str for keyword in retryable_keywords):
         return (exception, ErrorCategory.RETRYABLE)
-    
+
     # Default to non-retryable
     return (exception, ErrorCategory.NON_RETRYABLE)
 
@@ -166,27 +166,27 @@ async def retry_with_backoff(
 ):
     """
     Retry a function with exponential backoff using selective retry logic.
-    
+
     Supports both sync and async functions. For async functions, uses asyncio.sleep()
     for better responsiveness.
-    
+
     Args:
         func: Function to retry (sync or async)
         max_attempts: Maximum number of attempts
         initial_delay: Initial delay in seconds
         backoff_factor: Multiplier for each retry
         context: Context string for error messages
-        
+
     Returns:
         Function result if successful
-        
+
     Raises:
         Last exception if all retries fail or if error is FATAL/NOT_FOUND/NON_RETRYABLE
     """
     delay = initial_delay
     last_exception = None
     is_async = inspect.iscoroutinefunction(func)
-    
+
     for attempt in range(1, max_attempts + 1):
         try:
             if is_async:
@@ -197,19 +197,19 @@ async def retry_with_backoff(
             # Categorize the error
             exception, category = categorize_error(e)
             last_exception = exception
-            
+
             # Fatal errors - propagate immediately
             if category == ErrorCategory.FATAL:
                 raise exception
-            
+
             # Not found errors - don't retry, propagate immediately
             if category == ErrorCategory.NOT_FOUND:
                 raise exception
-            
+
             # Non-retryable errors - don't retry, propagate immediately
             if category == ErrorCategory.NON_RETRYABLE:
                 raise exception
-            
+
             # Retryable errors - retry with backoff
             if category == ErrorCategory.RETRYABLE:
                 if attempt < max_attempts:
@@ -228,7 +228,7 @@ async def retry_with_backoff(
                     delay *= backoff_factor
                 else:
                     print(f"  ✗ {context}: Failed after {max_attempts} attempts")
-    
+
     # All retries exhausted
     if last_exception:
         raise last_exception
@@ -239,21 +239,21 @@ async def retry_with_backoff(
 def is_retryable_error(error: Exception) -> bool:
     """
     Check if an error should be retried.
-    
+
     Args:
         error: Exception to check
-        
+
     Returns:
         True if error is retryable
     """
     if isinstance(error, RetryableAPIError):
         return True
-    
+
     # Check for network-related errors
     error_str = str(error).lower()
     retryable_keywords = [
-        'timeout', 'connection', 'network', 
+        'timeout', 'connection', 'network',
         'temporary', 'unavailable'
     ]
-    
+
     return any(keyword in error_str for keyword in retryable_keywords)
