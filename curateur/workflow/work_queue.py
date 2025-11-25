@@ -223,7 +223,10 @@ class WorkQueueManager:
         start_time = time.time()
         while not self.queue.empty():
             if time.time() - start_time > timeout:
-                logger.warning(f"Queue drain timed out after {timeout}s with {self.queue.qsize()} items remaining")
+                # Only log warning for substantial timeouts (> 5 seconds)
+                # Short timeouts are used for periodic polling and shouldn't warn
+                if timeout > 5.0:
+                    logger.warning(f"Queue drain timed out after {timeout}s with {self.queue.qsize()} items remaining")
                 break
             await asyncio.sleep(0.1)
         else:
