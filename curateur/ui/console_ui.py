@@ -1413,7 +1413,7 @@ class ConsoleUI:
             if active_roms:
                 rom_name = self._truncate_rom_name(active_roms[0], 20)
                 extra = f" +{len(active_roms) - 1}" if len(active_roms) > 1 else ""
-                status = f"→ {spinner} [{len(active_roms)}/{api_fetch['max_concurrent']}] {rom_name}{extra}"
+                status = f"→ {spinner} [{len(active_roms)}] {rom_name}{extra}"
                 style = RETRO_THEME['warning']
             elif total_requests > 0:
                 hit_rate = int(cache_hits / total_requests * 100) if total_requests > 0 else 0
@@ -1453,7 +1453,7 @@ class ConsoleUI:
                 extra = f" +{len(active_items) - 1}" if len(active_items) > 1 else ""
                 status = (
                     f"→ {spinner} "
-                    f"[{len(active_items)}/{media_dl['max_concurrent']}] "
+                    f"[{len(active_items)}] "
                     f"{rom_name}: {media_type}{extra}"
                 )
                 style = RETRO_THEME['success']
