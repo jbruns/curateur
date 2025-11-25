@@ -757,10 +757,11 @@ class WorkflowOrchestrator:
                         if len(media_types_to_download) < len(decision.media_to_download):
                             skipped = len(decision.media_to_download) - len(media_types_to_download)
                             logger.info(
-                                "[%s] %s media type(s) already exist, downloading %s",
+                                "[%s] %s media type(s) already exist, will attempt to download %s: %s",
                                 rom_info.filename,
                                 skipped,
-                                len(media_types_to_download)
+                                len(media_types_to_download),
+                                ", ".join(media_types_to_download)
                             )
 
                     # Update decision to only download missing media
@@ -785,12 +786,30 @@ class WorkflowOrchestrator:
                         if m.get('type') in screenscraper_types
                     ]
 
+                    # Identify media types that were requested but not available in API
+                    available_types = {m.get('type') for m in filtered_media_list}
+                    unavailable_types = [
+                        mt for mt, ss_type in zip(decision.media_to_download, screenscraper_types)
+                        if ss_type not in available_types
+                    ]
+                    
+                    if unavailable_types:
+                        logger.info(
+                            "[%s] %s media type(s) not available in API response: %s",
+                            rom_info.filename,
+                            len(unavailable_types),
+                            ", ".join(unavailable_types)
+                        )
+
                     if filtered_media_list:
+                        # Count actual media types being downloaded (exclude unavailable ones)
+                        actual_types_to_download = [mt for mt in decision.media_to_download
+                                                   if mt not in unavailable_types]
                         logger.info(
                             "[%s] Downloading %s media types concurrently: %s",
                             rom_info.filename,
-                            len(decision.media_to_download),
-                            ", ".join(decision.media_to_download)
+                            len(actual_types_to_download),
+                            ", ".join(actual_types_to_download)
                         )
 
                         # Create progress callback to update UI during download
@@ -846,6 +865,14 @@ class WorkflowOrchestrator:
                                     )
                                 else:
                                     logger.debug(f"[{rom_info.filename}] No hash available for {media_type_singular}")
+                    else:
+                        logger.info(
+                            "[%s] No media to download (all requested types unavailable in API)",
+                            rom_info.filename
+                        )
+
+                    # Clear download list - validation may add items back if needed
+                    decision.media_to_download = []
 
                     # Validate existing media (only in normal or strict mode)
                     if decision.media_to_validate and validation_mode != 'disabled':
@@ -932,7 +959,7 @@ class WorkflowOrchestrator:
                             if self.console_ui:
                                 self.console_ui.increment_media_validated(media_type_singular)
 
-                    # Re-download any media that failed validation
+                    # Re-download any media that failed validation or is missing
                     if decision.media_to_download:
                         # Filter media_list for types that need re-download
                         from ..media.media_types import to_plural, convert_directory_names_to_media_types
@@ -945,11 +972,24 @@ class WorkflowOrchestrator:
                         ]
 
                         if redownload_media_list:
-                            logger.info(
-                                "[%s] Re-downloading %s media types after validation",
-                                rom_info.filename,
-                                len(redownload_media_list)
-                            )
+                            # Count unique media types being re-downloaded
+                            available_redownload_types = {m.get('type') for m in redownload_media_list}
+                            actual_redownload_count = len([mt for mt in decision.media_to_download
+                                                          if any(st in available_redownload_types
+                                                                for st in screenscraper_types)])
+                            
+                            if validation_mode != 'disabled':
+                                logger.info(
+                                    "[%s] Re-downloading %s media types after validation",
+                                    rom_info.filename,
+                                    actual_redownload_count
+                                )
+                            else:
+                                logger.info(
+                                    "[%s] Downloading %s missing media types",
+                                    rom_info.filename,
+                                    actual_redownload_count
+                                )
 
                             def media_redownload_callback(media_type: str, current_idx: int, total_count: int):
                                 if self.console_ui:
@@ -978,10 +1018,14 @@ class WorkflowOrchestrator:
                                     media_paths[media_type_singular] = result.file_path
                                     media_count += 1
 
-                                    logger.info(
-                                        f"[{rom_info.filename}] Re-downloaded {media_type_singular}: "
-                                        f"{result.file_path}"
-                                    )
+                                    if validation_mode != 'disabled':
+                                        logger.info(
+                                            f"[{rom_info.filename}] Re-downloaded {media_type_singular}"
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"[{rom_info.filename}] Downloaded {media_type_singular}"
+                                        )
 
                                     if result.hash_value:
                                         media_hashes[media_type_singular] = result.hash_value
