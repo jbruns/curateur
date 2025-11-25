@@ -78,7 +78,7 @@ class MetadataMerger:
         self.merge_strategy = merge_strategy
         self.auto_favorite_enabled = auto_favorite_enabled
         self.auto_favorite_threshold = auto_favorite_threshold
-        logger.info(
+        logger.debug(
             f"Metadata Merger initialized (strategy={self.merge_strategy}, "
             f"auto_favorite={self.auto_favorite_enabled}, threshold={self.auto_favorite_threshold})"
         )
