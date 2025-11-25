@@ -33,9 +33,13 @@ scraping:
   # Default: changed
   # Behavior:
   #   - new_only: Only scrape ROMs not in gamelist (incremental additions)
-  #   - changed: Scrape new ROMs and ROMs with hash changes (default, efficient)
+  #               Ignores existing ROMs entirely, no media validation
+  #   - changed: Scrape new/changed ROMs (hash mismatch), validate media on unchanged ROMs
+  #              Efficient for maintaining collection: updates + validation
   #   - force: Re-scrape all ROMs regardless of changes (full refresh)
-  #   - skip: Skip all ROMs that exist in gamelist (media validation only)
+  #            Downloads all metadata and media from scratch
+  #   - skip: Skip all metadata operations, only validate media
+  #           Pure media validation mode (requires validation_mode enabled)
   scrape_mode: changed
 
   # System short names to scrape (e.g., ["nes","snes","psx"])
