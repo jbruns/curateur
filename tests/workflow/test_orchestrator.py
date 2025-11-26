@@ -263,7 +263,15 @@ async def test_scrape_system_writes_unmatched_and_not_found(monkeypatch, tmp_pat
 
     orchestrator.unmatched_roms["nes"] = ["Game.nes"]
 
-    monkeypatch.setattr("curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: [])
+    # Create a fake ROM so scan_system returns something
+    rom_file = rom_dir / "Game.nes"
+    rom_file.write_text("rom")
+    monkeypatch.setattr(
+        "curateur.workflow.orchestrator.scan_system",
+        lambda *args, **kwargs: [
+            type("R", (), {"path": rom_file, "filename": "Game.nes", "basename": "Game", "rom_type": None, "system": "nes"})
+        ],
+    )
     # Return a not-found list of dicts to trigger summary write
     class SimpleRom:
         def __init__(self, filename):
@@ -358,7 +366,15 @@ async def test_write_unmatched_and_not_found_errors(monkeypatch, tmp_path, caplo
     )
     orchestrator.unmatched_roms["nes"] = ["Game.nes"]
 
-    monkeypatch.setattr("curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: [])
+    # Create a fake ROM so scan_system returns something
+    rom_file = rom_dir / "Game.nes"
+    rom_file.write_text("rom")
+    monkeypatch.setattr(
+        "curateur.workflow.orchestrator.scan_system",
+        lambda *args, **kwargs: [
+            type("R", (), {"path": rom_file, "filename": "Game.nes", "basename": "Game", "rom_type": None, "system": "nes"})
+        ],
+    )
     async def fake_scrape(*args, **kwargs):
         # malformed not_found_items to trigger error in writer
         return [], [{"rom_info": None, "error": None}]
