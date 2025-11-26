@@ -88,10 +88,10 @@ class ConnectionPoolManager:
         
         # Configure timeout with aggressive failure detection
         timeout_config = httpx.Timeout(
-            connect=2.0,  # Allow for high latency, but not too patient
+            connect=5.0,  # Allow time for high-latency connections (150ms+ RTT)
             read=timeout,
             write=5.0,
-            pool=0.5  # Fail very fast if pool is exhausted or connection is unhealthy
+            pool=5.0  # Allow time to acquire connection from pool under load
         )
         
         # Configure transport without built-in retries (handled by higher-level backoff)

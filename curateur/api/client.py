@@ -79,10 +79,10 @@ class ScreenScraperClient:
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
         self._quota_warning_threshold = config.get('api', {}).get('quota_warning_threshold', 0.95)
         self._timeout = httpx.Timeout(
-            connect=1.5,
+            connect=5.0,
             read=self.request_timeout,
             write=5.0,
-            pool=1.0
+            pool=5.0
         )
 
         # Scrape mode for cache behavior
