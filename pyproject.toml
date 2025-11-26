@@ -8,8 +8,29 @@ version = "1.0.0"
 description = "ScreenScraper ROM Metadata & Media Scraper for ES-DE"
 readme = "README.md"
 requires-python = ">=3.8"
+license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "jbruns"}
+]
+keywords = ["retrogaming", "emulation", "metadata", "screenscraper", "es-de", "roms", "emulationstation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Games/Entertainment",
+    "Topic :: Utilities",
 ]
 dependencies = [
     "PyYAML>=6.0.3,<7.0.0",
@@ -19,6 +40,13 @@ dependencies = [
     "rich>=14.2.0,<15.0.0",
     "psutil>=7.1.3,<8.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jbruns/curateur"
+Repository = "https://github.com/jbruns/curateur"
+Issues = "https://github.com/jbruns/curateur/issues"
+Changelog = "https://github.com/jbruns/curateur/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/jbruns/curateur#readme"
 
 [project.scripts]
 curateur = "curateur.cli:main"
