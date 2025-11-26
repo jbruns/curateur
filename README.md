@@ -1,20 +1,42 @@
 # curateur
 
-ScreenScraper-powered ROM metadata and media scraper that produces ES-DE-ready `gamelist.xml` files and organizes downloaded assets.
+[ScreenScraper](https://www.screenscraper.fr)-powered ROM metadata and media scraper that produces [ES-DE](https://es-de.org)-ready `gamelist.xml` files, and organizes downloaded media.
+
+**BETA QUALITY**: curateur is designed to use a minimally-invasive approach, only making changes to fields it specifically manages in `gamelist.xml` files, but the program has not been extensively tested with a wide variety of setups.
 
 ## What it does
-- Scans ES-DE systems from `es_systems.xml`, handling standard ROMs, multi-disc directories, and `.m3u` playlists with conflict detection.
-- Authenticates against ScreenScraper with adaptive throttling, retry/backoff, quota awareness, and optional API response caching.
-- Fetches metadata and media, merges into existing gamelists with configurable strategies (preserve user edits, refresh fields, or full reset).
-- Downloads and validates media by type, honors region/language preferences, and can clean disabled asset types.
-- Generates ES-DE-compatible `gamelist.xml` files and stores per-ROM/media hashes for change detection.
-- Ships a Rich-powered console UI for live progress, throttling status, and keyboard controls when running interactively.
+- Does a very similar job to [Skraper](https://www.skraper.net) - scans your ROMs, pairs them with as many types of media as you like (boxart, screenshots, manuals, videos, ...), sourced from [ScreenScraper](https://www.screenscraper.fr).
+- **Core features:**
+  - Cross-platform: should work on anything that can run Python (Windows, Linux, Mac; single-board computers)
+  - Single file configuration: configure once in YAML. Override on command line if needed.
+  - Region preference order + language preference: compares ROM region and your configured preferences to what's available from ScreenScraper.
+  - Audits to your liking: easily narrow the workflow to just added ROMs, or do an exhaustive audit of all metadata and media assets 
+  - ES-DE first: supports anything which uses ES-DE as its frontend (Recalbox, RetroBat, Batocera, EmuDeck, and of course Android handhelds)
+  - Designed to be a true curator of your collection: leaves your preferences alone, only updating what it's supposed to, with the most appropriate match for your ROMs.
+
+## How it does it
+curateur is designed to be as fast as possible, and as thorough as you want it to be.
+
+- Multi-threaded: metadata fetches and media downloads are optimized for throughput, while respecting the limits imposed on your user account by ScreenScraper. Note that for the best possible speed, you'll need to contribute financially or otherwise to ScreenScraper; see their terms for details.
+- Cache: data received from ScreenScraper is retained for extremely fast resumes, end-to-end audits, and ongoing updates. Unless you specifically direct, media is not re-downloaded if not required. To avoid eating into your API quota unnecessarily, successful metadata requests are not repeated.
+- Conservative matching: ROM name, size, and hash are validated against what ScreenScraper responds with, so we're sure we have the right game.
+- Massive collections: thousands of ROMs across many systems are no problem.
+- Set and forget: Initial data population is designed to be hands-off. Metadata and media can be updated on an ongoing basis, as an automated task.
 
 ## Quick start
-Requirements: Python 3.8+, ScreenScraper account, ES-DE `es_systems.xml`, and ROM/media output directories with write access.
+Requirements: Python 3.8+, ScreenScraper account, ES-DE [`es_systems.xml`](https://gitlab.com/es-de/emulationstation-de/-/tree/master/resources/systems), and ROM/media output directories with write access.
+
+### For best results
+- Use ROM collections which are **uncompressed** and follow No-Intro or Redump standard naming patterns.
+- Organize disc-based systems which support .m3u files (for example, PSX) in an ES-DE friendly way:
+  - hidden directory `.multidisc` inside your `roms/<system>` directory
+  - `.m3u` files created for multi-disc titles; curateur will seek out the first disc's `.cue` file and use that to scrape metadata
+  - **TODO**: curateur could offer a tool to help organize this way!
+
+### Initial Setup
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/jbruns/curateur
 cd curateur
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
@@ -27,17 +49,17 @@ Edit `config.yaml` with your ScreenScraper user credentials plus paths for ROMs,
 
 Run a scrape:
 ```bash
-curateur                       # scrape all systems from es_systems.xml
-curateur --systems nes snes    # limit to specific systems
-curateur --dry-run             # validate and query API without downloading media
-curateur --enable-search       # allow name-based search fallback when hashes miss
-curateur --clear-cache         # drop cached API responses before running
+python -m curateur.cli                       # scrape all systems from es_systems.xml
+python -m curateur.cli --systems nes snes    # limit to specific systems 
+python -m curateur.cli --dry-run             # validate and query API without downloading media
+python -m curateur.cli --enable-search       # allow name-based search fallback when hashes miss
+python -m curateur.cli --clear-cache         # drop cached API responses before running
 ```
 
 ## Configuration guide
 `config.yaml.example` documents every field; key sections to set:
 - `screenscraper.user_id` / `screenscraper.user_password`: your ScreenScraper login.
-- `paths`: `roms`, `media`, `gamelists`, `es_systems` (supports `%ROMPATH%` in ES-DE XML).
+- `paths`: `roms`, `media`, `gamelists`, `es_systems` (supports `%ROMPATH%` in ES-DE Systems XML - this file does not need to be modified).
 - `scraping`: systems allowlist, scrape mode (`new_only | changed | force | skip`), metadata merge strategy, region/language preferences, integrity threshold for gamelists, optional auto-favorite rules.
 - `media`: enabled media types, validation mode (`disabled | normal | strict`), image size floor, optional cleanup of disabled asset types.
 - `api`: request timeout, retry counts/backoff, quota warning threshold, optional rate-limit overrides (capped to API limits).
@@ -49,8 +71,8 @@ Metadata cache: stored alongside each gamelist directory in `.cache/metadata_cac
 
 Outputs:
 - `gamelists/` (per system) with hashes and integrity validation.
-- `media/` organized by system and media type.
-- `scraping_errors.log` if failures occur, plus optional configured log file.
+- `downloaded_media/` organized by system and media type.
+- `gamelists/<system>/curateur_summary_<date>_<time>.log` for summary of work performed. 
 
 ## Project layout
 - `curateur/cli.py`: CLI entrypoint and runtime wiring.
@@ -90,6 +112,3 @@ Outputs:
 - Media validation can be expensive; start with `disabled` or `normal` before enabling `strict`.
 - Interactive search prompts require a TTY; CI/non-interactive runs should leave `interactive_search` off.
 - The console UI is enabled automatically on TTY runs (disabled for dry-run) and provides live throttle and queue visibility with keyboard shortcuts for skip/quit.
-
-## License
-License information is pending; use is currently limited to collaborators until finalized.
