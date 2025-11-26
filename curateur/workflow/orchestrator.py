@@ -269,13 +269,20 @@ class WorkflowOrchestrator:
         # Early exit if no ROMs found - don't create any directories or files
         if len(rom_entries) == 0:
             logger.info(f"No ROMs found for {system.name}, skipping all filesystem operations")
+            # Reset work queue for next system
+            if self.work_queue:
+                self.work_queue.reset_for_new_system()
+                logger.debug(f"Work queue reset after completing {system.name}")
             return SystemResult(
                 system_name=system.fullname,
                 total_roms=0,
                 scraped=0,
                 failed=0,
                 skipped=0,
-                results=[]
+                results=[],
+                work_queue_stats=self.work_queue.get_stats() if self.work_queue else None,
+                failed_items=self.work_queue.get_failed_items() if self.work_queue else None,
+                not_found_items=[]
             )
 
         # Update UI with scanner count
