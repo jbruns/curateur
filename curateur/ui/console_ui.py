@@ -1013,13 +1013,39 @@ class ConsoleUI:
                 self._cache_invalidation_pending = True
 
             # Fast-forward through bursts: if a lot of new lines arrived, rebuild from tail and track skips
-            new_filtered = 0
-            newest_seq = self._last_render_sequence
-            for seq, level_num, _ in self.log_buffer:
-                if seq > newest_seq:
-                    newest_seq = seq
-                if seq > self._last_render_sequence and level_num >= self.current_log_level:
-                    new_filtered += 1
+            # Optimized: iterate backwards from newest entries until we hit already-processed entries
+            # This is O(k) where k = new entries, instead of O(400) for entire buffer
+            buffer_len = len(self.log_buffer)
+            if buffer_len == 0:
+                return
+
+            # Check if buffer has wrapped around (oldest entry seq > last processed seq)
+            # This indicates we've lost track and need to rebuild
+            oldest_seq = self.log_buffer[0][0]
+            if oldest_seq > self._last_render_sequence and self._last_render_sequence > 0:
+                # Buffer wrapped, rebuild from scratch
+                self._rebuild_visible_logs()
+                self._cache_invalidation_pending = True
+                self._last_render_sequence = self.log_buffer[-1][0]
+                return
+
+            # Collect new entries by iterating backwards from most recent
+            new_entries = []
+            newest_seq = self.log_buffer[-1][0]  # Last entry is newest
+
+            for i in range(buffer_len - 1, -1, -1):
+                seq, level_num, entry = self.log_buffer[i]
+                if seq <= self._last_render_sequence:
+                    # Found already-processed entry, stop iterating
+                    break
+                # Collect in reverse order (will reverse back to chronological later)
+                new_entries.append((seq, level_num, entry))
+
+            # Reverse to restore chronological order (oldest to newest)
+            new_entries.reverse()
+
+            # Count only the filtered entries for burst detection
+            new_filtered = sum(1 for _, level_num, _ in new_entries if level_num >= self.current_log_level)
 
             if new_filtered > self._visible_log_limit:
                 self._skipped_since_render += new_filtered - self._visible_log_limit
@@ -1028,9 +1054,7 @@ class ConsoleUI:
             else:
                 # Append only new visible entries to avoid rebuilding whole buffer
                 appended = False
-                for seq, level_num, entry in self.log_buffer:
-                    if seq <= self._last_render_sequence:
-                        continue
+                for _, level_num, entry in new_entries:
                     if level_num >= self.current_log_level:
                         self._visible_logs.append(entry)
                         appended = True
