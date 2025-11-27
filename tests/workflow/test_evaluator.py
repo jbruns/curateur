@@ -56,3 +56,33 @@ def test_evaluator_new_only_skips_existing():
     decision = evaluator.evaluate_rom(rom, entry, rom_hash=None)
     assert decision.fetch_metadata is False
     assert decision.skip_reason
+
+
+@pytest.mark.unit
+def test_evaluator_disabled_mode_skips_existing_media():
+    """Test that validation_mode='disabled' doesn't re-download existing media files"""
+    from unittest.mock import MagicMock
+
+    config = _config(scrape_mode="changed")
+    config["media"]["validation_mode"] = "disabled"
+
+    # Create mock cache that has existing media
+    mock_cache = MagicMock()
+    mock_cache.get_media_hash.side_effect = lambda rom_hash, media_type: {
+        "cover": "abc123",
+        "screenshot": "def456"
+    }.get(media_type)
+
+    evaluator = WorkflowEvaluator(config, cache=mock_cache)
+    rom = _rom()
+
+    # New ROM (no gamelist entry) but media already exists in cache
+    decision = evaluator.evaluate_rom(rom, gamelist_entry=None, rom_hash="ROMHASH123")
+
+    # Should fetch metadata for new ROM
+    assert decision.fetch_metadata is True
+
+    # Should NOT download media that already exists (tracked in cache)
+    # With disabled validation mode, existing media should be skipped
+    assert decision.media_to_download == []
+    assert decision.media_to_validate == []
