@@ -64,17 +64,21 @@ class PathHandler:
     ) -> str:
         """
         Convert absolute media path to relative path for gamelist.xml.
-        
+
         Args:
-            media_path: Absolute path to media file
+            media_path: Absolute path to media file (Path object or string)
             from_directory: Base directory for relative path
                           (defaults to gamelist_directory)
-            
+
         Returns:
             Relative path string
         """
+        # Ensure media_path is a Path object (handle string inputs)
+        if isinstance(media_path, str):
+            media_path = Path(media_path)
+
         base = from_directory or self.gamelist_directory
-        
+
         try:
             # Get path relative to base directory
             rel_path = media_path.relative_to(base)

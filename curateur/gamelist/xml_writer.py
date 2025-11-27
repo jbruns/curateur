@@ -4,11 +4,14 @@ XML writer for ES-DE gamelist.xml files.
 Generates properly formatted gamelist.xml with provider info and game entries.
 """
 
+import logging
 from pathlib import Path
 from typing import List
 from copy import deepcopy
 from lxml import etree
 from .game_entry import GameEntry, GamelistMetadata
+
+logger = logging.getLogger(__name__)
 
 
 class GamelistWriter:
@@ -38,33 +41,38 @@ class GamelistWriter:
     ) -> None:
         """
         Write gamelist.xml file.
-        
+
         Args:
             game_entries: List of GameEntry objects
             output_path: Path to output gamelist.xml file
         """
+        logger.info(f"Writing gamelist with {len(game_entries)} entries to: {output_path}")
+
         # Create root element
         root = etree.Element("gameList")
-        
+
         # Add provider section
         provider = self._create_provider_element()
         root.append(provider)
-        
+
         # Add game entries
         for entry in game_entries:
             game_elem = self._create_game_element(entry)
             root.append(game_elem)
-        
+
         # Write to file
         tree = etree.ElementTree(root)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        logger.debug(f"Writing XML tree to {output_path}")
         tree.write(
             str(output_path),
             encoding='utf-8',
             xml_declaration=True,
             pretty_print=True
         )
+
+        logger.info(f"Successfully wrote gamelist.xml with {len(game_entries)} entries")
     
     def _create_provider_element(self) -> etree.Element:
         """

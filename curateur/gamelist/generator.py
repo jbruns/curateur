@@ -4,6 +4,7 @@ Main gamelist generator integration.
 Coordinates gamelist creation, parsing, merging, and writing.
 """
 
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 from .game_entry import GameEntry, GamelistMetadata
@@ -11,6 +12,8 @@ from .xml_writer import GamelistWriter
 from .parser import GamelistParser, GamelistMerger
 from .path_handler import PathHandler
 from .integrity_validator import IntegrityValidator
+
+logger = logging.getLogger(__name__)
 
 
 class GamelistGenerator:
@@ -98,26 +101,38 @@ class GamelistGenerator:
             ...
         ]
         """
+        logger.info(f"Starting gamelist generation: {len(scraped_games)} new games, merge_existing={merge_existing}")
+
         # Create game entries from scraped data
-        new_entries = self._create_game_entries(scraped_games, media_results)
-        
+        try:
+            logger.debug("About to call _create_game_entries...")
+            new_entries = self._create_game_entries(scraped_games, media_results)
+            logger.info(f"Created {len(new_entries)} game entries from scraped data")
+        except Exception as e:
+            logger.error(f"EXCEPTION in _create_game_entries: {e}", exc_info=True)
+            raise
+
         # Load existing gamelist if merging
         existing_entries = []
         if merge_existing and self.gamelist_path.exists():
             try:
                 existing_entries = self.parser.parse_gamelist(self.gamelist_path)
+                logger.info(f"Loaded {len(existing_entries)} entries from existing gamelist")
             except Exception as e:
                 # If parsing fails, start fresh
-                print(f"Warning: Could not parse existing gamelist: {e}")
+                logger.warning(f"Could not parse existing gamelist: {e}")
                 existing_entries = []
-        
+
         # Merge entries
         if existing_entries:
             final_entries = self.merger.merge_entries(existing_entries, new_entries)
+            logger.info(f"Merged entries: {len(final_entries)} total (was {len(existing_entries)} existing, {len(new_entries)} new)")
         else:
             final_entries = new_entries
-        
+            logger.info(f"No existing entries, using {len(final_entries)} new entries")
+
         # Write gamelist
+        logger.info(f"Calling writer.write_gamelist with {len(final_entries)} entries to {self.gamelist_path}")
         self.writer.write_gamelist(final_entries, self.gamelist_path)
         
         # Run integrity validation if requested
