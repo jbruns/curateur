@@ -39,6 +39,7 @@ from ..gamelist.game_entry import GameEntry
 from ..gamelist.parser import GamelistParser
 from ..gamelist.integrity_validator import IntegrityValidator
 from ..gamelist.metadata_merger import MetadataMerger
+from ..gamelist.backup import GamelistBackup
 from ..workflow.work_queue import WorkQueueManager, Priority
 from ..workflow.evaluator import WorkflowEvaluator, WorkflowDecision
 
@@ -349,6 +350,16 @@ class WorkflowOrchestrator:
             if self.console_ui:
                 self.console_ui.set_system_info(gamelist_exists=False, existing_entries=0)
 
+        # Backup existing gamelist before processing begins
+        if gamelist_path.exists() and not self.dry_run:
+            try:
+                backup_path = GamelistBackup.create_backup(gamelist_path)
+                logger.info(f"Gamelist backed up to: {backup_path.name}")
+            except Exception as e:
+                logger.error(f"Failed to create gamelist backup: {e}")
+                # Continue processing even if backup fails
+                # User may not have write permissions or disk may be full
+
         results = []
         not_found_items = []
         scraped_count = 0
@@ -374,7 +385,8 @@ class WorkflowOrchestrator:
                 skipped_count += 1
 
         # Step 5: Generate gamelist
-        if not self.dry_run and scraped_count > 0:
+        # Write gamelist if there are new entries OR existing entries to maintain
+        if not self.dry_run and (scraped_count > 0 or existing_entries):
             try:
                 # Display system-level operation in UI
                 if self.console_ui:
@@ -385,7 +397,9 @@ class WorkflowOrchestrator:
                     )
 
                 logger.info(f"Committing gamelist: {scraped_count} entries")
+                logger.debug(f"About to call _generate_gamelist with {len(results)} results")
                 integrity_result = self._generate_gamelist(system, results)
+                logger.debug(f"_generate_gamelist returned: {integrity_result}")
 
                 # Show validation result
                 if self.console_ui and integrity_result:
@@ -405,6 +419,7 @@ class WorkflowOrchestrator:
             except Exception as e:
                 if self.console_ui:
                     self.console_ui.clear_system_operation()
+                logger.error(f"Failed to generate gamelist: {e}", exc_info=True)
                 print(f"Warning: Failed to generate gamelist: {e}")
 
         # Step 6: Write unmatched ROMs log if any
@@ -772,8 +787,29 @@ class WorkflowOrchestrator:
                     # This handles the case where cache expired or ROM changed but media may still be good
                     validated_media = []
                     failed_validation = []
-                    
-                    if validation_mode != 'disabled' and existing_media:
+
+                    if validation_mode == 'disabled' and existing_media:
+                        # Validation disabled - trust existing files without checking
+                        for media_type_singular in existing_media:
+                            if existing_media[media_type_singular]:
+                                media_path = existing_media_paths.get(media_type_singular)
+                                if media_path and media_path.exists():
+                                    media_paths[media_type_singular] = str(media_path)
+                                    validated_media.append(media_type_singular)
+                                    logger.debug(
+                                        "[%s] Skipping existing media (validation disabled): %s",
+                                        rom_info.filename,
+                                        media_type_singular
+                                    )
+
+                        if validated_media:
+                            logger.info(
+                                "[%s] Skipped existing media (validation disabled): %s",
+                                rom_info.filename,
+                                ", ".join(validated_media)
+                            )
+
+                    elif validation_mode != 'disabled' and existing_media:
                         # We have fresh API response with media URLs - we can extract expected hashes
                         # from the API response to validate existing files
                         for media_type_singular in existing_media:
@@ -1909,7 +1945,9 @@ class WorkflowOrchestrator:
                 })
 
         # Generate gamelist (merge with existing if present)
-        if scraped_games:
+        # Even if no new games were scraped, regenerate to maintain existing entries
+        gamelist_path = self.gamelist_directory / system.name / 'gamelist.xml'
+        if scraped_games or gamelist_path.exists():
             try:
                 integrity_result = generator.generate_gamelist(
                     scraped_games=scraped_games,
@@ -2263,7 +2301,7 @@ class WorkflowOrchestrator:
                 if successful_results:
                     f.write("=== Successful ===\n")
                     for result in sorted(successful_results, key=lambda r: r.rom_path.name.lower()):
-                        f.write(f"✓ {result.rom_path.name}\n")
+                        f.write(f"{result.rom_path.name}\n")
                     f.write("\n")
 
                 # Skipped results
@@ -2272,7 +2310,7 @@ class WorkflowOrchestrator:
                     f.write("=== Skipped ===\n")
                     for result in sorted(skipped_results, key=lambda r: r.rom_path.name.lower()):
                         reason = getattr(result, 'skip_reason', 'Unknown reason')
-                        f.write(f"○ {result.rom_path.name} - {reason}\n")
+                        f.write(f"{result.rom_path.name} - {reason}\n")
                     f.write("\n")
 
                 # Failed results
@@ -2280,7 +2318,7 @@ class WorkflowOrchestrator:
                 if failed_results:
                     f.write("=== Failed ===\n")
                     for result in sorted(failed_results, key=lambda r: r.rom_path.name.lower()):
-                        f.write(f"✗ {result.rom_path.name} - {result.error}\n")
+                        f.write(f"{result.rom_path.name} - {result.error}\n")
                     f.write("\n")
 
             logger.info(f"Summary log written: {summary_path}")

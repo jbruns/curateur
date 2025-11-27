@@ -282,8 +282,15 @@ class WorkflowEvaluator:
         if self.validation_mode == 'disabled':
             # Validation disabled - only download missing media
             if gamelist_entry is None or not hash_matches:
-                # New ROM or changed ROM - download all enabled media types
-                media_to_download = self.enabled_media_types.copy()
+                # New ROM or changed ROM - check which media already exists
+                # Even with validation disabled, we should skip existing files
+                stored_media_hashes = self._get_stored_media_hashes(rom_hash)
+
+                for media_type in self.enabled_media_types:
+                    if media_type not in stored_media_hashes:
+                        # Media doesn't exist in cache - needs download
+                        media_to_download.append(media_type)
+                    # If media exists in cache, skip it (validation disabled, so we trust it)
             # For existing unchanged ROMs, skip existing media (no validation)
             return media_to_download, media_to_validate
         
