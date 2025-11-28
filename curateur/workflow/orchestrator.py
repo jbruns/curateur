@@ -2318,7 +2318,7 @@ class WorkflowOrchestrator:
                 if failed_results:
                     f.write("=== Failed ===\n")
                     for result in sorted(failed_results, key=lambda r: r.rom_path.name.lower()):
-                        f.write(f"{result.rom_path.name} - {result.error}\n")
+                        f.write(f"{result.rom_path.name},{result.error}\n")
                     f.write("\n")
 
             logger.info(f"Summary log written: {summary_path}")
