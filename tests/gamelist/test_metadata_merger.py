@@ -59,3 +59,45 @@ def test_auto_favorite_sets_flag_based_on_rating():
     merged = merger.merge_entries(existing, scraped).merged_entry
 
     assert merged.favorite is True
+
+
+@pytest.mark.unit
+def test_rating_conversion_from_screenscraper():
+    """Test that ScreenScraper ratings (0-20 scale) are correctly converted to ES-DE format (0-1 scale)"""
+    from curateur.gamelist.game_entry import GameEntry
+
+    # Simulate ScreenScraper API response with rating=18 (out of 20)
+    game_info = {
+        'id': '12345',
+        'name': 'Test Game',
+        'rating': 18.0,  # ScreenScraper's 0-20 scale
+        'descriptions': {'en': 'Test description'},
+        'release_dates': {'us': '2000-01-01'},
+        'genres': ['Action'],
+    }
+
+    entry = GameEntry.from_api_response(
+        game_info,
+        rom_path='./TestGame.zip',
+        media_paths={}
+    )
+
+    # Should be normalized to 0.9 (18/20 = 0.9)
+    assert entry.rating == 0.9
+
+    # Test edge cases
+    game_info_perfect = {
+        'id': '12346',
+        'name': 'Perfect Game',
+        'rating': 20.0,
+    }
+    entry_perfect = GameEntry.from_api_response(game_info_perfect, './Perfect.zip', {})
+    assert entry_perfect.rating == 1.0
+
+    game_info_zero = {
+        'id': '12347',
+        'name': 'Zero Game',
+        'rating': 0.0,
+    }
+    entry_zero = GameEntry.from_api_response(game_info_zero, './Zero.zip', {})
+    assert entry_zero.rating == 0.0

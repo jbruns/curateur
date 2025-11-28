@@ -90,9 +90,9 @@ class GameEntry:
         descs = game_info.get('descriptions', {})
         desc = descs.get('en') or descs.get('fr') or descs.get('de') or descs.get('es') or None
         
-        # Convert rating from 0-5 scale to 0-1 scale
+        # Convert rating from ScreenScraper's 0-20 scale to ES-DE's 0-1 scale
         api_rating = game_info.get('rating')
-        rating = float(api_rating) / 5.0 if api_rating else None
+        rating = float(api_rating) / 20.0 if api_rating is not None else None
         
         # Format release date
         release_dates = game_info.get('release_dates', {})
