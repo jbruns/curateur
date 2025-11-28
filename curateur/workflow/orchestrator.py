@@ -1931,6 +1931,7 @@ class WorkflowOrchestrator:
             rom_directory=self.rom_directory / system.name,
             media_directory=self.media_directory / system.name,
             gamelist_directory=self.gamelist_directory / system.name,
+            merge_strategy=self.metadata_merger.merge_strategy,
             auto_favorite_enabled=self.metadata_merger.auto_favorite_enabled,
             auto_favorite_threshold=self.metadata_merger.auto_favorite_threshold
         )

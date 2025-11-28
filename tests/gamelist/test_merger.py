@@ -58,7 +58,11 @@ def test_auto_favorite_new_entries_above_threshold():
         _entry("./Gamma.zip", "Gamma", rating=0.8, favorite=False),  # Below threshold
     ]
 
-    merger = GamelistMerger(auto_favorite_enabled=True, auto_favorite_threshold=0.9)
+    merger = GamelistMerger(
+        merge_strategy="refresh_metadata",
+        auto_favorite_enabled=True,
+        auto_favorite_threshold=0.9
+    )
     merged = merger.merge_entries(existing, new)
 
     # Find the entries
@@ -77,7 +81,11 @@ def test_auto_favorite_disabled_does_not_favorite_new_entries():
     existing = []
     new = [_entry("./Beta.zip", "Beta", rating=0.95, favorite=False)]
 
-    merger = GamelistMerger(auto_favorite_enabled=False, auto_favorite_threshold=0.9)
+    merger = GamelistMerger(
+        merge_strategy="refresh_metadata",
+        auto_favorite_enabled=False,
+        auto_favorite_threshold=0.9
+    )
     merged = merger.merge_entries(existing, new)
 
     beta = merged[0]
@@ -90,8 +98,94 @@ def test_auto_favorite_does_not_override_existing_entries():
     existing = [_entry("./Alpha.zip", "Alpha", rating=0.8, favorite=True)]  # User favorited despite low rating
     new = [_entry("./Alpha.zip", "Alpha", rating=0.95)]  # New scraped data with high rating
 
-    merger = GamelistMerger(auto_favorite_enabled=True, auto_favorite_threshold=0.9)
+    merger = GamelistMerger(
+        merge_strategy="refresh_metadata",
+        auto_favorite_enabled=True,
+        auto_favorite_threshold=0.9
+    )
     merged = merger.merge_entries(existing, new)
 
     # Should preserve user's favorite=True even though original rating was low
+    assert merged[0].favorite is True
+
+
+@pytest.mark.unit
+def test_auto_favorite_upgrades_existing_entries_with_low_rating():
+    """Test that auto-favorite sets flag on existing entries when rating increases above threshold"""
+    existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]  # Low rating, not favorited
+    new = [_entry("./Alpha.zip", "Alpha", rating=0.95)]  # Updated with high rating
+
+    merger = GamelistMerger(
+        merge_strategy="refresh_metadata",
+        auto_favorite_enabled=True,
+        auto_favorite_threshold=0.9
+    )
+    merged = merger.merge_entries(existing, new)
+
+    # Should auto-favorite since rating increased above threshold
+    assert merged[0].favorite is True
+
+
+@pytest.mark.unit
+def test_preserve_user_edits_blocks_auto_favorite():
+    """Test that preserve_user_edits strategy prevents auto-favorite from modifying entries"""
+    existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]
+    new_entries = [
+        _entry("./Alpha.zip", "Alpha", rating=0.95),  # Updated existing with high rating
+        _entry("./Beta.zip", "Beta", rating=0.95, favorite=False),  # New entry with high rating
+    ]
+
+    merger = GamelistMerger(
+        merge_strategy="preserve_user_edits",
+        auto_favorite_enabled=True,
+        auto_favorite_threshold=0.9
+    )
+    merged = merger.merge_entries(existing, new_entries)
+
+    alpha = next(e for e in merged if e.name == "Alpha")
+    beta = next(e for e in merged if e.name == "Beta")
+
+    # Neither should be auto-favorited when strategy is preserve_user_edits
+    assert alpha.favorite is False
+    assert beta.favorite is False
+
+
+@pytest.mark.unit
+def test_refresh_metadata_allows_auto_favorite():
+    """Test that refresh_metadata strategy allows auto-favorite"""
+    existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]
+    new_entries = [
+        _entry("./Alpha.zip", "Alpha", rating=0.95),  # Updated existing with high rating
+        _entry("./Beta.zip", "Beta", rating=0.95, favorite=False),  # New entry with high rating
+    ]
+
+    merger = GamelistMerger(
+        merge_strategy="refresh_metadata",
+        auto_favorite_enabled=True,
+        auto_favorite_threshold=0.9
+    )
+    merged = merger.merge_entries(existing, new_entries)
+
+    alpha = next(e for e in merged if e.name == "Alpha")
+    beta = next(e for e in merged if e.name == "Beta")
+
+    # Both should be auto-favorited with refresh_metadata strategy
+    assert alpha.favorite is True
+    assert beta.favorite is True
+
+
+@pytest.mark.unit
+def test_reset_all_allows_auto_favorite():
+    """Test that reset_all strategy allows auto-favorite"""
+    existing = []
+    new_entries = [_entry("./Beta.zip", "Beta", rating=0.95, favorite=False)]
+
+    merger = GamelistMerger(
+        merge_strategy="reset_all",
+        auto_favorite_enabled=True,
+        auto_favorite_threshold=0.9
+    )
+    merged = merger.merge_entries(existing, new_entries)
+
+    # Should be auto-favorited with reset_all strategy
     assert merged[0].favorite is True

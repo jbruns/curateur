@@ -35,6 +35,7 @@ class GamelistGenerator:
         media_directory: Path,
         gamelist_directory: Path,
         software_name: str = "curateur",
+        merge_strategy: str = "preserve_user_edits",
         auto_favorite_enabled: bool = False,
         auto_favorite_threshold: float = 0.9
     ):
@@ -48,6 +49,7 @@ class GamelistGenerator:
             media_directory: Path to media root directory
             gamelist_directory: Path to gamelist directory
             software_name: Software name for provider metadata
+            merge_strategy: Merge strategy ('preserve_user_edits', 'refresh_metadata', 'reset_all')
             auto_favorite_enabled: Enable automatic favorite flag for highly-rated games
             auto_favorite_threshold: Rating threshold (0.0-1.0) for auto-favorite
         """
@@ -55,6 +57,7 @@ class GamelistGenerator:
         self.full_system_name = full_system_name
         self.software_name = software_name
         self.rom_directory = rom_directory
+        self.merge_strategy = merge_strategy
         self.auto_favorite_enabled = auto_favorite_enabled
         self.auto_favorite_threshold = auto_favorite_threshold
 
@@ -67,6 +70,7 @@ class GamelistGenerator:
 
         self.parser = GamelistParser()
         self.merger = GamelistMerger(
+            merge_strategy=merge_strategy,
             auto_favorite_enabled=auto_favorite_enabled,
             auto_favorite_threshold=auto_favorite_threshold
         )

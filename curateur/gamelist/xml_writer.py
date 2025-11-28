@@ -145,6 +145,7 @@ class GamelistWriter:
         
         # Add user-editable fields
         if entry.favorite:
+            logger.debug(f"Writing favorite=true for entry: {entry.name} (path={entry.path})")
             self._add_element(game, "favorite", "true")
         
         if entry.playcount is not None:

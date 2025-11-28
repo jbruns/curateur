@@ -73,7 +73,7 @@ scraping:
   # Default: preserve_user_edits
   # Behavior:
   #   - preserve_user_edits: Keep ALL existing fields unchanged, update only path (safest)
-  #   - refresh_metadata: Update curateur fields (name, desc, rating, etc.), preserve all others
+  #   - refresh_metadata: Update curateur fields (name, desc, rating, favorite, etc.), preserve all others
   #   - reset_all: Complete reset to API data + path only (discards user fields, custom fields)
   # Note: Cache updates handled separately by scrape_mode setting
   merge_strategy: preserve_user_edits

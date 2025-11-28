@@ -179,6 +179,7 @@ class GamelistMerger:
 
     def __init__(
         self,
+        merge_strategy: str = 'preserve_user_edits',
         auto_favorite_enabled: bool = False,
         auto_favorite_threshold: float = 0.9
     ):
@@ -186,9 +187,15 @@ class GamelistMerger:
         Initialize gamelist merger.
 
         Args:
+            merge_strategy: Merge strategy ('preserve_user_edits', 'refresh_metadata', 'reset_all')
             auto_favorite_enabled: Enable automatic favorite flag for highly-rated games
             auto_favorite_threshold: Rating threshold (0.0-1.0) for auto-favorite
+
+        Note:
+            Auto-favorite only applies in 'refresh_metadata' and 'reset_all' modes.
+            In 'preserve_user_edits' mode, favorite field is never modified.
         """
+        self.merge_strategy = merge_strategy
         self.auto_favorite_enabled = auto_favorite_enabled
         self.auto_favorite_threshold = auto_favorite_threshold
     
@@ -199,26 +206,37 @@ class GamelistMerger:
     ) -> List[GameEntry]:
         """
         Merge new entries with existing entries.
-        
+
         Args:
             existing_entries: Entries from existing gamelist.xml
             new_entries: Newly scraped entries
-            
+
         Returns:
             Merged list of GameEntry objects
-            
+
         Logic:
         - For ROMs in both lists: Update metadata, preserve user fields
         - For ROMs only in new list: Add as new entries
         - For ROMs only in existing list: Keep (user may have manual entries)
         """
+        from logging import getLogger
+        logger = getLogger(__name__)
+
+        logger.debug(
+            f"GamelistMerger: strategy={self.merge_strategy}, "
+            f"auto_favorite_enabled={self.auto_favorite_enabled}, threshold={self.auto_favorite_threshold}"
+        )
+
         # Build lookup by path
         existing_by_path = {entry.path: entry for entry in existing_entries}
         new_by_path = {entry.path: entry for entry in new_entries}
-        
+
         merged = []
         processed_paths = set()
-        
+
+        # Check if auto-favorite is allowed for this strategy
+        auto_favorite_allowed = self.merge_strategy != 'preserve_user_edits'
+
         # Process new entries (update or add)
         for path, new_entry in new_by_path.items():
             if path in existing_by_path:
@@ -229,10 +247,18 @@ class GamelistMerger:
                 )
                 merged.append(merged_entry)
             else:
-                # New entry - apply auto-favorite if enabled
-                if self.auto_favorite_enabled and new_entry.rating is not None:
+                # New entry - apply auto-favorite if enabled and strategy allows
+                if auto_favorite_allowed and self.auto_favorite_enabled and new_entry.rating is not None:
                     if new_entry.rating >= self.auto_favorite_threshold:
+                        logger.debug(f"Auto-favoriting new entry: {new_entry.name} (rating={new_entry.rating})")
                         new_entry.favorite = True
+                    else:
+                        logger.debug(f"Not auto-favoriting {new_entry.name}: rating {new_entry.rating} < threshold {self.auto_favorite_threshold}")
+                else:
+                    if not auto_favorite_allowed:
+                        logger.debug(f"Skipping auto-favorite for {new_entry.name}: strategy={self.merge_strategy} does not allow")
+                    else:
+                        logger.debug(f"Skipping auto-favorite for {new_entry.name}: enabled={self.auto_favorite_enabled}, rating={new_entry.rating}")
                 merged.append(new_entry)
 
             processed_paths.add(path)
@@ -251,14 +277,26 @@ class GamelistMerger:
     ) -> GameEntry:
         """
         Merge a single entry, preserving user fields.
-        
+
         Args:
             existing: Existing entry with user data
             new: New entry with fresh scraped data
-            
+
         Returns:
             Merged GameEntry
         """
+        from logging import getLogger
+        logger = getLogger(__name__)
+
+        # Determine favorite flag: preserve existing, or apply auto-favorite if strategy allows
+        favorite = existing.favorite
+        auto_favorite_allowed = self.merge_strategy != 'preserve_user_edits'
+
+        if auto_favorite_allowed and self.auto_favorite_enabled and new.rating is not None:
+            if new.rating >= self.auto_favorite_threshold and not existing.favorite:
+                logger.debug(f"Auto-favoriting existing entry: {new.name} (rating={new.rating})")
+                favorite = True
+
         # Start with new entry (fresh metadata)
         merged = GameEntry(
             path=new.path,
@@ -275,13 +313,13 @@ class GamelistMerger:
             thumbnail=new.thumbnail,
             marquee=new.marquee,
             video=new.video,
-            # Preserve user-editable fields from existing
-            favorite=existing.favorite,
+            # Preserve user-editable fields from existing (with auto-favorite override)
+            favorite=favorite,
             playcount=existing.playcount,
             lastplayed=existing.lastplayed,
             hidden=existing.hidden,
             # Preserve unknown fields from existing
             extra_fields=deepcopy(existing.extra_fields)
         )
-        
+
         return merged
