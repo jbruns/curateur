@@ -27,7 +27,7 @@ def test_merger_preserves_user_fields_and_extra():
         releasedate="19900101T000000",
     )
 
-    merger = GamelistMerger()
+    merger = GamelistMerger(merge_strategy="refresh_metadata")
     merged = merger.merge_entries([existing], [new])[0]
 
     assert merged.name == "Alpha Updated"

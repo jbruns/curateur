@@ -276,7 +276,7 @@ class GamelistMerger:
         new: GameEntry
     ) -> GameEntry:
         """
-        Merge a single entry, preserving user fields.
+        Merge a single entry, respecting merge strategy.
 
         Args:
             existing: Existing entry with user data
@@ -288,16 +288,21 @@ class GamelistMerger:
         from logging import getLogger
         logger = getLogger(__name__)
 
-        # Determine favorite flag: preserve existing, or apply auto-favorite if strategy allows
-        favorite = existing.favorite
-        auto_favorite_allowed = self.merge_strategy != 'preserve_user_edits'
+        # preserve_user_edits: Keep ALL existing fields, no changes
+        if self.merge_strategy == 'preserve_user_edits':
+            # Return existing entry unchanged (path should stay the same)
+            return existing
 
-        if auto_favorite_allowed and self.auto_favorite_enabled and new.rating is not None:
+        # For refresh_metadata and reset_all: update scraped fields, preserve user fields
+
+        # Determine favorite flag: preserve existing, or apply auto-favorite
+        favorite = existing.favorite
+        if self.auto_favorite_enabled and new.rating is not None:
             if new.rating >= self.auto_favorite_threshold and not existing.favorite:
                 logger.debug(f"Auto-favoriting existing entry: {new.name} (rating={new.rating})")
                 favorite = True
 
-        # Start with new entry (fresh metadata)
+        # Use new scraped metadata, preserve user fields
         merged = GameEntry(
             path=new.path,
             name=new.name,

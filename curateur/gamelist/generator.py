@@ -136,13 +136,12 @@ class GamelistGenerator:
                 logger.warning(f"Could not parse existing gamelist: {e}")
                 existing_entries = []
 
-        # Merge entries
+        # Merge entries (always use merger to apply auto-favorite and other logic)
+        final_entries = self.merger.merge_entries(existing_entries, new_entries)
         if existing_entries:
-            final_entries = self.merger.merge_entries(existing_entries, new_entries)
             logger.info(f"Merged entries: {len(final_entries)} total (was {len(existing_entries)} existing, {len(new_entries)} new)")
         else:
-            final_entries = new_entries
-            logger.info(f"No existing entries, using {len(final_entries)} new entries")
+            logger.info(f"No existing gamelist, created {len(final_entries)} new entries")
 
         # Write gamelist
         logger.info(f"Calling writer.write_gamelist with {len(final_entries)} entries to {self.gamelist_path}")
