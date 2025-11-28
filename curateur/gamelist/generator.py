@@ -34,11 +34,13 @@ class GamelistGenerator:
         rom_directory: Path,
         media_directory: Path,
         gamelist_directory: Path,
-        software_name: str = "curateur"
+        software_name: str = "curateur",
+        auto_favorite_enabled: bool = False,
+        auto_favorite_threshold: float = 0.9
     ):
         """
         Initialize gamelist generator.
-        
+
         Args:
             system_name: System name (e.g., 'nes', 'psx')
             full_system_name: Full system name (e.g., 'Nintendo Entertainment System', 'Sony PlayStation')
@@ -46,21 +48,28 @@ class GamelistGenerator:
             media_directory: Path to media root directory
             gamelist_directory: Path to gamelist directory
             software_name: Software name for provider metadata
+            auto_favorite_enabled: Enable automatic favorite flag for highly-rated games
+            auto_favorite_threshold: Rating threshold (0.0-1.0) for auto-favorite
         """
         self.system_name = system_name
         self.full_system_name = full_system_name
         self.software_name = software_name
         self.rom_directory = rom_directory
-        
+        self.auto_favorite_enabled = auto_favorite_enabled
+        self.auto_favorite_threshold = auto_favorite_threshold
+
         # Initialize components
         self.path_handler = PathHandler(
             rom_directory,
             media_directory,
             gamelist_directory
         )
-        
+
         self.parser = GamelistParser()
-        self.merger = GamelistMerger()
+        self.merger = GamelistMerger(
+            auto_favorite_enabled=auto_favorite_enabled,
+            auto_favorite_threshold=auto_favorite_threshold
+        )
         self.validator = IntegrityValidator(threshold=0.90)
         
         self.metadata = GamelistMetadata(

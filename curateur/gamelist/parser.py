@@ -164,10 +164,10 @@ class GamelistParser:
 class GamelistMerger:
     """
     Merges new scraped data with existing gamelist entries.
-    
+
     Preserves user-editable fields while updating scraped metadata.
     """
-    
+
     # User-editable fields that should be preserved from existing gamelist
     # Note: playcount is preserved but not written to new gamelist (user-managed only)
     USER_FIELDS = {
@@ -176,6 +176,21 @@ class GamelistMerger:
         'lastplayed',
         'hidden'
     }
+
+    def __init__(
+        self,
+        auto_favorite_enabled: bool = False,
+        auto_favorite_threshold: float = 0.9
+    ):
+        """
+        Initialize gamelist merger.
+
+        Args:
+            auto_favorite_enabled: Enable automatic favorite flag for highly-rated games
+            auto_favorite_threshold: Rating threshold (0.0-1.0) for auto-favorite
+        """
+        self.auto_favorite_enabled = auto_favorite_enabled
+        self.auto_favorite_threshold = auto_favorite_threshold
     
     def merge_entries(
         self,
@@ -214,9 +229,12 @@ class GamelistMerger:
                 )
                 merged.append(merged_entry)
             else:
-                # New entry
+                # New entry - apply auto-favorite if enabled
+                if self.auto_favorite_enabled and new_entry.rating is not None:
+                    if new_entry.rating >= self.auto_favorite_threshold:
+                        new_entry.favorite = True
                 merged.append(new_entry)
-            
+
             processed_paths.add(path)
         
         # Preserve existing entries not in new list

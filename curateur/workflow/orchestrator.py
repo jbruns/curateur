@@ -1930,7 +1930,9 @@ class WorkflowOrchestrator:
             full_system_name=system.fullname,
             rom_directory=self.rom_directory / system.name,
             media_directory=self.media_directory / system.name,
-            gamelist_directory=self.gamelist_directory / system.name
+            gamelist_directory=self.gamelist_directory / system.name,
+            auto_favorite_enabled=self.metadata_merger.auto_favorite_enabled,
+            auto_favorite_threshold=self.metadata_merger.auto_favorite_threshold
         )
 
         # Prepare scraped games data
