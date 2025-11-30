@@ -99,9 +99,9 @@ class GameEntry:
         release_date_str = release_dates.get('us') or release_dates.get('wor') or release_dates.get('eu') or None
         releasedate = cls._format_release_date(release_date_str) if release_date_str else None
         
-        # Extract genres (hyphen-separated, no spaces)
+        # Extract genres (comma-separated)
         genres = game_info.get('genres', [])
-        genre = '-'.join(genres) if genres else None
+        genre = ', '.join(genres) if genres else None
         
         # Media paths
         media_paths = media_paths or {}

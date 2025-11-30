@@ -45,12 +45,13 @@ def validate_response(
     return root
 
 
-def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
+def _parse_jeu_element(jeu_elem: etree.Element, preferred_language: str = 'en') -> Dict[str, Any]:
     """
     Parse a <jeu> element into game metadata.
 
     Args:
         jeu_elem: <jeu> XML element
+        preferred_language: Preferred language code (e.g., 'en', 'fr', 'de')
 
     Returns:
         Dictionary with game metadata
@@ -115,22 +116,38 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
     # Genres
     genres_elem = jeu_elem.find('genres')
     if genres_elem is not None:
-        genres = []
-        # Prefer English genre names
-        for genre in genres_elem.findall('genre'):
-            # Genre names are in genre/noms/nom elements
-            nom_elem = genre.find('.//nom[@langue="en"]')
-            if nom_elem is not None and nom_elem.text:
-                genres.append(decode_html_entities(nom_elem.text))
-        # If no English genres found, take any language
-        if not genres:
-            for genre in genres_elem.findall('genre'):
-                nom_elem = genre.find('.//nom')
-                if nom_elem is not None and nom_elem.text:
-                    genres.append(decode_html_entities(nom_elem.text))
-                    break  # Just take the first one
-        if genres:
-            game_data['genres'] = genres
+        # Use a dict to track unique genres by ID (avoid duplicates)
+        genre_dict = {}
+
+        # Filter to primary genres only (principale="1")
+        # Some games have sub-genres or tags; we only want main genres
+        primary_genres = [g for g in genres_elem.findall('genre') if g.get('principale') == '1']
+
+        # Try preferred language first
+        for genre in primary_genres:
+            if genre.get('langue') == preferred_language:
+                genre_id = genre.get('id')
+                if genre_id and genre.text and genre_id not in genre_dict:
+                    genre_dict[genre_id] = decode_html_entities(genre.text)
+
+        # Fall back to English if preferred language didn't yield results
+        if not genre_dict and preferred_language != 'en':
+            for genre in primary_genres:
+                if genre.get('langue') == 'en':
+                    genre_id = genre.get('id')
+                    if genre_id and genre.text and genre_id not in genre_dict:
+                        genre_dict[genre_id] = decode_html_entities(genre.text)
+
+        # Fall back to any language for each unique genre ID if still empty
+        if not genre_dict:
+            for genre in primary_genres:
+                genre_id = genre.get('id')
+                if genre_id and genre.text and genre_id not in genre_dict:
+                    genre_dict[genre_id] = decode_html_entities(genre.text)
+
+        if genre_dict:
+            # Return genres as a list (sorted by ID for consistency)
+            game_data['genres'] = [genre_dict[gid] for gid in sorted(genre_dict.keys())]
 
     # Developer
     developpeur = jeu_elem.find('developpeur')
@@ -164,12 +181,13 @@ def _parse_jeu_element(jeu_elem: etree.Element) -> Dict[str, Any]:
     return game_data
 
 
-def parse_game_info(root: etree.Element) -> Dict[str, Any]:
+def parse_game_info(root: etree.Element, preferred_language: str = 'en') -> Dict[str, Any]:
     """
     Parse game information from jeuInfos.php response.
 
     Args:
         root: Parsed XML root element
+        preferred_language: Preferred language code (e.g., 'en', 'fr', 'de')
 
     Returns:
         Dictionary with game metadata
@@ -184,15 +202,16 @@ def parse_game_info(root: etree.Element) -> Dict[str, Any]:
         # Game not found
         raise ResponseError("Game not found in database (<jeu> element missing)")
 
-    return _parse_jeu_element(jeu_elem)
+    return _parse_jeu_element(jeu_elem, preferred_language)
 
 
-def parse_search_results(root: etree.Element) -> list[Dict[str, Any]]:
+def parse_search_results(root: etree.Element, preferred_language: str = 'en') -> list[Dict[str, Any]]:
     """
     Parse game list from jeuRecherche.php response.
 
     Args:
         root: Parsed XML root element with <jeux> container
+        preferred_language: Preferred language code (e.g., 'en', 'fr', 'de')
 
     Returns:
         List of game metadata dictionaries
@@ -207,7 +226,7 @@ def parse_search_results(root: etree.Element) -> list[Dict[str, Any]]:
     # Parse each <jeu> element
     for jeu_elem in jeux.findall('jeu'):
         try:
-            game_data = _parse_jeu_element(jeu_elem)
+            game_data = _parse_jeu_element(jeu_elem, preferred_language)
             results.append(game_data)
         except Exception:
             # Skip malformed entries

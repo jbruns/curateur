@@ -77,6 +77,7 @@ class ScreenScraperClient:
         self.max_retries = config.get('api', {}).get('max_retries', 3)
         self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
         self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
+        self.preferred_language = config.get('scraping', {}).get('preferred_language', 'en')
         self._quota_warning_threshold = config.get('api', {}).get('quota_warning_threshold', 0.95)
         self._timeout = httpx.Timeout(
             connect=5.0,
@@ -484,7 +485,7 @@ class ScreenScraperClient:
 
             # Parse game info
             try:
-                game_data = parse_game_info(root)
+                game_data = parse_game_info(root, self.preferred_language)
             except ResponseError as e:
                 raise SkippableAPIError(str(e))
 
@@ -725,7 +726,7 @@ class ScreenScraperClient:
 
             # Parse search results
             try:
-                results = parse_search_results(root)
+                results = parse_search_results(root, self.preferred_language)
             except ResponseError as e:
                 raise SkippableAPIError(str(e))
 
