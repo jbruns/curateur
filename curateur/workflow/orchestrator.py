@@ -56,6 +56,7 @@ class ScrapingResult:
     media_downloaded: int = 0
     game_info: Optional[dict] = None
     media_paths: Optional[dict] = None
+    game_entry: Optional['GameEntry'] = None  # Pre-merged entry from MetadataMerger
     skipped: bool = False
     skip_reason: Optional[str] = None
 
@@ -1376,7 +1377,8 @@ class WorkflowOrchestrator:
                     api_id=str(game_info.get('id', '')),
                     media_downloaded=media_count,
                     game_info=game_info,
-                    media_paths=media_paths
+                    media_paths=media_paths,
+                    game_entry=game_entry  # Store merged entry
                 )
 
             # Return success even if no updates made
@@ -1394,7 +1396,8 @@ class WorkflowOrchestrator:
                 api_id=str(game_info.get('id', '')) if game_info else None,
                 media_downloaded=media_count,
                 game_info=game_info,
-                media_paths=media_paths
+                media_paths=media_paths,
+                game_entry=game_entry if decision.update_metadata and game_info else None
             )
 
         except Exception as e:
@@ -1944,7 +1947,8 @@ class WorkflowOrchestrator:
                 scraped_games.append({
                     'rom_path': result.rom_path,
                     'game_info': result.game_info,
-                    'media_paths': result.media_paths or {}
+                    'media_paths': result.media_paths or {},
+                    'game_entry': result.game_entry  # Pass pre-merged entry
                 })
 
         # Generate gamelist (merge with existing if present)

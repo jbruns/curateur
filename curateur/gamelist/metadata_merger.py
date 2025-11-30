@@ -159,6 +159,57 @@ class MetadataMerger:
             conflicts=conflicts
         )
 
+    def merge_entry_lists(
+        self,
+        existing_entries: List[GameEntry],
+        new_entries: List[GameEntry]
+    ) -> List[GameEntry]:
+        """
+        Merge lists of entries for gamelist generation.
+
+        Args:
+            existing_entries: Entries from existing gamelist.xml
+            new_entries: Newly scraped entries
+
+        Returns:
+            Merged list of GameEntry objects
+
+        Logic:
+        - For ROMs in both lists: Update metadata using merge_entries()
+        - For ROMs only in new list: Add as new entries (with auto-favorite)
+        - For ROMs only in existing list: Keep (user may have manual entries)
+        """
+        # Build lookup by path
+        existing_by_path = {entry.path: entry for entry in existing_entries}
+        new_by_path = {entry.path: entry for entry in new_entries}
+
+        merged = []
+        processed_paths = set()
+
+        # Process new entries (update or add)
+        for path, new_entry in new_by_path.items():
+            if path in existing_by_path:
+                # Merge: update metadata using strategy-aware merge
+                merge_result = self.merge_entries(existing_by_path[path], new_entry)
+                merged.append(merge_result.merged_entry)
+            else:
+                # New entry - apply auto-favorite if strategy allows
+                if self.merge_strategy != 'preserve_user_edits' and self.auto_favorite_enabled:
+                    if new_entry.rating is not None and new_entry.rating >= self.auto_favorite_threshold:
+                        new_entry.favorite = True
+                        logger.debug(f"Auto-favoriting new entry: {new_entry.name} (rating={new_entry.rating})")
+
+                merged.append(new_entry)
+
+            processed_paths.add(path)
+
+        # Preserve existing entries not in new list
+        for path, existing_entry in existing_by_path.items():
+            if path not in processed_paths:
+                merged.append(existing_entry)
+
+        return merged
+
     def _merge_preserve_user_edits(
         self,
         existing: GameEntry,

@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from .game_entry import GameEntry, GamelistMetadata
 from .xml_writer import GamelistWriter
-from .parser import GamelistParser, GamelistMerger
+from .parser import GamelistParser
+from .metadata_merger import MetadataMerger
 from .path_handler import PathHandler
 from .integrity_validator import IntegrityValidator
 
@@ -69,7 +70,7 @@ class GamelistGenerator:
         )
 
         self.parser = GamelistParser()
-        self.merger = GamelistMerger(
+        self.merger = MetadataMerger(
             merge_strategy=merge_strategy,
             auto_favorite_enabled=auto_favorite_enabled,
             auto_favorite_threshold=auto_favorite_threshold
@@ -116,7 +117,7 @@ class GamelistGenerator:
         """
         logger.info(f"Starting gamelist generation: {len(scraped_games)} new games, merge_existing={merge_existing}")
 
-        # Create game entries from scraped data
+        # Create game entries from scraped data (may be pre-merged from orchestrator)
         try:
             logger.debug("About to call _create_game_entries...")
             new_entries = self._create_game_entries(scraped_games, media_results)
@@ -125,23 +126,34 @@ class GamelistGenerator:
             logger.error(f"EXCEPTION in _create_game_entries: {e}", exc_info=True)
             raise
 
-        # Load existing gamelist if merging
-        existing_entries = []
-        if merge_existing and self.gamelist_path.exists():
-            try:
-                existing_entries = self.parser.parse_gamelist(self.gamelist_path)
-                logger.info(f"Loaded {len(existing_entries)} entries from existing gamelist")
-            except Exception as e:
-                # If parsing fails, start fresh
-                logger.warning(f"Could not parse existing gamelist: {e}")
-                existing_entries = []
+        # Check if entries are already merged (from orchestrator)
+        pre_merged = all(game_data.get('game_entry') is not None for game_data in scraped_games)
 
-        # Merge entries (always use merger to apply auto-favorite and other logic)
-        final_entries = self.merger.merge_entries(existing_entries, new_entries)
-        if existing_entries:
-            logger.info(f"Merged entries: {len(final_entries)} total (was {len(existing_entries)} existing, {len(new_entries)} new)")
+        if pre_merged:
+            # Entries already merged during scraping, use them directly
+            logger.info(f"Using {len(new_entries)} pre-merged entries from orchestrator")
+            final_entries = new_entries
         else:
-            logger.info(f"No existing gamelist, created {len(final_entries)} new entries")
+            # Need to merge (fallback for direct calls to generator)
+            logger.info("Merging entries using MetadataMerger")
+
+            # Load existing gamelist if merging
+            existing_entries = []
+            if merge_existing and self.gamelist_path.exists():
+                try:
+                    existing_entries = self.parser.parse_gamelist(self.gamelist_path)
+                    logger.info(f"Loaded {len(existing_entries)} entries from existing gamelist")
+                except Exception as e:
+                    # If parsing fails, start fresh
+                    logger.warning(f"Could not parse existing gamelist: {e}")
+                    existing_entries = []
+
+            # Merge entries using MetadataMerger's batch method
+            final_entries = self.merger.merge_entry_lists(existing_entries, new_entries)
+            if existing_entries:
+                logger.info(f"Merged entries: {len(final_entries)} total (was {len(existing_entries)} existing, {len(new_entries)} new)")
+            else:
+                logger.info(f"No existing gamelist, created {len(final_entries)} new entries")
 
         # Write gamelist
         logger.info(f"Calling writer.write_gamelist with {len(final_entries)} entries to {self.gamelist_path}")
@@ -173,39 +185,45 @@ class GamelistGenerator:
     ) -> List[GameEntry]:
         """
         Create GameEntry objects from scraped data.
-        
+
         Args:
-            scraped_games: List of scraped game dicts
+            scraped_games: List of scraped game dicts (may contain pre-merged entries)
             media_results: Media download results
-            
+
         Returns:
             List of GameEntry objects
         """
         entries = []
         media_results = media_results or {}
-        
+
         for game_data in scraped_games:
+            # Use pre-merged entry if available (from orchestrator)
+            if 'game_entry' in game_data and game_data['game_entry'] is not None:
+                entries.append(game_data['game_entry'])
+                continue
+
+            # Fallback: create from API response (for direct generator usage)
             rom_path = game_data['rom_path']
             game_info = game_data['game_info']
-            
+
             # Get relative ROM path
             relative_rom_path = self.path_handler.get_relative_rom_path(rom_path)
-            
+
             # Get media paths from download results
             media_paths = self._extract_media_paths(
                 game_data.get('media_paths', {}),
                 rom_path
             )
-            
+
             # Create entry
             entry = GameEntry.from_api_response(
                 game_info,
                 relative_rom_path,
                 media_paths
             )
-            
+
             entries.append(entry)
-        
+
         return entries
     
     def _extract_media_paths(
