@@ -116,8 +116,8 @@ class TestNewGamelistGeneration:
         assert "favorite" not in games["./LowRated.nes"]
         assert games["./LowRated.nes"]["rating"] == "0.5"
 
-    def test_preserve_user_edits_blocks_auto_favorite(self, tmp_path):
-        """New gamelist with preserve_user_edits should NOT apply auto-favorite"""
+    def test_preserve_user_edits_with_auto_favorite_on_new_entries(self, tmp_path):
+        """New entries should be auto-favorited even with preserve_user_edits (no user edits to preserve)"""
         rom_dir = tmp_path / "roms"
         media_dir = tmp_path / "media"
         gamelist_dir = tmp_path / "gamelist"
@@ -152,9 +152,9 @@ class TestNewGamelistGeneration:
 
         games = _parse_gamelist(generator.gamelist_path)
 
-        # Should NOT be favorited despite high rating (preserve_user_edits blocks it)
+        # SHOULD be favorited - it's a new entry with no user edits to preserve
         assert "./HighRated.nes" in games
-        assert "favorite" not in games["./HighRated.nes"]
+        assert games["./HighRated.nes"]["favorite"] == "true"
         assert games["./HighRated.nes"]["rating"] == "0.95"
 
     def test_reset_all_allows_auto_favorite(self, tmp_path):

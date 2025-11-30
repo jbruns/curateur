@@ -128,7 +128,7 @@ def test_auto_favorite_upgrades_existing_entries_with_low_rating():
 
 @pytest.mark.unit
 def test_preserve_user_edits_blocks_auto_favorite():
-    """Test that preserve_user_edits strategy prevents auto-favorite from modifying entries"""
+    """Test that preserve_user_edits strategy prevents auto-favorite from modifying existing entries"""
     existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]
     new_entries = [
         _entry("./Alpha.zip", "Alpha", rating=0.95),  # Updated existing with high rating
@@ -145,9 +145,10 @@ def test_preserve_user_edits_blocks_auto_favorite():
     alpha = next(e for e in merged if e.name == "Alpha")
     beta = next(e for e in merged if e.name == "Beta")
 
-    # Neither should be auto-favorited when strategy is preserve_user_edits
+    # Alpha (existing entry) should NOT be auto-favorited - preserve user's favorite=False
     assert alpha.favorite is False
-    assert beta.favorite is False
+    # Beta (new entry) SHOULD be auto-favorited - no user edits to preserve
+    assert beta.favorite is True
 
 
 @pytest.mark.unit

@@ -1354,6 +1354,12 @@ class WorkflowOrchestrator:
                     if self.console_ui and len(merge_result.updated_fields) > 0:
                         self.console_ui.increment_gamelist_updated()
                 else:
+                    # New entry - apply auto-favorite if enabled (no merge strategy check for new entries)
+                    if self.metadata_merger.auto_favorite_enabled:
+                        if game_entry.rating is not None and game_entry.rating >= self.metadata_merger.auto_favorite_threshold:
+                            game_entry.favorite = True
+                            logger.debug(f"Auto-favoriting new entry: {game_entry.name} (rating={game_entry.rating})")
+
                     # Track new entry added to gamelist
                     if self.console_ui and game_entry:
                         self.console_ui.increment_gamelist_added()

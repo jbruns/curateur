@@ -193,8 +193,8 @@ class MetadataMerger:
                 merge_result = self.merge_entries(existing_by_path[path], new_entry)
                 merged.append(merge_result.merged_entry)
             else:
-                # New entry - apply auto-favorite if strategy allows
-                if self.merge_strategy != 'preserve_user_edits' and self.auto_favorite_enabled:
+                # New entry - apply auto-favorite if enabled (no merge strategy check for new entries)
+                if self.auto_favorite_enabled:
                     if new_entry.rating is not None and new_entry.rating >= self.auto_favorite_threshold:
                         new_entry.favorite = True
                         logger.debug(f"Auto-favoriting new entry: {new_entry.name} (rating={new_entry.rating})")

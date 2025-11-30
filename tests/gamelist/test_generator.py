@@ -176,7 +176,7 @@ def test_auto_favorite_applies_to_new_gamelist(tmp_path):
 
 @pytest.mark.unit
 def test_auto_favorite_respects_preserve_user_edits_on_new_gamelist(tmp_path):
-    """Test that preserve_user_edits strategy blocks auto-favorite even on new gamelists"""
+    """Test that new entries are auto-favorited even with preserve_user_edits (no user edits to preserve)"""
     rom_dir = tmp_path / "roms"
     media_dir = tmp_path / "media"
     gamelist_dir = tmp_path / "gamelist"
@@ -193,7 +193,7 @@ def test_auto_favorite_respects_preserve_user_edits_on_new_gamelist(tmp_path):
         rom_directory=rom_dir,
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
-        merge_strategy="preserve_user_edits",  # Should block auto-favorite
+        merge_strategy="preserve_user_edits",
         auto_favorite_enabled=True,
         auto_favorite_threshold=0.9,
     )
@@ -216,7 +216,7 @@ def test_auto_favorite_respects_preserve_user_edits_on_new_gamelist(tmp_path):
     # Read generated gamelist
     content = generator.gamelist_path.read_text()
 
-    # Should NOT have auto-favorited (preserve_user_edits blocks it)
+    # SHOULD be auto-favorited - it's a new entry with no user edits to preserve
     assert "<name>HighRated Game</name>" in content
     assert "<rating>0.95</rating>" in content
-    assert "<favorite>true</favorite>" not in content
+    assert "<favorite>true</favorite>" in content
