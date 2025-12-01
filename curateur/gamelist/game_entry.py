@@ -33,6 +33,7 @@ class GameEntry:
     publisher: Optional[str] = None
     genre: Optional[str] = None
     players: Optional[str] = None
+    sortname: Optional[str] = None  # Alternative name for sorting
     
     # Media paths (relative to gamelist directory)
     image: Optional[str] = None  # Box art/cover
@@ -69,43 +70,48 @@ class GameEntry:
         cls,
         game_info: Dict,
         rom_path: str,
-        media_paths: Optional[Dict[str, str]] = None
+        media_paths: Optional[Dict[str, str]] = None,
+        auto_sortname_enabled: bool = False
     ) -> 'GameEntry':
         """
         Create GameEntry from ScreenScraper API response.
-        
+
         Args:
             game_info: Parsed API response dict
             rom_path: Relative path to ROM file
             media_paths: Dict of media type to relative path
-            
+            auto_sortname_enabled: Enable automatic sortname generation for articles
+
         Returns:
             GameEntry instance
         """
         # Extract preferred name (us region preferred)
         names = game_info.get('names', {})
         name = names.get('us') or names.get('wor') or names.get('eu') or list(names.values())[0] if names else 'Unknown'
-        
+
         # Extract preferred description (use language codes, not region codes)
         descs = game_info.get('descriptions', {})
         desc = descs.get('en') or descs.get('fr') or descs.get('de') or descs.get('es') or None
-        
+
         # Convert rating from ScreenScraper's 0-20 scale to ES-DE's 0-1 scale
         api_rating = game_info.get('rating')
         rating = float(api_rating) / 20.0 if api_rating is not None else None
-        
+
         # Format release date
         release_dates = game_info.get('release_dates', {})
         release_date_str = release_dates.get('us') or release_dates.get('wor') or release_dates.get('eu') or None
         releasedate = cls._format_release_date(release_date_str) if release_date_str else None
-        
+
         # Extract genres (comma-separated)
         genres = game_info.get('genres', [])
         genre = ', '.join(genres) if genres else None
-        
+
+        # Generate sortname if enabled
+        sortname = cls._generate_sortname(name) if auto_sortname_enabled else None
+
         # Media paths
         media_paths = media_paths or {}
-        
+
         return cls(
             path=rom_path,
             name=name,
@@ -117,12 +123,53 @@ class GameEntry:
             publisher=game_info.get('publisher'),
             genre=genre,
             players=game_info.get('players'),
+            sortname=sortname,
             image=media_paths.get('box-2D') or media_paths.get('cover'),
             thumbnail=media_paths.get('screenshot'),
             marquee=media_paths.get('screenmarquee'),
             video=media_paths.get('video')
         )
     
+    @staticmethod
+    def _generate_sortname(name: str) -> Optional[str]:
+        """
+        Generate sortname for games starting with articles (A, An, The).
+
+        Moves the article to the end with a comma for proper alphabetical sorting.
+
+        Args:
+            name: Game name
+
+        Returns:
+            Sortname if the name starts with an article, None otherwise
+
+        Examples:
+            "The Legend of Zelda" → "Legend of Zelda, The"
+            "A Link to the Past" → "Link to the Past, A"
+            "An American Tail" → "American Tail, An"
+            "Super Mario Bros" → None (no article)
+        """
+        if not name:
+            return None
+
+        # Define articles to check (case-insensitive)
+        articles = [
+            ('The ', 'The'),
+            ('A ', 'A'),
+            ('An ', 'An'),
+        ]
+
+        # Check if name starts with an article
+        for article_with_space, article in articles:
+            if name.startswith(article_with_space):
+                # Remove article from beginning and add to end with comma
+                remainder = name[len(article_with_space):]
+                if remainder:  # Make sure there's something after the article
+                    return f"{remainder}, {article}"
+                break
+
+        return None
+
     @staticmethod
     def _format_release_date(date_str: str) -> str:
         """

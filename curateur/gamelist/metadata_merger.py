@@ -43,13 +43,15 @@ class MetadataMerger:
     3. reset_all: Complete reset - use API data + path only (nuclear option)
     """
 
-    # Field categorization
+    # Field categorization (https://gitlab.com/es-de/emulationstation-de/-/blob/master/INSTALL.md#gamelistxml)
     USER_FIELDS = {
-        'favorite', 'playcount', 'lastplayed', 'hidden', 'kidgame'
+        'collectionsortname', 'favorite', 'completed', 'kidgame',
+        'hidden', 'broken', 'nogamecount', 'nomultiscrape', 'hidemetadata',
+        'playcount', 'playtime', 'controller', 'altemulator', 'lastplayed'
     }
 
     SCRAPED_FIELDS = {
-        'name', 'desc', 'rating', 'releasedate', 'developer',
+        'name', 'sortname', 'desc', 'rating', 'releasedate', 'developer',
         'publisher', 'genre', 'players'
     }
 

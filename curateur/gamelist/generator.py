@@ -38,7 +38,8 @@ class GamelistGenerator:
         software_name: str = "curateur",
         merge_strategy: str = "preserve_user_edits",
         auto_favorite_enabled: bool = False,
-        auto_favorite_threshold: float = 0.9
+        auto_favorite_threshold: float = 0.9,
+        auto_sortname_enabled: bool = False
     ):
         """
         Initialize gamelist generator.
@@ -53,6 +54,7 @@ class GamelistGenerator:
             merge_strategy: Merge strategy ('preserve_user_edits', 'refresh_metadata', 'reset_all')
             auto_favorite_enabled: Enable automatic favorite flag for highly-rated games
             auto_favorite_threshold: Rating threshold (0.0-1.0) for auto-favorite
+            auto_sortname_enabled: Enable automatic sortname generation for articles
         """
         self.system_name = system_name
         self.full_system_name = full_system_name
@@ -61,6 +63,7 @@ class GamelistGenerator:
         self.merge_strategy = merge_strategy
         self.auto_favorite_enabled = auto_favorite_enabled
         self.auto_favorite_threshold = auto_favorite_threshold
+        self.auto_sortname_enabled = auto_sortname_enabled
 
         # Initialize components
         self.path_handler = PathHandler(
@@ -219,7 +222,8 @@ class GamelistGenerator:
             entry = GameEntry.from_api_response(
                 game_info,
                 relative_rom_path,
-                media_paths
+                media_paths,
+                auto_sortname_enabled=self.auto_sortname_enabled
             )
 
             entries.append(entry)
@@ -287,7 +291,8 @@ class GamelistGenerator:
         entry = GameEntry.from_api_response(
             game_info,
             relative_rom_path,
-            relative_media_paths
+            relative_media_paths,
+            auto_sortname_enabled=self.auto_sortname_enabled
         )
         
         # Load existing entries

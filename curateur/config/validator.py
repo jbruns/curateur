@@ -156,6 +156,11 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
         elif threshold < 0.0 or threshold > 1.0:
             errors.append("scraping.auto_favorite_threshold must be between 0.0 and 1.0")
 
+    # Validate auto_sortname settings
+    if 'auto_sortname_enabled' in section:
+        if not isinstance(section['auto_sortname_enabled'], bool):
+            errors.append("scraping.auto_sortname_enabled must be a boolean")
+
     # Validate name_verification
     if 'name_verification' in section:
         verification = section['name_verification']

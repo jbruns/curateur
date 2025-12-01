@@ -118,8 +118,11 @@ class GamelistWriter:
         # Add required fields
         self._add_element(game, "path", entry.path)
         self._add_element(game, "name", entry.name)
-        
+
         # Add optional metadata fields
+        if entry.sortname:
+            self._add_element(game, "sortname", entry.sortname)
+
         if entry.desc:
             self._add_element(game, "desc", entry.desc)
         

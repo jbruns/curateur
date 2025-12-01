@@ -91,7 +91,15 @@ scraping:
   # Default: 0.9
   # Note: ScreenScraper ratings are normalized to 0.0-1.0 scale
   auto_favorite_threshold: 0.9
-  
+
+  # Auto-generate sortname for games with articles
+  # Purpose: Automatically generate sortname field for games starting with A/An/The
+  # Valid: true | false
+  # Default: false
+  # Example: "The Game Name Here" -> sortname: "Game Name Here, The"
+  # Note: Helps with alphabetical sorting in ES-DE frontend
+  auto_sortname_enabled: false
+
   # Name verification strictness
   # Purpose: How strictly to match game names during API verification
   # Valid: strict | normal | lenient | disabled

@@ -163,6 +163,9 @@ class WorkflowOrchestrator:
             auto_favorite_threshold=scraping_config.get('auto_favorite_threshold', 0.9)
         )
 
+        # Store sortname config
+        self.auto_sortname_enabled = scraping_config.get('auto_sortname_enabled', False)
+
         # Store paths for easy access
         self.paths = {
             'roms': self.rom_directory,
@@ -1336,7 +1339,8 @@ class WorkflowOrchestrator:
                 game_entry = GameEntry.from_api_response(
                     game_info=game_info,
                     rom_path=f"./{rom_info.filename}",
-                    media_paths=media_paths
+                    media_paths=media_paths,
+                    auto_sortname_enabled=self.auto_sortname_enabled
                 )
 
                 # Merge with existing entry if present
@@ -1942,7 +1946,8 @@ class WorkflowOrchestrator:
             gamelist_directory=self.gamelist_directory / system.name,
             merge_strategy=self.metadata_merger.merge_strategy,
             auto_favorite_enabled=self.metadata_merger.auto_favorite_enabled,
-            auto_favorite_threshold=self.metadata_merger.auto_favorite_threshold
+            auto_favorite_threshold=self.metadata_merger.auto_favorite_threshold,
+            auto_sortname_enabled=self.auto_sortname_enabled
         )
 
         # Prepare scraped games data
