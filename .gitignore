@@ -2,6 +2,7 @@
 es_systems.xml
 systemesListe.xml
 config.yaml
+mame_config.yaml
 reference/*
 
 # Byte-compiled / optimized / DLL files
