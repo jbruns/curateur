@@ -154,7 +154,10 @@ class GamelistGenerator:
             # Merge entries using MetadataMerger's batch method
             final_entries = self.merger.merge_entry_lists(existing_entries, new_entries)
             if existing_entries:
-                logger.info(f"Merged entries: {len(final_entries)} total (was {len(existing_entries)} existing, {len(new_entries)} new)")
+                logger.info(
+                    f"Merged entries: {len(final_entries)} total "
+                    f"(was {len(existing_entries)} existing, {len(new_entries)} new)"
+                )
             else:
                 logger.info(f"No existing gamelist, created {len(final_entries)} new entries")
 

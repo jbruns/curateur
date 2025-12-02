@@ -840,7 +840,9 @@ class WorkflowOrchestrator:
                                 
                                 # First check dimensions and image integrity (only for images)
                                 if is_image_type:
-                                    is_valid, validation_error = media_downloader.downloader.validate_existing_file(media_path)
+                                    is_valid, validation_error = (
+                                        media_downloader.downloader.validate_existing_file(media_path)
+                                    )
                                     if not is_valid:
                                         logger.debug(
                                             "[%s] Media validation failed (dimensions/integrity): %s - %s",
@@ -872,7 +874,9 @@ class WorkflowOrchestrator:
                                 
                                 # Only validate images; PDFs and videos just pass in normal mode
                                 if is_image_type:
-                                    is_valid, validation_error = media_downloader.downloader.validate_existing_file(media_path)
+                                    is_valid, validation_error = (
+                                        media_downloader.downloader.validate_existing_file(media_path)
+                                    )
                                     if not is_valid:
                                         logger.debug(
                                             "[%s] Media validation failed (dimensions/integrity): %s - %s",
@@ -1175,7 +1179,11 @@ class WorkflowOrchestrator:
                                             media_type_singular,
                                             validation_error
                                         )
-                                        validated_failed.append((media_type_singular, "cached", "dimension/integrity check failed"))
+                                        validated_failed.append((
+                                            media_type_singular,
+                                            "cached",
+                                            "dimension/integrity check failed"
+                                        ))
                                         if media_type_singular not in decision.media_to_download:
                                             decision.media_to_download.append(media_type_singular)
                                         
@@ -1360,7 +1368,8 @@ class WorkflowOrchestrator:
                 else:
                     # New entry - apply auto-favorite if enabled (no merge strategy check for new entries)
                     if self.metadata_merger.auto_favorite_enabled:
-                        if game_entry.rating is not None and game_entry.rating >= self.metadata_merger.auto_favorite_threshold:
+                        if (game_entry.rating is not None and
+                                game_entry.rating >= self.metadata_merger.auto_favorite_threshold):
                             game_entry.favorite = True
                             logger.debug(f"Auto-favoriting new entry: {game_entry.name} (rating={game_entry.rating})")
 

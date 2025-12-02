@@ -295,7 +295,10 @@ def config_to_mame_config(config: dict) -> MAMEConfig:
         target_rom_path=Path(config['target_rom_path']).expanduser(),
         gamelist_output_path=Path(config['gamelist_output_path']).expanduser(),
         media_output_path=Path(config['media_output_path']).expanduser(),
-        inclusion_list_path=Path(config['inclusion_list_path']).expanduser() if config.get('inclusion_list_path') else None,
+        inclusion_list_path=(
+            Path(config['inclusion_list_path']).expanduser()
+            if config.get('inclusion_list_path') else None
+        ),
         minimum_rating=config.get('minimum_rating'),
         use_game_or_no_game=config.get('use_game_or_no_game', False),
         favorite_threshold=config.get('favorite_threshold'),
