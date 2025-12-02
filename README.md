@@ -24,7 +24,7 @@ curateur is designed to be as fast as possible, and as thorough as you want it t
 - Set and forget: Initial data population is designed to be hands-off. Metadata and media can be updated on an ongoing basis, as an automated task.
 
 ## Quick start
-Requirements: Python 3.8+, ScreenScraper account, ES-DE [`es_systems.xml`](https://gitlab.com/es-de/emulationstation-de/-/tree/master/resources/systems), and ROM/media output directories with write access.
+Requirements: Python 3.10+, ScreenScraper account, ES-DE [`es_systems.xml`](https://gitlab.com/es-de/emulationstation-de/-/tree/master/resources/systems), and ROM/media output directories with write access.
 
 ### For best results
 - Use ROM collections which are **uncompressed** and follow No-Intro or Redump standard naming patterns.
