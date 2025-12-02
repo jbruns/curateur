@@ -11,7 +11,7 @@
   - Single file configuration: configure once in YAML. Override on command line if needed.
   - Region preference order + language preference: compares ROM region and your configured preferences to what's available from ScreenScraper.
   - Audits to your liking: easily narrow the workflow to just added ROMs, or do an exhaustive audit of all metadata and media assets 
-  - ES-DE first: supports anything which uses ES-DE as its frontend (Recalbox, RetroBat, Batocera, EmuDeck, and of course Android handhelds)
+  - ES-DE first: supports anything which uses ES-DE as its frontend (RetroBat, EmuDeck, and of course Android handhelds)
   - Designed to be a true curator of your collection: leaves your preferences alone, only updating what it's supposed to, with the most appropriate match for your ROMs.
 
 ## How it does it
