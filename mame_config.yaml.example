@@ -1,0 +1,112 @@
+# MAME ROM Organizer Configuration
+# ================================
+# This configuration file defines paths and settings for organizing MAME ROM sets,
+# parsing metadata from local sources, and generating ES-DE compatible gamelist.xml files.
+
+# Source Paths
+# ------------
+# Paths to your MAME ROM collection and metadata sources
+
+# Path to MAME non-merged ROM set directory (contains .zip files)
+source_rom_path: "/path/to/mame/roms"
+
+# Path to MAME CHD directory (optional, contains subdirectories with .chd files)
+# Set to null or comment out if you don't have CHDs
+source_chd_path: "/path/to/mame/chds"
+
+# Path to MAME XML file (e.g., mame0283.xml)
+mame_xml_path: "/path/to/mame0283.xml"
+
+# Path to MAME Multimedia directory (optional, contains /videosnaps/*.mp4)
+# Set to null or comment out if you don't have videos
+multimedia_path: "/path/to/mame/multimedia"
+
+# Path to MAME Extras directory
+# Expected structure:
+#   - titles.zip, snap.zip, marquees.zip, flyers.zip, cabinets.zip, cpanel.zip, manuals.zip
+#   - /folders/bestgames.ini
+#   - /folders/genre.ini
+#   - /folders/multiplayer.ini
+#   - /folders/Game or No Game.ini
+#   - /history/history.xml
+extras_path: "/path/to/mame/extras"
+
+# Output Paths
+# ------------
+# Where to place organized ROMs, media, and gamelist
+
+# Target directory for ROM files (ES-DE ROM directory)
+target_rom_path: "/path/to/ES-DE/ROMs/mame"
+
+# Path to output gamelist.xml file
+gamelist_output_path: "/path/to/ES-DE/gamelists/mame/gamelist.xml"
+
+# Base path for media output (will create subdirectories: screenshots/, covers/, etc.)
+media_output_path: "/path/to/ES-DE/media/mame"
+
+# Filtering Options
+# -----------------
+# Control which games are included in the gamelist
+
+# Path to plain text file with one MAME shortname per line (optional)
+# Only games in this list will be processed
+# Set to null or comment out to process all games
+inclusion_list_path: null
+
+# Minimum rating threshold (0.0 to 1.0, based on bestgames.ini)
+# Only games with rating >= this value will be included (after inclusion list filter)
+# Set to null or comment out to include all ratings
+minimum_rating: null
+
+# Use "Game or No Game.ini" to filter actual games from non-games
+# If true, only games in the [Game] section will be included
+# If false or if file doesn't exist, assumes all machines are games
+use_game_or_no_game: false
+
+# Favorite threshold (0.0 to 1.0)
+# Games with rating >= this value will be marked as favorites
+# Set to null or comment out to not auto-set favorites
+favorite_threshold: null
+
+# Processing Options
+# ------------------
+# Control how the tool operates
+
+# Enable automatic sortname generation for games starting with articles (A, An, The)
+# If true, games like "The King of Fighters" will get sortname="King of Fighters, The"
+# This helps with proper alphabetical sorting in ES-DE
+auto_sortname_enabled: false
+
+# Dry run mode - validate and log what would be done without actually copying files
+dry_run: false
+
+# Merge strategy for existing gamelist.xml
+# Options:
+#   - "preserve_user_edits": Keep all existing fields (most conservative)
+#   - "refresh_metadata": Update scraped fields, preserve user edits (recommended)
+#   - "reset_all": Complete reset (nuclear option)
+merge_strategy: "refresh_metadata"
+
+# Validate gamelist integrity after generation
+validate_output: true
+
+# Example Configurations
+# ----------------------
+# 
+# Example 1: Process high-quality arcade games only
+# inclusion_list_path: null
+# minimum_rating: 0.7
+# use_game_or_no_game: true
+# favorite_threshold: 0.9
+#
+# Example 2: Process specific game list from file
+# inclusion_list_path: "/path/to/my_games.txt"
+# minimum_rating: null
+# use_game_or_no_game: false
+# favorite_threshold: null
+#
+# Example 3: Process all games
+# inclusion_list_path: null
+# minimum_rating: null
+# use_game_or_no_game: true
+# favorite_threshold: null
