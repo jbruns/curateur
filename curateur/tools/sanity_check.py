@@ -80,10 +80,10 @@ class ValidationReport:
 def parse_cue_file(cue_path: Path) -> List[str]:
     """
     Parse .cue file and extract referenced bin files.
-    
+
     Args:
         cue_path: Path to .cue file
-        
+
     Returns:
         List of referenced bin filenames
     """
@@ -100,8 +100,44 @@ def parse_cue_file(cue_path: Path) -> List[str]:
                 bin_files.append(match.group(1))
     except Exception as e:
         logger.warning(f"Error parsing cue file {cue_path}: {e}")
-    
+
     return bin_files
+
+
+def parse_gdi_file(gdi_path: Path) -> List[str]:
+    """
+    Parse .gdi file and extract referenced track files.
+
+    GDI format: Each line after first contains: track_num lba type sector_size filename offset
+    Example: 1 0 4 2352 track01.bin 0
+
+    Args:
+        gdi_path: Path to .gdi file
+
+    Returns:
+        List of referenced track filenames
+    """
+    track_files = []
+    try:
+        content = gdi_path.read_text(errors='ignore')
+        lines = content.splitlines()
+
+        # First line is track count, skip it
+        for line in lines[1:]:
+            line_strip = line.strip()
+            if not line_strip:
+                continue
+
+            # Parse: track_num lba type sector_size filename offset
+            parts = line_strip.split(maxsplit=4)
+            if len(parts) >= 5:
+                # Filename is the 5th field, may have quotes
+                filename = parts[4].split()[0].strip('"')
+                track_files.append(filename)
+    except Exception as e:
+        logger.warning(f"Error parsing gdi file {gdi_path}: {e}")
+
+    return track_files
 
 
 def extract_disc_number(filename: str) -> Optional[int]:
@@ -171,14 +207,17 @@ def validate_system(system: SystemDefinition, rom_root: Path, verbose: bool = Fa
     # Track M3U files and .multidisc contents for multi-disc validation
     m3u_files = []
     multidisc_files = []
-    
+
     # Track .cue directories for bin/cue validation
     cue_directories = []
-    
+
+    # Track potential multi-disc files outside .multidisc
+    misplaced_multidisc_files = []
+
     # Validate each file
     for file_path in all_files:
         relative_path = file_path.relative_to(report.rom_path)
-        
+
         # Check for hidden files/directories (except .multidisc)
         path_parts = relative_path.parts
         for part in path_parts:
@@ -189,21 +228,27 @@ def validate_system(system: SystemDefinition, rom_root: Path, verbose: bool = Fa
                     f"Unexpected hidden file or directory: {relative_path}"
                 )
                 break
-        
+
         # Check if file is in a .cue directory
         in_cue_dir = any(
             is_disc_subdirectory(file_path.parent, system.extensions)
             for parent in file_path.parents
             if parent != report.rom_path
         )
-        
+
         # Track .m3u files
         if file_path.suffix.lower() == '.m3u':
             m3u_files.append(file_path)
-        
+
         # Track files in .multidisc directory
         if '.multidisc' in path_parts:
             multidisc_files.append(file_path)
+        else:
+            # Check for multi-disc pattern outside .multidisc (if system supports M3U)
+            if system.supports_m3u() and not in_cue_dir:
+                # Check if filename contains disc pattern
+                if extract_disc_number(file_path.name) is not None:
+                    misplaced_multidisc_files.append(file_path)
         
         # Check file extension (skip files inside .cue directories for extension check)
         if not in_cue_dir:
@@ -258,12 +303,12 @@ def validate_system(system: SystemDefinition, rom_root: Path, verbose: bool = Fa
         for file_path, file_size in file_sizes:
             if stdev_size > 0:  # Avoid division by zero
                 z_score = abs((file_size - mean_size) / stdev_size)
-                if z_score > 3:
+                if z_score > 5:
                     report.add_issue(
                         "Size Outliers",
                         file_path,
                         f"File size {format_file_size(file_size)} is unusually large "
-                        f"(>3σ from mean of {format_file_size(int(mean_size))})"
+                        f"(>5σ from mean of {format_file_size(int(mean_size))})"
                     )
     
     # Check compression uniformity (only at top level, not in subdirs)
@@ -283,11 +328,11 @@ def validate_system(system: SystemDefinition, rom_root: Path, verbose: bool = Fa
     
     # Multi-disc validation (only if system supports .m3u)
     if system.supports_m3u():
-        validate_multidisc(report, system, m3u_files, multidisc_files, verbose)
-    
+        validate_multidisc(report, system, m3u_files, multidisc_files, misplaced_multidisc_files, verbose)
+
     # Bin/cue validation for disc-based systems
     validate_cue_directories(report, system, verbose)
-    
+
     return report
 
 
@@ -296,28 +341,33 @@ def validate_multidisc(
     system: SystemDefinition,
     m3u_files: List[Path],
     multidisc_files: List[Path],
+    misplaced_multidisc_files: List[Path],
     verbose: bool
 ):
     """
     Validate multi-disc organization.
-    
+
     Args:
         report: System report to add issues to
         system: System definition
         m3u_files: List of .m3u files found
         multidisc_files: List of files in .multidisc directory
+        misplaced_multidisc_files: List of files with disc pattern outside .multidisc
         verbose: Enable verbose logging
     """
     multidisc_dir = report.rom_path / '.multidisc'
-    
-    # Track which files in .multidisc are referenced by M3U files
+
+    # Valid file types that can be referenced in M3U files
+    valid_m3u_extensions = {'.cue', '.gdi', '.iso', '.chd'}
+
+    # Track which files in .multidisc are referenced (by M3U, .cue, or .gdi)
     referenced_files = set()
-    
+
     # Validate each M3U file
     for m3u_path in m3u_files:
         try:
             disc_files = parse_m3u(m3u_path)
-            
+
             if not disc_files:
                 report.add_issue(
                     "M3U Issues",
@@ -325,26 +375,35 @@ def validate_multidisc(
                     "M3U file is empty or contains no valid disc references"
                 )
                 continue
-            
-            # Check that all referenced discs exist
+
+            # Check that all referenced discs exist and have valid extensions
             for disc_path in disc_files:
+                # Check file type
+                if disc_path.suffix.lower() not in valid_m3u_extensions:
+                    report.add_issue(
+                        "M3U Issues",
+                        m3u_path,
+                        f"M3U references invalid file type '{disc_path.suffix}' in {disc_path.name}. "
+                        f"Must be one of: {', '.join(sorted(valid_m3u_extensions))}"
+                    )
+
                 if not disc_path.exists():
                     report.add_issue(
                         "M3U Issues",
                         m3u_path,
-                        f"M3U references non-existent file: {disc_path}"
+                        f"M3U references non-existent file: {disc_path.name}"
                     )
                 else:
                     # Track that this file is referenced
                     referenced_files.add(disc_path)
-            
+
             # Validate disc ordering (strict sequential)
             disc_numbers = []
             for disc_path in disc_files:
                 disc_num = extract_disc_number(disc_path.name)
                 if disc_num is not None:
                     disc_numbers.append(disc_num)
-            
+
             if disc_numbers:
                 # Check if sequential starting from 1
                 expected = list(range(1, len(disc_numbers) + 1))
@@ -363,7 +422,7 @@ def validate_multidisc(
                         f"Discs not in correct order. Found: {disc_numbers}, "
                         f"expected: {expected}"
                     )
-        
+
         except M3UError as e:
             report.add_issue(
                 "M3U Issues",
@@ -376,21 +435,102 @@ def validate_multidisc(
                 m3u_path,
                 f"Unexpected error validating M3U: {e}"
             )
-    
+
+    # Validate .cue and .gdi files in .multidisc directory
+    for file_path in multidisc_files:
+        file_ext = file_path.suffix.lower()
+
+        # Parse .cue files in .multidisc
+        if file_ext == '.cue':
+            try:
+                referenced_bins = parse_cue_file(file_path)
+
+                if not referenced_bins:
+                    report.add_issue(
+                        "Cue/Gdi Issues",
+                        file_path,
+                        "Cue file in .multidisc contains no FILE references"
+                    )
+                    continue
+
+                # Check that all referenced files exist
+                for bin_filename in referenced_bins:
+                    bin_path = file_path.parent / bin_filename
+                    if not bin_path.exists():
+                        report.add_issue(
+                            "Cue/Gdi Issues",
+                            file_path,
+                            f"Cue file references non-existent file: {bin_filename}"
+                        )
+                    else:
+                        # Track referenced file
+                        referenced_files.add(bin_path)
+
+            except Exception as e:
+                report.add_issue(
+                    "Cue/Gdi Issues",
+                    file_path,
+                    f"Error parsing cue file: {e}"
+                )
+
+        # Parse .gdi files in .multidisc
+        elif file_ext == '.gdi':
+            try:
+                referenced_tracks = parse_gdi_file(file_path)
+
+                if not referenced_tracks:
+                    report.add_issue(
+                        "Cue/Gdi Issues",
+                        file_path,
+                        "GDI file in .multidisc contains no track references"
+                    )
+                    continue
+
+                # Check that all referenced files exist
+                for track_filename in referenced_tracks:
+                    track_path = file_path.parent / track_filename
+                    if not track_path.exists():
+                        report.add_issue(
+                            "Cue/Gdi Issues",
+                            file_path,
+                            f"GDI file references non-existent file: {track_filename}"
+                        )
+                    else:
+                        # Track referenced file
+                        referenced_files.add(track_path)
+
+            except Exception as e:
+                report.add_issue(
+                    "Cue/Gdi Issues",
+                    file_path,
+                    f"Error parsing gdi file: {e}"
+                )
+
     # Check for orphaned files in .multidisc directory
     if multidisc_dir.exists():
         for file_path in multidisc_files:
-            # Skip the M3U files themselves
-            if file_path.suffix.lower() == '.m3u':
+            file_ext = file_path.suffix.lower()
+
+            # Skip the M3U, .cue, and .gdi files themselves (they're the index files)
+            if file_ext in {'.m3u', '.cue', '.gdi'}:
                 continue
-            
-            # Check if file is referenced by any M3U
+
+            # Check if file is referenced by any M3U, .cue, or .gdi
             if file_path not in referenced_files:
                 report.add_issue(
                     "Orphaned Files",
                     file_path,
-                    "File in .multidisc directory is not referenced by any .m3u file"
+                    "File in .multidisc directory is not referenced by any .m3u, .cue, or .gdi file"
                 )
+
+    # Check for multi-disc files outside .multidisc directory
+    for file_path in misplaced_multidisc_files:
+        disc_num = extract_disc_number(file_path.name)
+        report.add_issue(
+            "Misplaced Multi-Disc",
+            file_path,
+            f"Multi-disc file (Disc {disc_num}) should be in .multidisc directory with corresponding .m3u file"
+        )
 
 
 def validate_cue_directories(report: SystemReport, system: SystemDefinition, verbose: bool):
@@ -495,8 +635,10 @@ def print_report(report: ValidationReport, verbose: bool = False):
             "Size Outliers",
             "Hidden Files",
             "M3U Issues",
+            "Cue/Gdi Issues",
             "Bin/Cue Issues",
             "Orphaned Files",
+            "Misplaced Multi-Disc",
             "Mixed Compression",
             "File Access Error"
         ]
