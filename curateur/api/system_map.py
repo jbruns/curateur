@@ -8,6 +8,8 @@ Generated from ScreenScraper systemesListe.xml API response.
 Last updated: 2025-01-15
 """
 
+# ref: https://gitlab.com/es-de/emulationstation-de/-/blob/master/es-app/src/scrapers/ScreenScraper.cpp
+
 # ES-DE platform -> ScreenScraper systemeid
 PLATFORM_SYSTEMEID_MAP = {
     '3do': 29,
@@ -38,6 +40,7 @@ PLATFORM_SYSTEMEID_MAP = {
     'c16': 99,
     'c64': 66,
     'c128': 66,
+    'cdimono1': 133,
     'channelf': 80,
     'colecovision': 48,
     'cps': 6,
@@ -115,8 +118,8 @@ PLATFORM_SYSTEMEID_MAP = {
     'ports': 135,
     'ps2': 58,
     'ps3': 59,
-    'ps4': 61,
-    'psp': 62,
+    'ps4': 60,
+    'psp': 61,
     'psvita': 62,
     'psx': 57,
     'pv1000': 74,
