@@ -578,13 +578,13 @@ class WorkflowOrchestrator:
                 # Check if we have cached data
                 from_cache = False
                 if self.api_client.cache:
-                    cached_data = self.api_client.cache.get(rom_hash, rom_size=rom_info.path.stat().st_size)
+                    cached_data = self.api_client.cache.get(rom_hash, rom_size=rom_info.file_size)
                     from_cache = cached_data is not None
 
                 source_label = "CACHED" if from_cache else "API"
                 logger.info(
                     f"[{rom_info.filename}] Fetching metadata [{source_label}] "
-                    f"(hash={rom_hash}, size={rom_info.path.stat().st_size})"
+                    f"(hash={rom_hash}, size={rom_info.file_size})"
                 )
                 logger.debug(
                     f"API request: hash={rom_hash}, "
