@@ -1677,7 +1677,7 @@ class WorkflowOrchestrator:
         # Pre-hash ROMs in batches for better throughput (feeds pipeline efficiently)
         logger.info(f"Pre-hashing {len(rom_entries)} ROMs in concurrent batches of 100")
         hash_algorithm = self.config.get('runtime', {}).get('hash_algorithm', 'crc32')
-        scrape_mode = self.scraping_config.get('scrape_mode', 'changed')
+        scrape_mode = self.config.get('scraping', {}).get('scrape_mode', 'changed')
         rom_entries = await self._batch_hash_roms(
             rom_entries,
             hash_algorithm,
