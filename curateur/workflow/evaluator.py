@@ -106,7 +106,7 @@ class WorkflowEvaluator:
             WorkflowDecision with actions to take
         """
         decision = WorkflowDecision()
-        
+
         # Step 1: Check scrape_mode for skip condition
         if self.scrape_mode == 'skip':
             if gamelist_entry is not None and rom_info.path.exists():
@@ -115,7 +115,16 @@ class WorkflowEvaluator:
                     f"Skipping {rom_info.filename}: {decision.skip_reason}"
                 )
                 return decision
-        
+
+        # Step 1b: For new_only mode, skip existing ROMs before hash check
+        if self.scrape_mode == 'new_only':
+            if gamelist_entry is not None:
+                decision.skip_reason = "scrape_mode is 'new_only'; ROM exists in gamelist"
+                logger.debug(
+                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
+                )
+                return decision
+
         # Step 2: Compare ROM hash with gamelist hash
         hash_matches = self._check_hash_match(rom_hash, gamelist_entry)
         
@@ -159,20 +168,13 @@ class WorkflowEvaluator:
                         f"Skipping {rom_info.filename}: {decision.skip_reason}"
                     )
                     return decision
-        
+
         elif self.scrape_mode == 'new_only':
-            if gamelist_entry is None:
-                # ROM not in gamelist - full scrape
-                decision.fetch_metadata = True
-                decision.update_metadata = True
-            else:
-                # ROM exists in gamelist - skip entirely (no validation)
-                decision.skip_reason = "scrape_mode is 'new_only'; ROM exists in gamelist"
-                logger.debug(
-                    f"Skipping {rom_info.filename}: {decision.skip_reason}"
-                )
-                return decision
-        
+            # ROM not in gamelist - full scrape
+            # (existing ROMs already handled in Step 1b)
+            decision.fetch_metadata = True
+            decision.update_metadata = True
+
         elif self.scrape_mode == 'skip':
             # Skip mode: Only validate media, never fetch metadata
             if gamelist_entry is None:

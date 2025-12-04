@@ -1504,7 +1504,9 @@ class WorkflowOrchestrator:
         self,
         rom_entries: List[ROMInfo],
         hash_algorithm: str,
-        batch_size: int = 100
+        batch_size: int = 100,
+        scrape_mode: str = 'changed',
+        existing_entries: List[GameEntry] = None
     ) -> List[ROMInfo]:
         """
         Hash ROMs in concurrent batches to feed the pipeline.
@@ -1516,6 +1518,8 @@ class WorkflowOrchestrator:
             rom_entries: List of ROM entries to hash
             hash_algorithm: Hash algorithm to use (crc32, md5, sha1, etc)
             batch_size: Number of ROMs to hash concurrently per batch
+            scrape_mode: Scrape mode to determine which ROMs need hashing
+            existing_entries: Existing gamelist entries for skip optimization
 
         Returns:
             List of ROMInfo objects with hash_value populated
@@ -1544,6 +1548,13 @@ class WorkflowOrchestrator:
                 # Skip if hash already calculated
                 if rom_info.hash_value:
                     continue
+
+                # Skip hash calculation for existing ROMs in new_only mode
+                if scrape_mode == 'new_only' and existing_entries:
+                    rom_relative_path = f"./{rom_info.filename}"
+                    if any(entry.path == rom_relative_path for entry in existing_entries):
+                        logger.debug(f"Skipping hash for existing ROM in new_only mode: {rom_info.filename}")
+                        continue
 
                 # Determine which file to hash based on ROM type
                 hash_file = None
@@ -1666,7 +1677,14 @@ class WorkflowOrchestrator:
         # Pre-hash ROMs in batches for better throughput (feeds pipeline efficiently)
         logger.info(f"Pre-hashing {len(rom_entries)} ROMs in concurrent batches of 100")
         hash_algorithm = self.config.get('runtime', {}).get('hash_algorithm', 'crc32')
-        rom_entries = await self._batch_hash_roms(rom_entries, hash_algorithm, batch_size=100)
+        scrape_mode = self.scraping_config.get('scrape_mode', 'changed')
+        rom_entries = await self._batch_hash_roms(
+            rom_entries,
+            hash_algorithm,
+            batch_size=100,
+            scrape_mode=scrape_mode,
+            existing_entries=existing_entries
+        )
         logger.info(
             "ROM hashing complete: %s hashed, %s skipped",
             sum(1 for r in rom_entries if r.hash_value),
