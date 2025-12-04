@@ -617,6 +617,112 @@ async def test_batch_hash_roms_empty_list(orchestrator, test_system):
     assert len(roms) == 0
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_batch_hash_roms_new_only_mode_skips_existing(orchestrator, test_system, tmp_path):
+    """Test that new_only mode skips hash calculation for existing ROMs."""
+    # Create test ROM files
+    rom_dir = tmp_path / "test_roms_new_only"
+    rom_dir.mkdir(parents=True)
+
+    # Create 5 ROM files
+    rom_files = []
+    for i in range(1, 6):
+        rom_file = rom_dir / f"game{i}.nes"
+        rom_file.write_bytes(b"TEST_ROM_DATA" * i)
+        rom_files.append(rom_file)
+
+    roms = [
+        ROMInfo(
+            path=rom_file,
+            filename=rom_file.name,
+            basename=rom_file.stem,
+            rom_type=ROMType.STANDARD,
+            system="nes",
+            query_filename=rom_file.name,
+            file_size=rom_file.stat().st_size,
+            hash_type="crc32",
+            hash_value=None,
+            crc_size_limit=1073741824  # 1 GiB
+        )
+        for rom_file in rom_files
+    ]
+
+    # Create existing gamelist entries for first 3 ROMs (game1, game2, game3)
+    existing_entries = [
+        GameEntry(path=f"./{roms[0].filename}", name="Game 1"),
+        GameEntry(path=f"./{roms[1].filename}", name="Game 2"),
+        GameEntry(path=f"./{roms[2].filename}", name="Game 3"),
+    ]
+
+    # Call _batch_hash_roms with new_only mode
+    await orchestrator._batch_hash_roms(
+        roms,
+        hash_algorithm="crc32",
+        batch_size=10,
+        scrape_mode='new_only',
+        existing_entries=existing_entries
+    )
+
+    # First 3 ROMs (existing in gamelist) should NOT be hashed
+    assert roms[0].hash_value is None, "game1.nes should not be hashed (exists in gamelist)"
+    assert roms[1].hash_value is None, "game2.nes should not be hashed (exists in gamelist)"
+    assert roms[2].hash_value is None, "game3.nes should not be hashed (exists in gamelist)"
+
+    # Last 2 ROMs (new, not in gamelist) SHOULD be hashed
+    assert roms[3].hash_value is not None, "game4.nes should be hashed (new ROM)"
+    assert roms[4].hash_value is not None, "game5.nes should be hashed (new ROM)"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_batch_hash_roms_changed_mode_hashes_all(orchestrator, test_system, tmp_path):
+    """Test that changed mode hashes all ROMs regardless of gamelist."""
+    # Create test ROM files
+    rom_dir = tmp_path / "test_roms_changed"
+    rom_dir.mkdir(parents=True)
+
+    rom_files = []
+    for i in range(1, 4):
+        rom_file = rom_dir / f"game{i}.nes"
+        rom_file.write_bytes(b"TEST_ROM_DATA" * i)
+        rom_files.append(rom_file)
+
+    roms = [
+        ROMInfo(
+            path=rom_file,
+            filename=rom_file.name,
+            basename=rom_file.stem,
+            rom_type=ROMType.STANDARD,
+            system="nes",
+            query_filename=rom_file.name,
+            file_size=rom_file.stat().st_size,
+            hash_type="crc32",
+            hash_value=None,
+            crc_size_limit=1073741824
+        )
+        for rom_file in rom_files
+    ]
+
+    # Create existing entries (but should still hash all in changed mode)
+    existing_entries = [
+        GameEntry(path=f"./{roms[0].filename}", name="Game 1"),
+    ]
+
+    # Call with changed mode (default)
+    await orchestrator._batch_hash_roms(
+        roms,
+        hash_algorithm="crc32",
+        batch_size=10,
+        scrape_mode='changed',
+        existing_entries=existing_entries
+    )
+
+    # All ROMs should be hashed in changed mode
+    for rom in roms:
+        assert rom.hash_value is not None
+
+
 # ============================================================================
 # Tests for _generate_gamelist
 # ============================================================================
