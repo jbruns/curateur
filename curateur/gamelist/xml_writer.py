@@ -55,8 +55,11 @@ class GamelistWriter:
         provider = self._create_provider_element()
         root.append(provider)
 
+        # Sort game entries by path (case-insensitive)
+        sorted_entries = sorted(game_entries, key=lambda e: (e.path or '').lower())
+
         # Add game entries
-        for entry in game_entries:
+        for entry in sorted_entries:
             game_elem = self._create_game_element(entry)
             root.append(game_elem)
 
