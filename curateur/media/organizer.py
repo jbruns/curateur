@@ -69,7 +69,7 @@ class MediaOrganizer:
         
         Handles special cases:
         - M3U playlists: Use M3U filename (not disc 1)
-        - Disc subdirectories: Use directory name (not contained file)
+        - Disc subdirectories: Use directory name including extension (e.g., "Armada (USA).cue")
         - Standard ROMs: Use filename without extension
         
         Args:
@@ -80,22 +80,20 @@ class MediaOrganizer:
             
         Examples:
             - "Skies of Aleria.m3u" -> "Skies of Aleria"
-            - "Skies (Disc 1).cue" (directory) -> "Skies (Disc 1).cue"
+            - "Armada (USA).cue/" (directory) -> "Armada (USA).cue"
             - "Star Quest.zip" -> "Star Quest"
         """
-        # Get filename/dirname
-        name = os.path.basename(rom_path)
+        path = Path(rom_path)
+        name = path.name
         
-        # Remove extension (unless it's a disc subdir with extension in name)
-        # Disc subdirs look like "Game (Disc 1).cue" (directory named like a file)
+        # For disc subdirectories (directories with extensions like .cue, .gdi),
+        # keep the full name including extension
+        if path.is_dir() and '.' in name:
+            return name
+        
+        # For regular files, remove the extension
         if '.' in name:
-            # Check if this looks like a disc subdir (has "disc" in name)
-            if 'disc' in name.lower() or 'disk' in name.lower():
-                # Keep the extension for disc subdirs
-                return name
-            else:
-                # Remove extension for normal files
-                return os.path.splitext(name)[0]
+            return os.path.splitext(name)[0]
         
         return name
     

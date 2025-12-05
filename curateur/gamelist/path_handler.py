@@ -173,9 +173,16 @@ class PathHandler:
         # Get filename from path
         name = os.path.basename(rom_path.lstrip('./'))
         
-        # Check if it's a disc subdirectory (has disc/disk in name)
-        if 'disc' in name.lower() or 'disk' in name.lower():
-            # Keep extension for disc subdirs
+        # Try to resolve the path to check if it's a directory
+        # Handle both relative (from gamelist) and absolute paths
+        if rom_path.startswith('./'):
+            full_path = self.rom_directory / rom_path.lstrip('./')
+        else:
+            full_path = Path(rom_path)
+        
+        # For disc subdirectories (directories with extensions like .cue, .gdi),
+        # keep the full name including extension
+        if full_path.is_dir() and '.' in name:
             return name
         
         # Remove extension for normal files

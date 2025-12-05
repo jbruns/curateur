@@ -28,17 +28,26 @@ def test_path_handler_relative_paths(tmp_path):
 
 
 def test_path_handler_media_and_basename(tmp_path):
-    handler = PathHandler(tmp_path / "roms", tmp_path / "media", tmp_path / "gamelists")
+    rom_dir = tmp_path / "roms"
+    rom_dir.mkdir(parents=True)
+    handler = PathHandler(rom_dir, tmp_path / "media", tmp_path / "gamelists")
 
     assert handler.normalize_path("a\\b\\c") == "a/b/c"
     assert handler.get_rom_basename("./Game.nes") == "Game"
-    assert handler.get_rom_basename("./Game (Disc 1).cue") == "Game (Disc 1).cue"
-
-    disc_dir = tmp_path / "roms" / "Game (Disc 1).cue"
+    
+    # Test disc subdirectory - need to create actual directory
+    disc_dir = rom_dir / "Game (Disc 1).cue"
     disc_dir.mkdir(parents=True)
+    assert handler.get_rom_basename("./Game (Disc 1).cue") == "Game (Disc 1).cue"
+    
+    # Test another disc subdirectory without "disc" in name
+    armada_dir = rom_dir / "Armada (USA).cue"
+    armada_dir.mkdir(parents=True)
+    assert handler.get_rom_basename("./Armada (USA).cue") == "Armada (USA).cue"
+
     assert handler.get_media_basename(disc_dir) == "Game (Disc 1).cue"
 
-    m3u = tmp_path / "roms" / "Game.m3u"
+    m3u = rom_dir / "Game.m3u"
     m3u.write_text("Track.bin")
     assert handler.get_media_basename(m3u) == "Game"
 
@@ -52,7 +61,7 @@ def test_path_handler_media_and_basename(tmp_path):
     # Relative media inside media dir should be ./ path
     media_dir = tmp_path / "media"
     media_dir.mkdir(exist_ok=True)
-    handler_media = PathHandler(tmp_path / "roms", media_dir, tmp_path / "gamelists")
+    handler_media = PathHandler(rom_dir, media_dir, tmp_path / "gamelists")
     media_file = media_dir / "covers" / "Game.png"
     media_file.parent.mkdir(parents=True, exist_ok=True)
     media_file.write_text("img")
