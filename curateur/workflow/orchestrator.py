@@ -552,12 +552,19 @@ class WorkflowOrchestrator:
             # Check if ROM should be skipped
             if decision.skip_reason:
                 logger.info(f"[{rom_info.filename}] Skipping: {decision.skip_reason}")
+
+                # Update UI: ROM skipped
+                if self.console_ui:
+                    self.console_ui.increment_completed(skipped=True)
+
+                # Preserve existing gamelist entry for skipped ROMs
                 return ScrapingResult(
                     rom_path=rom_info.path,
                     success=True,
                     error=None,
                     skipped=True,
-                    skip_reason=decision.skip_reason
+                    skip_reason=decision.skip_reason,
+                    game_entry=gamelist_entry  # Preserve existing entry
                 )
 
             # Step 4: Query API (hash-based lookup) - only if needed
@@ -1787,16 +1794,24 @@ class WorkflowOrchestrator:
 
             logger.info(f"All pipeline tasks completed ({len(task_results)} results)")
 
-            # Convert task results to our expected format
+            # Deduplicate results by ROM path (keep last result for each ROM to handle retries)
+            # This ensures that retried ROMs only count once in final statistics
+            results_by_path = {}
             for rom_info, result in task_results:
+                # Use string path as key for deduplication
+                path_key = str(result.rom_path)
+                results_by_path[path_key] = result
+
+            # Convert deduplicated results to list
+            for result in results_by_path.values():
                 rom_count += 1
                 results.append(result)
 
                 # Track not found items
                 if not result.success and result.error == "No game info found from API":
                     not_found_items.append({
-                        'filename': rom_info.filename,
-                        'path': str(rom_info.path)
+                        'filename': result.rom_path.name,
+                        'path': str(result.rom_path)
                     })
 
             # Final UI update after all results collected
@@ -1981,12 +1996,21 @@ class WorkflowOrchestrator:
         scraped_games = []
 
         for result in results:
+            # Include successful scrapes and skipped ROMs with existing entries
             if result.success and result.game_info:
                 scraped_games.append({
                     'rom_path': result.rom_path,
                     'game_info': result.game_info,
                     'media_paths': result.media_paths or {},
                     'game_entry': result.game_entry  # Pass pre-merged entry
+                })
+            elif result.skipped and result.game_entry:
+                # Preserve existing entries for skipped ROMs (e.g., in new_only mode)
+                scraped_games.append({
+                    'rom_path': result.rom_path,
+                    'game_info': None,
+                    'media_paths': {},
+                    'game_entry': result.game_entry  # Preserve existing entry
                 })
 
         # Generate gamelist (merge with existing if present)

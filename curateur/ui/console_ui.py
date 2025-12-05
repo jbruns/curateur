@@ -751,14 +751,17 @@ class ConsoleUI:
         self.pipeline_stages['system']['removed'] += 1
         self._render_pipeline_panel()
 
-    def increment_completed(self, success: bool = True) -> None:
+    def increment_completed(self, success: bool = True, skipped: bool = False) -> None:
         """
         Increment completed ROM counter
 
         Args:
             success: True if ROM was successfully scraped, False if failed
+            skipped: True if ROM was skipped (takes precedence over success)
         """
-        if success:
+        if skipped:
+            self.pipeline_stages['completed']['skipped'] += 1
+        elif success:
             self.pipeline_stages['completed']['success'] += 1
         else:
             self.pipeline_stages['completed']['failed'] += 1
@@ -840,7 +843,7 @@ class ConsoleUI:
                 'by_type': {},
                 'total_downloads': 0
             },
-            'completed': {'success': 0, 'failed': 0},
+            'completed': {'success': 0, 'failed': 0, 'skipped': 0},
             'system_operation': {'active': False, 'operation': '', 'details': ''}
         }
 
@@ -1352,7 +1355,8 @@ class ConsoleUI:
             completed = self.pipeline_stages['completed']
             success_count = completed['success']
             failed_count = completed['failed']
-            total_completed = success_count + failed_count
+            skipped_count = completed.get('skipped', 0)
+            total_completed = success_count + failed_count + skipped_count
 
             if scanner_count > 0:
                 progress_pct = int((total_completed / scanner_count * 100)) if scanner_count > 0 else 0
