@@ -535,7 +535,8 @@ class WorkflowOrchestrator:
             decision = self.evaluator.evaluate_rom(
                 rom_info=rom_info,
                 gamelist_entry=gamelist_entry,
-                rom_hash=rom_hash
+                rom_hash=rom_hash,
+                system=system
             )
 
             # Log evaluator decision at DEBUG level

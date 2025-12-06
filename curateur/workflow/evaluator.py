@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from curateur.gamelist.game_entry import GameEntry
-from curateur.scanner.rom_types import ROMInfo
+from curateur.scanner.rom_types import ROMInfo, ROMType
 from curateur.media.media_types import to_singular
+from curateur.tools.organize_roms import split_base_and_disc
+from curateur.config.es_systems import SystemDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,9 @@ class WorkflowEvaluator:
         self.clean_mismatched_media = self.media_config.get('clean_mismatched_media', False)
         self.hash_algorithm = self.runtime_config.get('hash_algorithm', 'crc32')
         self.validation_mode = self.media_config.get('validation_mode', 'disabled')
+
+        # Get disc filtering setting
+        self.filter_non_disc1 = self.scraping_config.get('filter_non_disc1', False)
         
         # Media types (convert to singular for consistency)
         self.enabled_media_types = self._convert_to_singular(
@@ -87,25 +92,84 @@ class WorkflowEvaluator:
             except ValueError:
                 logger.warning(f"Unknown media type: {plural_type}")
         return singular_types
-    
+
+    def _should_filter_disc(
+        self,
+        rom_info: ROMInfo,
+        system: SystemDefinition
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Check if ROM should be filtered due to disc number.
+
+        Args:
+            rom_info: ROM information
+            system: System definition
+
+        Returns:
+            Tuple of (should_filter: bool, skip_reason: Optional[str])
+        """
+        # Only apply filtering if enabled in config
+        if not self.filter_non_disc1:
+            return False, None
+
+        # Don't filter M3U playlists themselves
+        if rom_info.rom_type == ROMType.M3U_PLAYLIST:
+            return False, None
+
+        # Don't filter on systems that support M3U (they should use playlists)
+        if system.supports_m3u():
+            return False, None
+
+        # Extract disc number from filename/basename
+        # For DISC_SUBDIR: rom_info.filename is directory name (e.g., "Game (Disc 2).cue")
+        # For STANDARD: rom_info.filename is the file (e.g., "Game (Disc 2).bin")
+        filename_to_check = rom_info.basename or rom_info.filename
+        base_name, disc_number = split_base_and_disc(
+            Path(filename_to_check).stem
+        )
+
+        # If no disc number detected, don't filter (might be single-disc game)
+        if disc_number is None:
+            return False, None
+
+        # Filter if disc number > 1
+        if disc_number > 1:
+            reason = (
+                f"filter_non_disc1 enabled; system '{system.name}' doesn't support M3U; "
+                f"disc {disc_number} > 1"
+            )
+            return True, reason
+
+        # Disc 1 or first disc - process normally
+        return False, None
+
     def evaluate_rom(
         self,
         rom_info: ROMInfo,
         gamelist_entry: Optional[GameEntry],
-        rom_hash: Optional[str]
+        rom_hash: Optional[str],
+        system: SystemDefinition
     ) -> WorkflowDecision:
         """
         Evaluate a ROM to determine workflow actions.
-        
+
         Args:
             rom_info: Information about the ROM file
             gamelist_entry: Existing gamelist entry (None if not in gamelist)
             rom_hash: Calculated hash of the ROM file
-        
+            system: System definition for the ROM
+
         Returns:
             WorkflowDecision with actions to take
         """
         decision = WorkflowDecision()
+
+        # Check disc filtering (before any other processing)
+        should_filter, filter_reason = self._should_filter_disc(rom_info, system)
+        if should_filter:
+            decision.skip_reason = filter_reason
+            logger.debug(f"Filtering {rom_info.filename}: {filter_reason}")
+            return decision
 
         # Step 1: Check scrape_mode for skip condition
         if self.scrape_mode == 'skip':

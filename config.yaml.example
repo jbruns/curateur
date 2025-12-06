@@ -107,6 +107,13 @@ scraping:
   # Note: strict=exact, normal=normalized, lenient=fuzzy, disabled=skip check
   name_verification: normal
 
+  # Filter multi-disc entries on systems without M3U support
+  # Purpose: Only create gamelist entry for Disc 1 when system doesn't support M3U
+  # Valid: true | false
+  # Default: false
+  # Note: Systems with .m3u support are unaffected (M3U playlists handle multi-disc)
+  filter_non_disc1: false
+
 media:
   # Media types to download
   # Purpose: Defines which media assets to download from ScreenScraper

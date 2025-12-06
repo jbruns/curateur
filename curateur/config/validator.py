@@ -161,6 +161,11 @@ def _validate_scraping(section: Dict[str, Any]) -> List[str]:
         if not isinstance(section['auto_sortname_enabled'], bool):
             errors.append("scraping.auto_sortname_enabled must be a boolean")
 
+    # Validate filter_non_disc1
+    if 'filter_non_disc1' in section:
+        if not isinstance(section['filter_non_disc1'], bool):
+            errors.append("scraping.filter_non_disc1 must be a boolean")
+
     # Validate name_verification
     if 'name_verification' in section:
         verification = section['name_verification']
