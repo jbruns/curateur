@@ -22,6 +22,8 @@ from typing import List, Dict, Tuple
 from collections import defaultdict
 import shutil
 
+from lxml import etree
+
 from curateur.gamelist.parser import GamelistParser
 from curateur.gamelist.xml_writer import GamelistWriter
 from curateur.gamelist.game_entry import GameEntry, GamelistMetadata
@@ -112,6 +114,55 @@ def deduplicate_multidisc(entries: List[GameEntry], dry_run: bool = False) -> Tu
     return kept_entries, removed_entries
 
 
+def parse_gamelist_metadata(gamelist_path: Path) -> GamelistMetadata:
+    """
+    Parse metadata from existing gamelist.xml.
+
+    Args:
+        gamelist_path: Path to gamelist.xml file
+
+    Returns:
+        GamelistMetadata object
+    """
+    tree = etree.parse(str(gamelist_path))
+    root = tree.getroot()
+
+    # Try to get provider info from existing gamelist
+    provider = root.find("provider")
+    if provider is not None:
+        system_elem = provider.find("System")
+        software_elem = provider.find("Software")
+        database_elem = provider.find("Database")
+        web_elem = provider.find("Web")
+
+        system = system_elem.text if system_elem is not None and system_elem.text else None
+        software = software_elem.text if software_elem is not None and software_elem.text else "curateur"
+        database = database_elem.text if database_elem is not None and database_elem.text else "ScreenScraper.fr"
+        web = web_elem.text if web_elem is not None and web_elem.text else "http://www.screenscraper.fr"
+    else:
+        system = None
+        software = "curateur"
+        database = "ScreenScraper.fr"
+        web = "http://www.screenscraper.fr"
+
+    # If system not in provider, try to infer from path
+    # e.g., /path/to/gamelists/gc/gamelist.xml -> gc
+    if not system:
+        parts = gamelist_path.parts
+        # Look for parent directory name (assumes structure like .../gamelists/SYSTEM/gamelist.xml)
+        if len(parts) >= 2 and gamelist_path.name == "gamelist.xml":
+            system = parts[-2]  # Parent directory
+        else:
+            system = "unknown"
+
+    return GamelistMetadata(
+        system=system,
+        software=software,
+        database=database,
+        web=web
+    )
+
+
 def process_gamelist(
     gamelist_path: Path,
     dry_run: bool = False,
@@ -132,7 +183,14 @@ def process_gamelist(
         print(f"ERROR: File not found: {gamelist_path}")
         return
 
-    # Parse gamelist
+    # Parse gamelist metadata
+    try:
+        metadata = parse_gamelist_metadata(gamelist_path)
+    except Exception as e:
+        print(f"ERROR: Failed to parse gamelist metadata: {e}")
+        return
+
+    # Parse gamelist entries
     parser = GamelistParser()
     try:
         entries = parser.parse_gamelist(gamelist_path)
@@ -161,12 +219,7 @@ def process_gamelist(
                 shutil.copy2(gamelist_path, backup_path)
                 print(f"\nBackup created: {backup_path}")
 
-            # Write cleaned gamelist
-            # Use default metadata
-            metadata = GamelistMetadata(
-                provider_name="ScreenScraper",
-                provider_url="https://www.screenscraper.fr"
-            )
+            # Write cleaned gamelist (using parsed metadata)
             writer = GamelistWriter(metadata)
             writer.write_gamelist(kept_entries, gamelist_path)
             print(f"\nCleaned gamelist written: {gamelist_path}")
