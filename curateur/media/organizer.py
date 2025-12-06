@@ -66,18 +66,18 @@ class MediaOrganizer:
     def get_rom_basename(self, rom_path: str) -> str:
         """
         Extract basename from ROM path for media naming.
-        
+
         Handles special cases:
         - M3U playlists: Use M3U filename (not disc 1)
         - Disc subdirectories: Use directory name including extension (e.g., "Armada (USA).cue")
         - Standard ROMs: Use filename without extension
-        
+
         Args:
             rom_path: Path to ROM file or directory
-            
+
         Returns:
             Basename for media file naming
-            
+
         Examples:
             - "Skies of Aleria.m3u" -> "Skies of Aleria"
             - "Armada (USA).cue/" (directory) -> "Armada (USA).cue"
@@ -85,16 +85,29 @@ class MediaOrganizer:
         """
         path = Path(rom_path)
         name = path.name
-        
+
         # For disc subdirectories (directories with extensions like .cue, .gdi),
         # keep the full name including extension
         if path.is_dir() and '.' in name:
             return name
-        
+
+        # For files inside disc subdirectories, use the parent directory name
+        # Disc subdirectory structure:
+        #   Game.cue/          <- parent directory (has extension in name)
+        #   └── Game.cue       <- file with same name as parent
+        parent = path.parent
+        parent_name = parent.name
+
+        # Check if parent is a disc subdirectory:
+        # 1. Parent has an extension in its name (e.g., "Game.cue")
+        # 2. File has the same name as its parent directory
+        if parent.is_dir() and '.' in parent_name and path.name == parent_name:
+            return parent_name
+
         # For regular files, remove the extension
         if '.' in name:
             return os.path.splitext(name)[0]
-        
+
         return name
     
     def ensure_directory_exists(self, file_path: Path) -> None:
