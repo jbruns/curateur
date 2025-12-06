@@ -3,6 +3,7 @@ import pytest
 from curateur.workflow.evaluator import WorkflowEvaluator, WorkflowDecision
 from curateur.gamelist.game_entry import GameEntry
 from curateur.scanner.rom_types import ROMInfo, ROMType
+from curateur.config.es_systems import SystemDefinition
 
 
 def _config(scrape_mode="changed"):
@@ -25,14 +26,30 @@ def _rom():
     )
 
 
+def _system(supports_m3u=False):
+    """Create a mock system definition."""
+    extensions = ['.nes', '.zip']
+    if supports_m3u:
+        extensions.append('.m3u')
+
+    return SystemDefinition(
+        name="nes",
+        fullname="Nintendo Entertainment System",
+        path="%ROMPATH%/nes",
+        extensions=extensions,
+        platform="nes"
+    )
+
+
 @pytest.mark.unit
 def test_evaluator_changed_mode_skips_when_hash_matches():
     evaluator = WorkflowEvaluator(_config(scrape_mode="changed"))
     rom = _rom()
     entry = GameEntry(path="./Alpha.nes", name="Alpha")
+    system = _system()
 
     # No cache/hashes stored: treat as changed, so should fetch
-    decision = evaluator.evaluate_rom(rom, entry, rom_hash="ABC")
+    decision = evaluator.evaluate_rom(rom, entry, rom_hash="ABC", system=system)
     assert decision.fetch_metadata is True
     assert decision.update_metadata is True
 
@@ -41,7 +58,8 @@ def test_evaluator_changed_mode_skips_when_hash_matches():
 def test_evaluator_force_always_fetches():
     evaluator = WorkflowEvaluator(_config(scrape_mode="force"))
     rom = _rom()
-    decision = evaluator.evaluate_rom(rom, gamelist_entry=None, rom_hash=None)
+    system = _system()
+    decision = evaluator.evaluate_rom(rom, gamelist_entry=None, rom_hash=None, system=system)
     assert decision.fetch_metadata is True
     assert decision.update_metadata is True
     assert "cover" in decision.media_to_download
@@ -52,8 +70,9 @@ def test_evaluator_new_only_skips_existing():
     evaluator = WorkflowEvaluator(_config(scrape_mode="new_only"))
     rom = _rom()
     entry = GameEntry(path="./Alpha.nes", name="Alpha")
+    system = _system()
 
-    decision = evaluator.evaluate_rom(rom, entry, rom_hash=None)
+    decision = evaluator.evaluate_rom(rom, entry, rom_hash=None, system=system)
     assert decision.fetch_metadata is False
     assert decision.skip_reason
 
@@ -75,9 +94,10 @@ def test_evaluator_disabled_mode_skips_existing_media():
 
     evaluator = WorkflowEvaluator(config, cache=mock_cache)
     rom = _rom()
+    system = _system()
 
     # New ROM (no gamelist entry) but media already exists in cache
-    decision = evaluator.evaluate_rom(rom, gamelist_entry=None, rom_hash="ROMHASH123")
+    decision = evaluator.evaluate_rom(rom, gamelist_entry=None, rom_hash="ROMHASH123", system=system)
 
     # Should fetch metadata for new ROM
     assert decision.fetch_metadata is True
