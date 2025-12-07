@@ -78,12 +78,10 @@ def reset_favorites(
         if should_be_favorite:
             # Should be favorite
             if favorite_elem is None:
-                # Add favorite element after rating
+                # Add favorite element as last child
                 favorite_elem = etree.Element('favorite')
                 favorite_elem.text = 'true'
-                # Insert after rating element
-                rating_index = list(game).index(rating_elem)
-                game.insert(rating_index + 1, favorite_elem)
+                game.append(favorite_elem)
                 favorites_added += 1
             elif favorite_elem.text != 'true':
                 # Update existing to true
