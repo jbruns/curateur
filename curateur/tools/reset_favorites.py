@@ -38,7 +38,7 @@ def reset_favorites(
         raise FileNotFoundError(f"Gamelist not found: {gamelist_path}")
     
     # Parse XML
-    parser = etree.XMLParser(remove_blank_text=False)
+    parser = etree.XMLParser(remove_blank_text=True)
     tree = etree.parse(str(gamelist_path), parser)
     root = tree.getroot()
     
