@@ -1,0 +1,512 @@
+/* ============================================================================
+   Textual Theme for Curateur - Retro Style
+   ============================================================================
+
+   This theme matches the Rich UI's retro color palette:
+   - Primary: magenta
+   - Secondary: cyan
+   - Accent: bright_magenta
+   - Success: bright_green
+   - Warning: yellow
+   - Error: red
+============================================================================ */
+
+/* ============================================================================
+   Global Styles
+============================================================================ */
+
+Screen {
+    background: $surface;
+}
+
+Header {
+    background: $primary;
+    color: white;
+    text-style: bold;
+}
+
+Footer {
+    background: $surface;
+    color: $accent;
+}
+
+/* ============================================================================
+   Tabbed Content
+============================================================================ */
+
+TabbedContent {
+    border: solid $primary;
+    background: $surface;
+}
+
+TabbedContent > ContentSwitcher {
+    background: $surface;
+    padding: 1;
+}
+
+Tabs {
+    background: $surface-darken-1;
+}
+
+Tab {
+    background: $surface-darken-1;
+    color: $secondary;
+    text-style: bold;
+}
+
+Tab:hover {
+    background: $surface;
+}
+
+Tab.-active {
+    background: $primary;
+    color: white;
+}
+
+TabPane {
+    background: $surface;
+    padding: 1;
+}
+
+/* ============================================================================
+   Overview Tab Widgets
+============================================================================ */
+
+/* Two-column layout */
+#left-column {
+    width: 25%;
+    height: 100%;
+}
+
+#right-column {
+    width: 75%;
+    height: 100%;
+    padding: 0 0 0 1;
+}
+
+#overall-progress {
+    border: round $primary;
+    border-title-align: left;
+    background: $surface-darken-1;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    height: 6;
+}
+
+#overall-progress-header {
+    background: transparent;
+    margin: 0 0 0 0;
+}
+
+#overall-progress-bar {
+    margin: 0 0 0 0;
+}
+
+#current-system {
+    border: round $accent;
+    border-title-align: left;
+    background: $surface-darken-1;
+    padding: 1 2;
+    margin: 0 0 0 0;
+    height: 1fr;
+}
+
+#current-system Rule {
+    color: $accent;
+    margin: 0 0 0 0;
+}
+
+#hashing-content, #cache-content, #gamelist-content, #api-content, #media-content {
+    background: transparent;
+    margin: 0 0 1 0;
+    padding: 0 1;
+}
+
+#spotlight {
+    border: round $secondary;
+    border-title-align: right;
+    background: $surface-darken-1;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    height: 1fr;
+}
+
+#performance {
+    border: round $success;
+    border-title-align: right;
+    background: $surface-darken-1;
+    padding: 1 2;
+    height: 8;
+}
+
+#performance Static {
+    background: transparent;
+    margin: 0 0 0 0;
+}
+
+/* ============================================================================
+   Details Tab Widgets
+============================================================================ */
+
+#filterable-logs {
+    border: round $primary;
+    border-title-align: right;
+    background: $surface-darken-1;
+    padding: 1;
+    margin: 0 0 1 0;
+    height: 65%;
+}
+
+#log-filter {
+    border: solid $accent;
+    background: $surface;
+    margin: 0 0 1 0;
+}
+
+#log-filter:focus {
+    border: solid $success;
+}
+
+#logs {
+    border: solid $secondary;
+    background: $surface;
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $primary;
+}
+
+#active-requests {
+    border: round $accent;
+    border-title-align: right;
+    background: $surface-darken-1;
+    padding: 1;
+    height: 1fr;
+}
+
+/* ============================================================================
+   Systems Tab Widgets
+============================================================================ */
+
+#systems-tree {
+    width: 35;
+    border: round $primary;
+    border-title-align: right;
+    background: $surface-darken-1;
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $primary;
+}
+
+#systems-tree:focus {
+    border: round $success;
+}
+
+#systems-tree > Tree {
+    background: $surface-darken-1;
+}
+
+#system-detail-panel {
+    border: round $secondary;
+    border-title-align: right;
+    background: $surface;
+    padding: 1 2;
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $accent;
+}
+
+#system-detail-content {
+    background: transparent;
+}
+
+/* ============================================================================
+   Tree Widgets
+============================================================================ */
+
+Tree {
+    background: $surface-darken-1;
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $primary;
+}
+
+Tree > .tree--cursor {
+    background: $primary;
+    color: white;
+}
+
+Tree:focus > .tree--cursor {
+    background: $accent;
+    color: black;
+}
+
+Tree > .tree--guides {
+    color: $secondary;
+}
+
+Tree > .tree--guides-hover {
+    color: $accent;
+}
+
+Tree > .tree--guides-selected {
+    color: $success;
+}
+
+/* ============================================================================
+   Data Tables
+============================================================================ */
+
+DataTable {
+    border: none;
+    background: $surface;
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $accent;
+}
+
+DataTable > .datatable--header {
+    background: $primary;
+    color: white;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent;
+    color: black;
+}
+
+DataTable:focus > .datatable--cursor {
+    background: $success;
+    color: black;
+}
+
+/* ============================================================================
+   Progress Bars
+============================================================================ */
+
+ProgressBar {
+    border: none;
+    background: $surface;
+}
+
+ProgressBar > .bar--bar {
+    color: $success;
+}
+
+ProgressBar > .bar--complete {
+    color: $success;
+}
+
+ProgressBar > .bar--indeterminate {
+    color: $accent;
+}
+
+/* ============================================================================
+   Rich Log
+============================================================================ */
+
+RichLog {
+    border: none;
+    background: $surface;
+    color: white;
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $primary;
+}
+
+/* ============================================================================
+   Input Widgets
+============================================================================ */
+
+Input {
+    border: solid $accent;
+    background: $surface;
+    color: white;
+}
+
+Input:focus {
+    border: solid $success;
+}
+
+Input.-invalid {
+    border: solid $error;
+}
+
+/* ============================================================================
+   Static Widgets
+============================================================================ */
+
+Static {
+    background: transparent;
+    color: white;
+}
+
+/* ============================================================================
+   Container Widgets
+============================================================================ */
+
+Container {
+    background: transparent;
+}
+
+/* ============================================================================
+   Config Tab Widgets
+============================================================================ */
+
+#config-columns {
+    width: 100%;
+    height: 100%;
+}
+
+#config-left-column {
+    width: 50%;
+    height: 100%;
+    padding: 0 1 0 0;
+}
+
+#config-right-column {
+    width: 50%;
+    height: 100%;
+    padding: 0 0 0 1;
+}
+
+.config-section {
+    background: $surface-darken-1;
+    border: round $secondary;
+    border-title-align: right;
+    padding: 1;
+    margin: 0 0 1 0;
+}
+
+#api-settings-section {
+    border: round $primary;
+}
+
+#runtime-settings-section {
+    border: round $accent;
+}
+
+#logging-settings-section {
+    border: round $secondary;
+}
+
+#search-settings-section {
+    border: round $success;
+}
+
+.config-row {
+    height: auto;
+    align: left middle;
+    margin: 0 0 0 0;
+}
+
+.config-label {
+    width: 22;
+    color: $secondary;
+    content-align: left middle;
+}
+
+/* Switch Widgets */
+Switch {
+    background: $surface;
+    border: solid $primary;
+}
+
+Switch:focus {
+    border: solid $success;
+}
+
+Switch > .switch--slider {
+    color: $error;
+}
+
+Switch.-on > .switch--slider {
+    color: $success;
+}
+
+/* Select Widgets */
+Select {
+    background: $surface;
+    border: solid $primary;
+}
+
+Select:focus {
+    border: solid $success;
+}
+
+Select > SelectCurrent {
+    background: $surface;
+    color: $secondary;
+}
+
+Select > SelectCurrent:hover {
+    background: $primary;
+    color: white;
+}
+
+SelectOverlay {
+    background: $surface-darken-1;
+    border: solid $accent;
+}
+
+SelectOverlay > .option-list--option {
+    background: $surface;
+    color: white;
+}
+
+SelectOverlay > .option-list--option-highlighted {
+    background: $primary;
+    color: white;
+}
+
+SelectOverlay > .option-list--option-hover {
+    background: $accent;
+    color: black;
+}
+
+SelectOverlay > .option-list--option-selected {
+    background: $success;
+    color: black;
+}
+
+/* Button Widgets */
+Button {
+    min-width: 20;
+    margin: 0 1 0 0;
+}
+
+Button:hover {
+    border: solid $success;
+}
+
+Button.-primary {
+    background: $primary;
+    color: white;
+    border: solid $primary;
+}
+
+Button.-warning {
+    background: $warning;
+    color: black;
+    border: solid $warning;
+}
+
+Button.-error {
+    background: $error;
+    color: white;
+    border: solid $error;
+}
+
+Button.-success {
+    background: $success;
+    color: black;
+    border: solid $success;
+}
+
+/* ============================================================================
+   Color Variables
+============================================================================ */
+
+$primary: ansi_magenta;
+$secondary: ansi_cyan;
+$accent: ansi_bright_magenta;
+$success: ansi_bright_green;
+$warning: ansi_yellow;
+$error: ansi_red;
+$surface: #1a1a1a;
+$surface-darken-1: #0d0d0d;
+$text: ansi_white;
