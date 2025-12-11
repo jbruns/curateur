@@ -531,6 +531,23 @@ class ScreenScraperClient:
                 self.cache.put(crc, game_data, rom_size=romtaille)
                 logger.debug(f"Cached response for {romnom} (hash={crc}, size={romtaille})")
 
+            # Emit APIActivityEvent when request completes (still inside semaphore)
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight after this completes
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value - 1
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=max(0, in_flight),
+                            metadata_total=1,  # Signal completion
+                            search_in_flight=0,
+                            search_total=0
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
+
             return game_data
 
     async def search_game(
@@ -783,6 +800,23 @@ class ScreenScraperClient:
                 results = parse_search_results(root, self.preferred_language)
             except ResponseError as e:
                 raise SkippableAPIError(str(e))
+
+            # Emit APIActivityEvent when search request completes
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight after this completes
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value - 1
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=0,
+                            metadata_total=0,
+                            search_in_flight=max(0, in_flight),
+                            search_total=1  # Signal completion
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
 
             return results
 
