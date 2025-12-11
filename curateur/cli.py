@@ -116,13 +116,15 @@ For more information, see IMPLEMENTATION_PLAN.md
     return parser
 
 
-def _setup_logging(config: dict, console_ui=None) -> None:
+def _setup_logging(config: dict, console_ui=None, textual_ui=None, event_bus=None) -> None:
     """
     Setup logging configuration from config.
 
     Args:
         config: Configuration dictionary
         console_ui: Optional ConsoleUI instance for integrated logging
+        textual_ui: Optional CurateurUI instance for Textual UI
+        event_bus: Optional EventBus instance for Textual UI logging
     """
     logging_config = config.get('logging', {})
 
@@ -134,7 +136,8 @@ def _setup_logging(config: dict, console_ui=None) -> None:
     handlers = []
 
     # Console handler - use RichHandler to integrate with Rich UI
-    if logging_config.get('console', True):
+    # Disable console output when Textual UI is active (it has its own display)
+    if logging_config.get('console', True) and not textual_ui:
         if console_ui:
             # Use RichHandler when UI is active
             console_handler = RichHandler(
@@ -165,6 +168,14 @@ def _setup_logging(config: dict, console_ui=None) -> None:
             handlers.append(ui_handler)
             # Store reference in console_ui for cleanup
             console_ui.log_handler = ui_handler
+    
+    # Textual UI handler - use EventLogHandler to send logs to event bus
+    if textual_ui and event_bus:
+        from curateur.ui.event_log_handler import EventLogHandler
+        event_handler = EventLogHandler(event_bus, level=level)
+        event_formatter = logging.Formatter('%(message)s')
+        event_handler.setFormatter(event_formatter)
+        handlers.append(event_handler)
 
     # File handler (if configured)
     log_file = logging_config.get('file')
@@ -221,6 +232,7 @@ def main(argv: Optional[list] = None) -> int:
         return 1
 
     # Setup initial logging from config (will be reconfigured if UI is enabled)
+    # Note: We'll reconfigure this after UI initialization
     _setup_logging(config)
 
     # Apply CLI overrides
@@ -347,6 +359,11 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             try:
                 textual_ui = CurateurUI(config, event_bus)
                 logger.debug("Textual UI initialized successfully")
+                
+                # Reconfigure logging to use EventLogHandler for Textual UI
+                _setup_logging(config, textual_ui=textual_ui, event_bus=event_bus)
+                logger.debug("Logging reconfigured for Textual UI")
+                
                 # Start Textual UI in background task immediately
                 logger.info("Starting Textual UI in background task...")
                 textual_ui_task = asyncio.create_task(textual_ui.run_async())
