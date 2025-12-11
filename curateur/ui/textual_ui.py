@@ -131,11 +131,26 @@ class CurrentSystemOperations(Container):
     media_downloaded = reactive(0)
     media_failed = reactive(0)
     
+    # Cache statistics
+    cache_hit_rate = reactive(0.0)
+    cache_existing = reactive(0)
+    cache_new = reactive(0)
+    
+    # Gamelist statistics
+    gamelist_existing = reactive(0)
+    gamelist_added = reactive(0)
+    gamelist_updated = reactive(0)
+    gamelist_removed = reactive(0)
+    
     # Spinner animation frame counter
     spinner_frame = 0
 
     def compose(self) -> ComposeResult:
         yield Static(id="hashing-content")
+        yield Rule(line_style="heavy")
+        yield Static(id="cache-content")
+        yield Rule(line_style="heavy")
+        yield Static(id="gamelist-content")
         yield Rule(line_style="heavy")
         yield Static(id="api-content")
         yield Rule(line_style="heavy")
@@ -167,6 +182,8 @@ class CurrentSystemOperations(Container):
     def update_display(self) -> None:
         """Render all sections."""
         self.update_hashing()
+        self.update_cache()
+        self.update_gamelist()
         self.update_api()
         self.update_media()
 
@@ -195,6 +212,27 @@ class CurrentSystemOperations(Container):
             hash_content.append(f" ⊝ {self.hash_skipped}", style="dim yellow")
 
         self.query_one("#hashing-content", Static).update(hash_content)
+    
+    def update_cache(self) -> None:
+        """Update cache section."""
+        cache_content = Text()
+        cache_content.append("Cache\n", style="bold cyan")
+        cache_content.append(f"{self.cache_hit_rate:.1%} Hit Rate", style="bright_magenta")
+        cache_content.append(f"\n✓ {self.cache_existing} ", style="white")
+        cache_content.append(f"+ {self.cache_new}", style="bright_green")
+        
+        self.query_one("#cache-content", Static).update(cache_content)
+    
+    def update_gamelist(self) -> None:
+        """Update gamelist section."""
+        gamelist_content = Text()
+        gamelist_content.append("Gamelist\n", style="bold cyan")
+        gamelist_content.append(f"✓ {self.gamelist_existing} ", style="white")
+        gamelist_content.append(f"+ {self.gamelist_added} ", style="bright_green")
+        gamelist_content.append(f"− {self.gamelist_removed} ", style="red")
+        gamelist_content.append(f"↻ {self.gamelist_updated}", style="yellow")
+        
+        self.query_one("#gamelist-content", Static).update(gamelist_content)
 
     def update_api(self) -> None:
         """Update API section."""
@@ -347,7 +385,6 @@ class PerformancePanel(Container):
     quota_limit = reactive(0)
     threads_in_use = reactive(0)
     threads_limit = reactive(0)
-    cache_hit_rate = reactive(0.0)
 
     def compose(self) -> ComposeResult:
         yield Static(id="throughput")
@@ -404,8 +441,7 @@ class PerformancePanel(Container):
     def update_threads(self) -> None:
         """Update threads line."""
         self.query_one("#threads-info", Static).update(
-            f"[bold]Threads:[/bold] {self.threads_in_use}/{self.threads_limit} | "
-            f"[bold]Cache Hit Rate:[/bold] {self.cache_hit_rate:.1%}"
+            f"[bold]Threads:[/bold] {self.threads_in_use}/{self.threads_limit}"
         )
 
     def update_quota(self) -> None:
