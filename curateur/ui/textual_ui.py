@@ -11,7 +11,7 @@ from typing import Optional, List
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     Header,
@@ -24,7 +24,6 @@ from textual.widgets import (
     Select,
     Switch,
     Label,
-    VerticalScroll,
     Button,
     ListView,
     ListItem,
