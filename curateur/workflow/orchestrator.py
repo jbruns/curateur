@@ -645,8 +645,9 @@ class WorkflowOrchestrator:
                     await self.event_bus.publish(
                         ROMProgressEvent(
                             rom_name=rom_info.filename,
+                            system=system.name,
                             status="skipped",
-                            message=decision.skip_reason
+                            detail=decision.skip_reason
                         )
                     )
 
@@ -747,8 +748,9 @@ class WorkflowOrchestrator:
                         await self.event_bus.publish(
                             ROMProgressEvent(
                                 rom_name=rom_info.filename,
-                                status="metadata_fetched",
-                                message=f"Fetched metadata for {game_info.get('name', 'Unknown')}"
+                                system=system.name,
+                                status="querying",
+                                detail=f"Fetched metadata for {game_info.get('name', 'Unknown')}"
                             )
                         )
 
