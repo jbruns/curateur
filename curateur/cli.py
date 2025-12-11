@@ -3,6 +3,7 @@
 import sys
 import logging
 import argparse
+import asyncio
 import httpx
 from pathlib import Path
 from typing import Optional
@@ -246,7 +247,6 @@ def main(argv: Optional[list] = None) -> int:
 
     # Run main scraping workflow
     try:
-        import asyncio
         return asyncio.run(run_scraper(config, args))
     except KeyboardInterrupt:
         print("\n\nScraping interrupted by user.", file=sys.stderr)
@@ -343,10 +343,16 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
     if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
         if args.ui == 'textual':
-            # Textual UI mode - initialize and prepare for async execution
+            # Textual UI mode - initialize and start immediately
             try:
                 textual_ui = CurateurUI(config, event_bus)
                 logger.debug("Textual UI initialized successfully")
+                # Start Textual UI in background task immediately
+                logger.info("Starting Textual UI in background task...")
+                textual_ui_task = asyncio.create_task(textual_ui.run_async())
+                # Give UI a moment to initialize
+                await asyncio.sleep(0.5)
+                logger.debug("Textual UI task created and running")
             except Exception as e:
                 logger.error(f"Could not initialize Textual UI: {e}", exc_info=True)
                 print(f"Error: Failed to initialize Textual UI: {e}", file=sys.stderr)
@@ -503,15 +509,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
     # Process each system
     try:
-        # Start Textual UI in background task if enabled
-        textual_ui_task = None
-        if textual_ui:
-            logger.info("Starting Textual UI in background task...")
-            textual_ui_task = asyncio.create_task(textual_ui.run_async())
-            # Give UI a moment to initialize
-            await asyncio.sleep(0.5)
-            logger.debug("Textual UI task created")
-
         # Convert ES-DE directory names to ScreenScraper media types
         from curateur.media.media_types import convert_directory_names_to_media_types
         configured_media = config['media'].get('media_types', ['covers', 'screenshots'])

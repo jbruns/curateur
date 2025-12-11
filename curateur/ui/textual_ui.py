@@ -1531,7 +1531,7 @@ class CurateurUI(App):
         self.event_bus.subscribe(SearchRequestEvent, self.on_search_request)
 
         # Subscribe orchestrator to search responses (set by CLI after initialization)
-        if hasattr(self, 'orchestrator'):
+        if hasattr(self, 'orchestrator') and self.orchestrator is not None:
             from ..ui.events import SearchResponseEvent
             self.event_bus.subscribe(SearchResponseEvent, self.orchestrator.handle_search_response)
 
