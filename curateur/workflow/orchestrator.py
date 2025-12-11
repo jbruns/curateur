@@ -186,6 +186,31 @@ class WorkflowOrchestrator:
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
 
+    def update_search_config(
+        self,
+        enable_fallback: bool = None,
+        confidence_threshold: float = None,
+        max_results: int = None
+    ) -> None:
+        """Update search configuration at runtime.
+
+        Args:
+            enable_fallback: Enable/disable search fallback (None to skip)
+            confidence_threshold: New confidence threshold 0.0-1.0 (None to skip)
+            max_results: New max search results (None to skip)
+        """
+        if enable_fallback is not None:
+            self.enable_search_fallback = enable_fallback
+            logger.info(f"Set search fallback to {enable_fallback}")
+
+        if confidence_threshold is not None:
+            self.search_confidence_threshold = confidence_threshold
+            logger.info(f"Updated search confidence threshold to {confidence_threshold:.0%}")
+
+        if max_results is not None:
+            self.search_max_results = max_results
+            logger.info(f"Updated search max results to {max_results}")
+
     async def scrape_system(
         self,
         system: SystemDefinition,

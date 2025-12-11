@@ -302,6 +302,21 @@ class ScreenScraperClient:
 
         return user_info
 
+    def update_runtime_config(self, max_retries: int = None, retry_backoff: float = None) -> None:
+        """Update API client configuration at runtime.
+
+        Args:
+            max_retries: New max retry count (None to skip)
+            retry_backoff: New retry backoff in seconds (None to skip)
+        """
+        if max_retries is not None:
+            self.max_retries = max_retries
+            logger.info(f"Updated max_retries to {max_retries}")
+
+        if retry_backoff is not None:
+            self.retry_backoff = retry_backoff
+            logger.info(f"Updated retry_backoff to {retry_backoff}s")
+
     async def _query_jeu_infos(
         self,
         systemeid: int,

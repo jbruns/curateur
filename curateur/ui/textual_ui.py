@@ -802,21 +802,20 @@ class ConfigTab(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the config tab layout."""
+        # Warning banner
+        yield Static(
+            "⚠️  Settings changes are temporary and will revert on restart. "
+            "Edit config.yaml for permanent changes.",
+            id="config-warning",
+            classes="config-warning"
+        )
+
         # Two-column layout
         with Horizontal(id="config-columns"):
             # Left Column: API and Runtime Settings
             with VerticalScroll(id="config-left-column"):
                 # API Settings
                 with Container(classes="config-section", id="api-settings-section"):
-                    with Horizontal(classes="config-row"):
-                        yield Label("Request Timeout (s):", classes="config-label")
-                        yield Select(
-                            [("15", 15), ("30", 30), ("45", 45), ("60", 60), ("90", 90)],
-                            value=30,
-                            id="request-timeout",
-                            allow_blank=False,
-                        )
-
                     with Horizontal(classes="config-row"):
                         yield Label("Max Retries:", classes="config-label")
                         yield Select(
@@ -838,24 +837,15 @@ class ConfigTab(Container):
                 # Runtime Settings
                 with Container(classes="config-section", id="runtime-settings-section"):
                     with Horizontal(classes="config-row"):
-                        yield Label("CRC Size Limit:", classes="config-label")
-                        yield Select(
-                            [("0.5 GiB", 0.5), ("1 GiB", 1), ("2 GiB", 2), ("4 GiB", 4), ("None", 0)],
-                            value=1,
-                            id="crc-size-limit",
-                            allow_blank=False,
-                        )
-
-                    with Horizontal(classes="config-row"):
                         yield Label("Override Limits:", classes="config-label")
-                        yield Switch(value=False, id="rate-limit-override")
+                        yield Switch(value=False, id="override-limits-switch")
 
                     with Horizontal(classes="config-row"):
                         yield Label("  Max Workers:", classes="config-label")
                         yield Select(
                             [("1", 1), ("2", 2), ("3", 3), ("4", 4), ("5", 5)],
                             value=1,
-                            id="override-max-workers",
+                            id="max-workers-select",
                             disabled=True,
                             allow_blank=False,
                         )
@@ -877,13 +867,13 @@ class ConfigTab(Container):
                 with Container(classes="config-section", id="search-settings-section"):
                     with Horizontal(classes="config-row"):
                         yield Label("Search Fallback:", classes="config-label")
-                        yield Switch(value=False, id="enable-search-fallback")
+                        yield Switch(value=False, id="search-fallback-switch")
 
                     with Horizontal(classes="config-row"):
                         yield Label("Confidence:", classes="config-label")
                         yield Select(
-                            [("50%", 0.5), ("60%", 0.6), ("70%", 0.7), ("80%", 0.8), ("90%", 0.9)],
-                            value=0.7,
+                            [("50%", 50), ("60%", 60), ("70%", 70), ("80%", 80), ("90%", 90)],
+                            value=70,
                             id="confidence-threshold",
                             allow_blank=False,
                         )
@@ -893,45 +883,152 @@ class ConfigTab(Container):
                         yield Select(
                             [("1", 1), ("3", 3), ("5", 5), ("7", 7), ("10", 10)],
                             value=5,
-                            id="max-search-results",
+                            id="max-results",
                             allow_blank=False,
                         )
 
-                    with Horizontal(classes="config-row"):
-                        yield Label("Interactive:", classes="config-label")
-                        yield Switch(value=False, id="interactive-search")
-
     def on_mount(self) -> None:
-        """Set border titles for config sections."""
+        """Set border titles and initialize widget values from config."""
+        # Set border titles
         self.query_one("#api-settings-section", Container).border_title = "API Settings"
         self.query_one("#runtime-settings-section", Container).border_title = "Runtime Settings"
         self.query_one("#logging-settings-section", Container).border_title = "Logging Settings"
         self.query_one("#search-settings-section", Container).border_title = "Search Settings"
 
+        # Initialize widget values from app config
+        config = self.app.config
+
+        # API Settings
+        try:
+            max_retries = config.get('api', {}).get('max_retries', 3)
+            self.query_one("#max-retries", Select).value = max_retries
+
+            retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
+            self.query_one("#retry-backoff", Select).value = retry_backoff
+        except Exception as e:
+            logger.debug(f"Failed to initialize API settings: {e}")
+
+        # Runtime Settings
+        try:
+            override = config.get('runtime', {}).get('rate_limit_override_enabled', False)
+            self.query_one("#override-limits-switch", Switch).value = override
+
+            if override:
+                max_workers = config.get('runtime', {}).get('rate_limit_override', {}).get('max_workers', 1)
+                self.query_one("#max-workers-select", Select).value = max_workers
+                self.query_one("#max-workers-select", Select).disabled = False
+        except Exception as e:
+            logger.debug(f"Failed to initialize runtime settings: {e}")
+
+        # Logging Settings
+        try:
+            log_level = config.get('logging', {}).get('level', 'INFO')
+            self.query_one("#log-level-select", Select).value = log_level
+        except Exception as e:
+            logger.debug(f"Failed to initialize logging settings: {e}")
+
+        # Search Settings
+        try:
+            search_fallback = config.get('search', {}).get('enable_search_fallback', False)
+            self.query_one("#search-fallback-switch", Switch).value = search_fallback
+
+            confidence = int(config.get('search', {}).get('confidence_threshold', 0.7) * 100)
+            self.query_one("#confidence-threshold", Select).value = confidence
+
+            max_results = config.get('search', {}).get('max_results', 5)
+            self.query_one("#max-results", Select).value = max_results
+        except Exception as e:
+            logger.debug(f"Failed to initialize search settings: {e}")
+
     def on_switch_changed(self, event: Switch.Changed) -> None:
-        """Handle switch changes."""
-        # Enable/disable rate limit override fields when switch is toggled
-        if event.switch.id == "rate-limit-override":
+        """Handle switch toggle changes."""
+        switch_id = event.switch.id
+        new_value = event.value
+
+        if switch_id == "override-limits-switch":
+            # UI-only: Enable/disable max workers select
             try:
-                self.query_one("#override-max-workers", Select).disabled = not event.value
+                max_workers_select = self.query_one("#max-workers-select", Select)
+                max_workers_select.disabled = not new_value
             except Exception as e:
-                logger.debug(f"Failed to toggle override fields: {e}")
+                logger.debug(f"Failed to toggle max workers: {e}")
+
+        elif switch_id == "search-fallback-switch":
+            # Update orchestrator
+            try:
+                if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
+                    self.app.orchestrator.update_search_config(enable_fallback=new_value)
+                    self._show_temp_change_notification()
+            except Exception as e:
+                logger.error(f"Failed to update search fallback: {e}")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle select dropdown changes."""
-        # If log level changed, update the filterable log widget
-        if event.select.id == "log-level-select":
-            try:
-                # Find the FilterableLogWidget on the Details tab
-                filterable_logs = self.app.query_one("#filterable-logs", FilterableLogWidget)
-                # Convert string level to numeric
-                level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
-                filterable_logs.set_log_level(level_map.get(event.value, 20))
+        select_id = event.select.id
+        new_value = event.value
 
-                # Show notification
-                self.app.notify(f"Log filter set to: {event.value}", timeout=2)
+        # Log Level (already implemented, keep existing logic)
+        if select_id == "log-level-select":
+            try:
+                filterable_logs = self.app.query_one("#filterable-logs", FilterableLogWidget)
+                level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+                filterable_logs.set_log_level(level_map.get(new_value, 20))
+                self._show_temp_change_notification()
             except Exception as e:
                 logger.debug(f"Failed to update log level: {e}")
+
+        # API Settings
+        elif select_id == "max-retries":
+            try:
+                if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.api_client:
+                    self.app.orchestrator.api_client.update_runtime_config(max_retries=new_value)
+                    self._show_temp_change_notification()
+            except Exception as e:
+                logger.error(f"Failed to update max retries: {e}")
+
+        elif select_id == "retry-backoff":
+            try:
+                if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.api_client:
+                    self.app.orchestrator.api_client.update_runtime_config(retry_backoff=new_value)
+                    self._show_temp_change_notification()
+            except Exception as e:
+                logger.error(f"Failed to update retry backoff: {e}")
+
+        # Runtime Settings
+        elif select_id == "max-workers-select":
+            try:
+                if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.throttle_manager:
+                    self.app.orchestrator.throttle_manager.update_concurrency_limit(new_value)
+                    self._show_temp_change_notification()
+            except Exception as e:
+                logger.error(f"Failed to update max workers: {e}")
+
+        # Search Settings
+        elif select_id == "confidence-threshold":
+            try:
+                if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
+                    # Convert percentage to float (70 -> 0.7)
+                    threshold = new_value / 100.0
+                    self.app.orchestrator.update_search_config(confidence_threshold=threshold)
+                    self._show_temp_change_notification()
+            except Exception as e:
+                logger.error(f"Failed to update confidence threshold: {e}")
+
+        elif select_id == "max-results":
+            try:
+                if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
+                    self.app.orchestrator.update_search_config(max_results=new_value)
+                    self._show_temp_change_notification()
+            except Exception as e:
+                logger.error(f"Failed to update max results: {e}")
+
+    def _show_temp_change_notification(self) -> None:
+        """Show notification that setting change is temporary."""
+        self.app.notify(
+            "Setting applied (temporary - reverts on restart)",
+            severity="information",
+            timeout=2
+        )
 
 
 # ============================================================================
@@ -1392,6 +1489,9 @@ class CurateurUI(App):
         self.search_queue = asyncio.Queue()
         self.current_search_dialog = None  # Track active dialog
         self.search_processor_running = False  # Track if processor is running
+
+        # Will be set by CLI after orchestrator is created
+        self.orchestrator = None
 
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
