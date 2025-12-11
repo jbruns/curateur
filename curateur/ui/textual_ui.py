@@ -130,6 +130,9 @@ class CurrentSystemOperations(Container):
     media_in_flight = reactive(0)
     media_downloaded = reactive(0)
     media_failed = reactive(0)
+    
+    # Spinner animation frame counter
+    spinner_frame = 0
 
     def compose(self) -> ComposeResult:
         yield Static(id="hashing-content")
@@ -142,6 +145,8 @@ class CurrentSystemOperations(Container):
         """Initialize system operations display."""
         self.border_title = "Current System"
         self.update_display()
+        # Start spinner animation timer (update every 0.2 seconds)
+        self.set_interval(0.2, self._update_spinner)
 
     def watch_system_name(self, old_value: str, new_value: str) -> None:
         """Update border title when system changes."""
@@ -165,6 +170,13 @@ class CurrentSystemOperations(Container):
         self.update_api()
         self.update_media()
 
+    def _update_spinner(self) -> None:
+        """Update spinner frame for animation."""
+        if self.hash_in_progress or self.metadata_in_flight > 0 or self.search_in_flight > 0:
+            self.spinner_frame = (self.spinner_frame + 1) % 10
+            self.update_hashing()
+            self.update_api()
+    
     def update_hashing(self) -> None:
         """Update hashing section."""
         hash_pct = (self.hash_completed / self.hash_total * 100) if self.hash_total > 0 else 0
@@ -173,7 +185,7 @@ class CurrentSystemOperations(Container):
 
         if self.hash_in_progress:
             spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-            spinner = spinner_chars[self.hash_completed % len(spinner_chars)]
+            spinner = spinner_chars[self.spinner_frame]
             hash_content.append(f" {spinner}", style="bright_magenta")
 
         hash_content.append(f"\n{self.hash_completed}/{self.hash_total} ", style="white")
@@ -191,7 +203,7 @@ class CurrentSystemOperations(Container):
 
         # Metadata requests
         spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        metadata_spinner = spinner_chars[self.metadata_total % len(spinner_chars)]
+        metadata_spinner = spinner_chars[self.spinner_frame]
         api_content.append("Metadata: ", style="dim")
         if self.metadata_in_flight > 0:
             api_content.append(f"{metadata_spinner} {self.metadata_in_flight} ", style="yellow")
@@ -200,7 +212,7 @@ class CurrentSystemOperations(Container):
         api_content.append(f"✓ {self.metadata_total}\n", style="bright_green")
 
         # Search requests
-        search_spinner = spinner_chars[self.search_total % len(spinner_chars)]
+        search_spinner = spinner_chars[self.spinner_frame]
         api_content.append("Search: ", style="dim")
         if self.search_in_flight > 0:
             api_content.append(f"{search_spinner} {self.search_in_flight} ", style="yellow")
