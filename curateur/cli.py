@@ -321,18 +321,20 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     from curateur.workflow.work_queue import WorkQueueManager
     work_queue = WorkQueueManager(max_retries=max_retries)
 
-    # Initialize API client with throttle_manager
+    # Initialize EventBus for UI events
+    # Note: Events are emitted by orchestrator/API client/media downloader
+    # For console UI mode, events are emitted but not displayed
+    # For Textual UI mode (standalone), events drive the UI updates
+    event_bus = EventBus()
+
+    # Initialize API client with throttle_manager and event_bus
     api_client = ScreenScraperClient(
         config,
         throttle_manager=throttle_manager,
         client=client,
-        connection_pool_manager=pool_manager
+        connection_pool_manager=pool_manager,
+        event_bus=event_bus
     )
-
-    # Initialize EventBus for UI events
-    # Note: Events are emitted by orchestrator but only consumed by Textual UI when run standalone
-    # For console UI mode, events are emitted but not displayed
-    event_bus = EventBus()
 
     # Phase D: Initialize UI early for login message
     from curateur.ui.console_ui import ConsoleUI

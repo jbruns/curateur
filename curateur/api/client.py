@@ -53,7 +53,8 @@ class ScreenScraperClient:
         throttle_manager: ThrottleManager,
         client: Optional[httpx.AsyncClient] = None,
         cache: Optional[MetadataCache] = None,
-        connection_pool_manager: Optional[Any] = None
+        connection_pool_manager: Optional[Any] = None,
+        event_bus: Optional[Any] = None
     ):
         """
         Initialize API client.
@@ -64,6 +65,7 @@ class ScreenScraperClient:
             client: Optional httpx.AsyncClient for connection pooling
             cache: Optional MetadataCache for response caching
             connection_pool_manager: Optional ConnectionPoolManager for health tracking
+            event_bus: Optional EventBus for UI event emissions
         """
         # Authentication
         self.devid = config['screenscraper']['devid']
@@ -100,6 +102,9 @@ class ScreenScraperClient:
         
         # Connection pool manager for health tracking (optional)
         self.connection_pool_manager = connection_pool_manager
+
+        # Event bus for UI events (optional)
+        self.event_bus = event_bus
 
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
@@ -364,6 +369,23 @@ class ScreenScraperClient:
 
         # Acquire concurrency semaphore to limit concurrent API requests
         async with self.throttle_manager.concurrency_semaphore:
+            # Emit APIActivityEvent when request starts
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight requests (max - available slots)
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=in_flight,
+                            metadata_total=0,  # Not tracked at API level
+                            search_in_flight=0,  # Would need separate tracking
+                            search_total=0  # Not tracked at API level
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
+
             start_time = time.time()
             try:
                 # Create the HTTP request task that can be cancelled
@@ -611,6 +633,23 @@ class ScreenScraperClient:
 
         # Acquire concurrency semaphore to limit concurrent API requests
         async with self.throttle_manager.concurrency_semaphore:
+            # Emit APIActivityEvent when request starts
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight requests (max - available slots)
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=in_flight,
+                            metadata_total=0,  # Not tracked at API level
+                            search_in_flight=0,  # Would need separate tracking
+                            search_total=0  # Not tracked at API level
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
+
             start_time = time.time()
             try:
                 # Create the HTTP request task that can be cancelled

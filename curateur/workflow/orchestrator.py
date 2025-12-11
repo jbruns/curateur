@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Callable, Any, TYPE_CHECKING
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta, datetime
 import time
 
 if TYPE_CHECKING:
@@ -306,9 +306,9 @@ class WorkflowOrchestrator:
         if progress_tracker:
             progress_tracker.start_system(system.fullname, len(rom_entries))
 
-        # Emit SystemStartedEvent for UI
+        # Emit SystemStartedEvent and LogEntryEvent for UI
         if self.event_bus:
-            from ..ui.events import SystemStartedEvent
+            from ..ui.events import SystemStartedEvent, LogEntryEvent
             await self.event_bus.publish(
                 SystemStartedEvent(
                     system_name=system.name,
@@ -316,6 +316,13 @@ class WorkflowOrchestrator:
                     total_roms=len(rom_entries),
                     current_index=current_system_index,
                     total_systems=total_systems
+                )
+            )
+            await self.event_bus.publish(
+                LogEntryEvent(
+                    level=logging.INFO,
+                    message=f"Started processing {system.fullname} ({len(rom_entries)} ROMs)",
+                    timestamp=datetime.now()
                 )
             )
 
@@ -476,9 +483,9 @@ class WorkflowOrchestrator:
         )
         logger.info(f"=== End work for system: {system.name} ===")
 
-        # Emit SystemCompletedEvent for UI
+        # Emit SystemCompletedEvent and LogEntryEvent for UI
         if self.event_bus:
-            from ..ui.events import SystemCompletedEvent
+            from ..ui.events import SystemCompletedEvent, LogEntryEvent
             system_duration = time.time() - system_start_time
             await self.event_bus.publish(
                 SystemCompletedEvent(
@@ -487,6 +494,13 @@ class WorkflowOrchestrator:
                     failed=failed_count,
                     skipped=skipped_count,
                     duration=system_duration
+                )
+            )
+            await self.event_bus.publish(
+                LogEntryEvent(
+                    level=logging.INFO,
+                    message=f"Completed {system.name}: {scraped_count} successful, {failed_count} failed, {skipped_count} skipped in {system_duration:.1f}s",
+                    timestamp=datetime.now()
                 )
             )
 
@@ -593,6 +607,17 @@ class WorkflowOrchestrator:
                 if self.console_ui:
                     self.console_ui.increment_completed(skipped=True)
 
+                # Emit ROMProgressEvent for skipped ROM
+                if self.event_bus:
+                    from ..ui.events import ROMProgressEvent
+                    await self.event_bus.publish(
+                        ROMProgressEvent(
+                            rom_name=rom_info.filename,
+                            status="skipped",
+                            message=decision.skip_reason
+                        )
+                    )
+
                 # Preserve existing gamelist entry for skipped ROMs
                 return ScrapingResult(
                     rom_path=rom_info.path,
@@ -661,6 +686,21 @@ class WorkflowOrchestrator:
                             f"desc={game_info.get('desc', 'N/A')[:50]}..."
                         )
 
+                        # Emit GameCompletedEvent
+                        if self.event_bus:
+                            from ..ui.events import GameCompletedEvent
+                            await self.event_bus.publish(
+                                GameCompletedEvent(
+                                    game_id=game_info.get('id', ''),
+                                    title=game_info.get('name', 'Unknown'),
+                                    year=game_info.get('releasedate', 'Unknown')[:4] if game_info.get('releasedate') else 'Unknown',
+                                    genre=game_info.get('genre', 'Unknown'),
+                                    developer=game_info.get('developer', 'Unknown'),
+                                    description=game_info.get('desc', '')[:300],  # Truncate for performance
+                                    confidence=1.0  # Hash match = 100% confidence
+                                )
+                            )
+
                     logger.debug(f"[{rom_info.filename}] Hash lookup successful")
                     # Increment task counter but don't emit completion status
                     completed_tasks += 1
@@ -668,6 +708,17 @@ class WorkflowOrchestrator:
                     # Update UI: Complete API fetch (report if it was a cache hit)
                     if self.console_ui:
                         self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete', cache_hit=from_cache)
+
+                    # Emit ROMProgressEvent
+                    if self.event_bus and game_info:
+                        from ..ui.events import ROMProgressEvent
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=rom_info.filename,
+                                status="metadata_fetched",
+                                message=f"Fetched metadata for {game_info.get('name', 'Unknown')}"
+                            )
+                        )
 
                 except asyncio.CancelledError:
                     # Shutdown requested during API call
@@ -768,7 +819,8 @@ class WorkflowOrchestrator:
                     validation_mode=validation_mode,
                     min_width=image_min_dimension,
                     min_height=image_min_dimension,
-                    download_semaphore=media_semaphore
+                    download_semaphore=media_semaphore,
+                    event_bus=self.event_bus
                 )
 
                 # Get media list from game_info
@@ -1684,9 +1736,33 @@ class WorkflowOrchestrator:
                     f'batch {batch_num}/{total_batches}'
                 )
 
+            # Emit HashingProgressEvent
+            if self.event_bus:
+                from ..ui.events import HashingProgressEvent
+                await self.event_bus.publish(
+                    HashingProgressEvent(
+                        completed=current_count,
+                        total=total,
+                        skipped=current_count - hashed_count,
+                        in_progress=(current_count < total)
+                    )
+                )
+
         # Mark hashing complete
         if self.console_ui:
             self.console_ui.update_hashing_progress(total, total, 'Complete')
+
+        # Emit final HashingProgressEvent
+        if self.event_bus:
+            from ..ui.events import HashingProgressEvent
+            await self.event_bus.publish(
+                HashingProgressEvent(
+                    completed=total,
+                    total=total,
+                    skipped=total - hashed_count,
+                    in_progress=False
+                )
+            )
 
         return rom_entries
 

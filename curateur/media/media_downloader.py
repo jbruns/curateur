@@ -6,7 +6,7 @@ Coordinates URL selection, downloading, validation, and organization of game med
 
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from .url_selector import MediaURLSelector
 from .downloader import ImageDownloader
 from .organizer import MediaOrganizer
@@ -73,11 +73,12 @@ class MediaDownloader:
         min_height: int = 50,
         hash_algorithm: str = 'crc32',
         validation_mode: str = 'disabled',
-        download_semaphore: Optional[asyncio.Semaphore] = None
+        download_semaphore: Optional[asyncio.Semaphore] = None,
+        event_bus: Optional[Any] = None
     ):
         """
         Initialize media downloader.
-        
+
         Args:
             media_root: Root directory for media storage
             client: httpx.AsyncClient for HTTP requests
@@ -90,6 +91,7 @@ class MediaDownloader:
             hash_algorithm: Hash algorithm for file verification ('crc32', 'md5', 'sha1')
             validation_mode: Validation mode (disabled, normal, strict)
             download_semaphore: Optional semaphore to limit concurrent downloads globally
+            event_bus: Optional EventBus for UI event emissions
         """
         self.url_selector = MediaURLSelector(
             preferred_regions=preferred_regions,
@@ -109,6 +111,7 @@ class MediaDownloader:
         self.hash_algorithm = hash_algorithm
         self.validation_mode = validation_mode
         self.download_semaphore = download_semaphore
+        self.event_bus = event_bus
     
     async def download_media_for_game(
         self,
@@ -163,21 +166,51 @@ class MediaDownloader:
                     success=False,
                     error="Cancelled due to shutdown"
                 )
-            
+
             # Call progress callback before starting download
             if progress_callback:
                 progress_callback(media_type, idx, total_media)
-            
+
+            # Emit MediaDownloadEvent - downloading
+            if self.event_bus:
+                try:
+                    from ..ui.events import MediaDownloadEvent
+                    await self.event_bus.publish(
+                        MediaDownloadEvent(
+                            rom_name=rom_basename,
+                            media_type=media_type,
+                            status="downloading"
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the download
+
             # Acquire semaphore if provided (limits concurrent downloads globally)
             if self.download_semaphore:
                 async with self.download_semaphore:
-                    return await self._download_single_media(
+                    result = await self._download_single_media(
                         media_type, media_info, system, rom_basename
                     )
             else:
-                return await self._download_single_media(
+                result = await self._download_single_media(
                     media_type, media_info, system, rom_basename
                 )
+
+            # Emit MediaDownloadEvent - complete or failed
+            if self.event_bus:
+                try:
+                    from ..ui.events import MediaDownloadEvent
+                    await self.event_bus.publish(
+                        MediaDownloadEvent(
+                            rom_name=rom_basename,
+                            media_type=media_type,
+                            status="complete" if result.success else "failed"
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the download
+
+            return result
         
         # Create download tasks for all media types
         download_tasks = [
