@@ -521,10 +521,11 @@ class WorkflowOrchestrator:
             await self.event_bus.publish(
                 SystemCompletedEvent(
                     system_name=system.name,
+                    total_roms=scraped_count + failed_count + skipped_count,
                     successful=scraped_count,
                     failed=failed_count,
                     skipped=skipped_count,
-                    duration=system_duration
+                    elapsed_time=system_duration
                 )
             )
             await self.event_bus.publish(
