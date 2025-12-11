@@ -6,6 +6,7 @@ scraping progress across three tabs: Overview, Details, and Systems.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from textual.app import App, ComposeResult
@@ -403,6 +404,277 @@ class PerformancePanel(Container):
         return bar
 
 
+# ============================================================================
+# Details Tab Widgets
+# ============================================================================
+
+
+class FilterableLogWidget(Container):
+    """Log viewer with filtering capabilities."""
+
+    # Reactive properties
+    log_level = reactive(logging.INFO)
+    filter_text = reactive("")
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Input, RichLog
+        yield Input(placeholder="Filter logs (regex)...", id="log-filter")
+        yield RichLog(id="logs", highlight=True, wrap=True, markup=True)
+
+    def on_mount(self) -> None:
+        """Initialize log widget."""
+        self.border_title = "Logs (Filter: 1-ERROR, 2-WARNING, 3-INFO, 4-DEBUG)"
+
+    def append_log(self, level: int, message: str, timestamp: datetime = None) -> None:
+        """Append a single log entry."""
+        # Check filter
+        if self.filter_text:
+            try:
+                import re
+                if not re.search(self.filter_text, message, re.IGNORECASE):
+                    return
+            except Exception:
+                pass  # Invalid regex, skip filtering
+
+        # Check log level
+        if level < self.log_level:
+            return
+
+        from textual.widgets import RichLog
+        try:
+            log_widget = self.query_one("#logs", RichLog)
+
+            # Color by level
+            level_name = logging.getLevelName(level)
+            colors = {
+                "DEBUG": "dim white",
+                "INFO": "cyan",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "bold red",
+            }
+            color = colors.get(level_name, "white")
+
+            # Format timestamp
+            if timestamp:
+                time_str = timestamp.strftime("%H:%M:%S")
+            else:
+                from datetime import datetime
+                time_str = datetime.now().strftime("%H:%M:%S")
+
+            text = Text()
+            text.append(f"[{time_str}] ", style="dim")
+            text.append(f"[{level_name:8}] ", style=color)
+            text.append(message)
+
+            log_widget.write(text)
+        except Exception as e:
+            logger.debug(f"Failed to append log: {e}")
+
+    def on_input_changed(self, event) -> None:
+        """Handle filter text changes."""
+        from textual.widgets import Input
+        if isinstance(event.input, Input) and event.input.id == "log-filter":
+            self.filter_text = event.value
+            # Note: We don't reload logs, just filter new ones as they come
+
+    def set_log_level(self, level: int) -> None:
+        """Set log level filter."""
+        self.log_level = level
+        level_name = logging.getLevelName(level)
+        self.border_title = f"Logs (Current: {level_name})"
+
+    def clear_logs(self) -> None:
+        """Clear all logs."""
+        from textual.widgets import RichLog
+        try:
+            log_widget = self.query_one("#logs", RichLog)
+            log_widget.clear()
+        except Exception as e:
+            logger.debug(f"Failed to clear logs: {e}")
+
+
+class ActiveRequestsTable(Container):
+    """Table showing currently active requests."""
+
+    # Track active requests by ROM name
+    active_requests = reactive(dict)
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import DataTable
+        yield DataTable(id="active-requests-table")
+
+    def on_mount(self) -> None:
+        """Initialize table."""
+        from textual.widgets import DataTable
+        self.border_title = "Active Requests (0 concurrent)"
+        self.active_requests = {}
+
+        table = self.query_one("#active-requests-table", DataTable)
+        table.add_columns("ROM", "Stage", "Duration", "Status")
+        table.cursor_type = "row"
+
+    def update_request(self, rom_name: str, stage: str, status: str, duration: float = 0.0) -> None:
+        """Add or update an active request."""
+        from textual.widgets import DataTable
+
+        try:
+            table = self.query_one("#active-requests-table", DataTable)
+
+            # Update or add request
+            if rom_name in self.active_requests:
+                # Update existing row
+                row_key = self.active_requests[rom_name]
+                table.update_cell(row_key, "ROM", rom_name)
+                table.update_cell(row_key, "Stage", stage)
+                table.update_cell(row_key, "Duration", f"{duration:.1f}s")
+                table.update_cell(row_key, "Status", status)
+            else:
+                # Add new row
+                row_key = table.add_row(
+                    rom_name,
+                    stage,
+                    f"{duration:.1f}s",
+                    status
+                )
+                self.active_requests = {**self.active_requests, rom_name: row_key}
+
+            # Update border title with count
+            count = len(self.active_requests)
+            self.border_title = f"Active Requests ({count} concurrent)"
+
+        except Exception as e:
+            logger.debug(f"Failed to update active request: {e}")
+
+    def remove_request(self, rom_name: str) -> None:
+        """Remove a completed request."""
+        from textual.widgets import DataTable
+
+        try:
+            if rom_name in self.active_requests:
+                table = self.query_one("#active-requests-table", DataTable)
+                row_key = self.active_requests[rom_name]
+                table.remove_row(row_key)
+
+                # Update dictionary
+                new_requests = dict(self.active_requests)
+                del new_requests[rom_name]
+                self.active_requests = new_requests
+
+                # Update border title with count
+                count = len(self.active_requests)
+                self.border_title = f"Active Requests ({count} concurrent)"
+
+        except Exception as e:
+            logger.debug(f"Failed to remove active request: {e}")
+
+    def clear_all(self) -> None:
+        """Clear all active requests."""
+        from textual.widgets import DataTable
+
+        try:
+            table = self.query_one("#active-requests-table", DataTable)
+            table.clear()
+            self.active_requests = {}
+            self.border_title = "Active Requests (0 concurrent)"
+        except Exception as e:
+            logger.debug(f"Failed to clear active requests: {e}")
+
+
+# ============================================================================
+# Systems Tab Widgets
+# ============================================================================
+
+
+class SystemDetailPanel(Container):
+    """Detailed statistics panel for selected system."""
+
+    # Reactive property for selected system
+    selected_system = reactive("")
+
+    # Track system statistics
+    system_stats = reactive(dict)
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import VerticalScroll
+        with VerticalScroll():
+            yield Static(id="system-detail-content")
+
+    def on_mount(self) -> None:
+        """Initialize detail panel."""
+        self.border_title = "System Details"
+        self.system_stats = {}
+        self.update_details()
+
+    def watch_selected_system(self, old: str, new: str) -> None:
+        """Update detail panel when system changes."""
+        self.update_details()
+
+    def watch_system_stats(self, old: dict, new: dict) -> None:
+        """Update display when stats change."""
+        self.update_details()
+
+    def update_system_stats(self, system_name: str, stats: dict) -> None:
+        """Update statistics for a system."""
+        new_stats = dict(self.system_stats)
+        new_stats[system_name] = stats
+        self.system_stats = new_stats
+
+        # Update display if this is the selected system
+        if system_name == self.selected_system:
+            self.update_details()
+
+    def update_details(self) -> None:
+        """Render details for the selected system."""
+        content = Text()
+
+        if not self.selected_system:
+            content.append("No system selected", style="dim")
+            self.border_title = "System Details"
+        elif self.selected_system not in self.system_stats:
+            content.append(f"Waiting for {self.selected_system} to start...", style="dim")
+            self.border_title = self.selected_system
+        else:
+            stats = self.system_stats[self.selected_system]
+            self.border_title = stats.get("fullname", self.selected_system)
+
+            # ROM Statistics
+            content.append("● ROM STATISTICS\n", style="bold cyan")
+            content.append(f"  Total:      {stats.get('total_roms', 0):>4}\n", style="white")
+            content.append(f"  Successful: {stats.get('successful', 0):>4}\n", style="bright_green")
+            content.append(f"  Failed:     {stats.get('failed', 0):>4}\n", style="red")
+            content.append(f"  Skipped:    {stats.get('skipped', 0):>4}\n\n", style="yellow")
+
+            # Processing Status
+            status = stats.get('status', 'pending')
+            content.append("● STATUS\n", style="bold cyan")
+            if status == "complete":
+                content.append(f"  ✓ Complete", style="bright_green")
+            elif status == "in_progress":
+                content.append(f"  ⚡ In Progress", style="yellow")
+            else:
+                content.append(f"  ⏸ Pending", style="dim")
+
+            if stats.get('duration'):
+                content.append(f" ({stats['duration']:.1f}s)", style="dim")
+            content.append("\n\n")
+
+            # Summary
+            if stats.get('summary'):
+                content.append("● SUMMARY\n", style="bold cyan")
+                content.append(stats['summary'], style="dim white")
+
+        try:
+            self.query_one("#system-detail-content", Static).update(content)
+        except Exception as e:
+            logger.debug(f"Failed to update system details: {e}")
+
+
+# ============================================================================
+# Tab Containers
+# ============================================================================
+
+
 class OverviewTab(Container):
     """Overview tab showing current operations and progress."""
 
@@ -420,25 +692,96 @@ class OverviewTab(Container):
 
 
 class DetailsTab(Container):
-    """Details tab showing logs and active requests.
-
-    To be implemented in Phase 4.
-    """
+    """Details tab showing logs and active requests."""
 
     def compose(self) -> ComposeResult:
-        from textual.widgets import Static
-        yield Static("Details Tab - Implementation in Progress")
+        yield FilterableLogWidget(id="filterable-logs")
+        yield ActiveRequestsTable(id="active-requests")
 
 
 class SystemsTab(Container):
-    """Systems tab showing system queue and details.
-
-    To be implemented in Phase 5.
-    """
+    """Systems tab showing system queue and details."""
 
     def compose(self) -> ComposeResult:
-        from textual.widgets import Static
-        yield Static("Systems Tab - Implementation in Progress")
+        from textual.widgets import Tree
+        with Horizontal():
+            # Left side: Tree view of systems (30% width)
+            tree = Tree("Systems", id="systems-tree")
+            tree.show_root = True
+            tree.show_guides = True
+            yield tree
+
+            # Right side: Detail panel (70% width)
+            yield SystemDetailPanel(id="system-detail-panel")
+
+    def on_mount(self) -> None:
+        """Initialize systems tree."""
+        from textual.widgets import Tree
+        tree = self.query_one("#systems-tree", Tree)
+        tree.border_title = "System Queue"
+
+        # Initialize with systems from config
+        try:
+            systems = self.app.config.get('scraping', {}).get('systems', [])
+            if systems:
+                for system_name in systems:
+                    # Add placeholder nodes for configured systems
+                    label = f"⏸ {system_name} (0/0)"
+                    tree.root.add_leaf(label, data=system_name)
+
+                tree.root.expand()
+
+                # Select first system by default
+                if tree.root.children:
+                    tree.select_node(tree.root.children[0])
+                    detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+                    detail_panel.selected_system = systems[0]
+        except Exception as e:
+            logger.debug(f"Failed to initialize systems tree: {e}")
+
+    def update_system_node(self, system_name: str, fullname: str, successful: int, total: int, status: str = "in_progress") -> None:
+        """Update a system node in the tree."""
+        from textual.widgets import Tree
+
+        try:
+            tree = self.query_one("#systems-tree", Tree)
+
+            # Determine status icon
+            if status == "complete":
+                if successful == total:
+                    icon = "✓"
+                else:
+                    icon = "✓"  # Complete with some failures
+            elif status == "in_progress":
+                icon = "⚡"
+            else:
+                icon = "⏸"
+
+            # Find and update the node
+            label = f"{icon} {fullname} ({successful}/{total})"
+
+            # Search for the node with matching data
+            for node in tree.root.children:
+                if node.data == system_name:
+                    node.set_label(label)
+                    break
+            else:
+                # Node doesn't exist, add it
+                tree.root.add_leaf(label, data=system_name)
+
+        except Exception as e:
+            logger.debug(f"Failed to update system node: {e}")
+
+    def on_tree_node_selected(self, event) -> None:
+        """Handle tree selection."""
+        from textual.widgets import Tree
+
+        try:
+            if hasattr(event, 'node') and event.node.data:
+                detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+                detail_panel.selected_system = event.node.data
+        except Exception as e:
+            logger.debug(f"Failed to handle tree selection: {e}")
 
 
 # ============================================================================
@@ -556,6 +899,31 @@ class CurateurUI(App):
         except Exception as e:
             logger.debug(f"Failed to update current system: {e}")
 
+        # Update Systems tab
+        try:
+            systems_tab = self.query_one(SystemsTab)
+            systems_tab.update_system_node(
+                event.system_name,
+                event.system_fullname,
+                0,
+                event.total_roms,
+                "in_progress"
+            )
+
+            # Initialize system stats in detail panel
+            detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+            detail_panel.update_system_stats(event.system_name, {
+                "fullname": event.system_fullname,
+                "total_roms": event.total_roms,
+                "successful": 0,
+                "failed": 0,
+                "skipped": 0,
+                "status": "in_progress",
+                "summary": f"Started processing {event.total_roms} ROMs..."
+            })
+        except Exception as e:
+            logger.debug(f"Failed to update Systems tab: {e}")
+
     async def on_system_completed(self, event: SystemCompletedEvent) -> None:
         """Handle system completed event."""
         logger.info(
@@ -572,6 +940,38 @@ class CurateurUI(App):
             overall_progress.skipped += event.skipped
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
+
+        # Update Systems tab
+        try:
+            total_roms = event.successful + event.failed + event.skipped
+
+            # Update tree node
+            systems_tab = self.query_one(SystemsTab)
+            systems_tab.update_system_node(
+                event.system_name,
+                event.system_name,  # Use system_name as we don't have fullname
+                event.successful,
+                total_roms,
+                "complete"
+            )
+
+            # Update detail panel stats
+            detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+            detail_panel.update_system_stats(event.system_name, {
+                "fullname": event.system_name,
+                "total_roms": total_roms,
+                "successful": event.successful,
+                "failed": event.failed,
+                "skipped": event.skipped,
+                "status": "complete",
+                "duration": event.duration,
+                "summary": f"Completed in {event.duration:.1f}s\n"
+                          f"  ✓ {event.successful} successful\n"
+                          f"  ✗ {event.failed} failed\n"
+                          f"  ⊝ {event.skipped} skipped"
+            })
+        except Exception as e:
+            logger.debug(f"Failed to update Systems tab: {e}")
 
     async def on_rom_progress(self, event: ROMProgressEvent) -> None:
         """Handle ROM progress event."""
@@ -640,12 +1040,15 @@ class CurateurUI(App):
             logger.debug(f"Failed to update current system: {e}")
 
     async def on_log_entry(self, event: LogEntryEvent) -> None:
-        """Handle log entry event.
-
-        Phase 4: Will add log to Details tab.
-        Phase 3: Will show WARNING/ERROR notifications on Overview tab.
-        """
+        """Handle log entry event."""
         logger.debug(f"Log: [{logging.getLevelName(event.level)}] {event.message}")
+
+        # Add log to Details tab
+        try:
+            filterable_logs = self.query_one("#filterable-logs", FilterableLogWidget)
+            filterable_logs.append_log(event.level, event.message, event.timestamp)
+        except Exception as e:
+            logger.debug(f"Failed to add log to Details tab: {e}")
 
         # Show notification on Overview tab for WARNING/ERROR
         if event.level >= logging.WARNING and self.current_tab == "overview":
@@ -702,13 +1105,29 @@ class CurateurUI(App):
             logger.debug(f"Failed to add game to spotlight: {e}")
 
     async def on_active_request(self, event: ActiveRequestEvent) -> None:
-        """Handle active request event.
-
-        Phase 4: Will update Details tab active requests table.
-        """
+        """Handle active request event."""
         logger.debug(
             f"Active request: {event.rom_name} - {event.stage} - {event.status}"
         )
+
+        # Update Details tab active requests table
+        try:
+            active_requests = self.query_one("#active-requests", ActiveRequestsTable)
+
+            if event.status in ["started", "in_progress", "retry"]:
+                # Add or update the request
+                active_requests.update_request(
+                    event.rom_name,
+                    event.stage,
+                    event.status,
+                    event.duration
+                )
+            elif event.status in ["completed", "failed", "cancelled"]:
+                # Remove the request
+                active_requests.remove_request(event.rom_name)
+
+        except Exception as e:
+            logger.debug(f"Failed to update active requests table: {e}")
 
     # ========================================================================
     # Action Handlers
@@ -775,10 +1194,14 @@ class CurateurUI(App):
             )
             return
 
-        # Phase 4: Will call log widget method
-        level_name = logging.getLevelName(level)
-        logger.debug(f"Log filter requested: {level_name}")
-        self.notify(f"Log filter set to: {level_name}", timeout=2)
+        # Update log level filter
+        try:
+            filterable_logs = self.query_one("#filterable-logs", FilterableLogWidget)
+            filterable_logs.set_log_level(level)
+            level_name = logging.getLevelName(level)
+            self.notify(f"Log filter set to: {level_name}", timeout=2)
+        except Exception as e:
+            logger.debug(f"Failed to set log filter: {e}")
 
     def action_show_search_dialog(self) -> None:
         """Show interactive search dialog (demo)."""
@@ -843,7 +1266,13 @@ if __name__ == "__main__":
 
             await asyncio.sleep(1)
 
-            # 2. Simulate hashing progress
+            # 2. Simulate hashing progress with logs
+            await event_bus.publish(LogEntryEvent(
+                level=logging.INFO,
+                message="Scanning ROM directory...",
+                timestamp=datetime.now()
+            ))
+
             for i in range(1, 6):
                 await event_bus.publish(HashingProgressEvent(
                     completed=i * 20,
@@ -852,6 +1281,12 @@ if __name__ == "__main__":
                     in_progress=True
                 ))
                 await asyncio.sleep(0.5)
+
+            await event_bus.publish(LogEntryEvent(
+                level=logging.INFO,
+                message="Hashing completed, starting metadata lookups",
+                timestamp=datetime.now()
+            ))
 
             # 3. Simulate API activity
             await event_bus.publish(APIActivityEvent(
@@ -863,15 +1298,58 @@ if __name__ == "__main__":
 
             await asyncio.sleep(0.5)
 
-            # 4. Simulate ROM progress
-            for i in range(10):
-                await event_bus.publish(ROMProgressEvent(
-                    rom_name=f"Super Mario Bros {i}.nes",
-                    status="complete"
+            # 4. Simulate ROM progress with active requests
+            roms = [
+                "Super Mario Bros.nes",
+                "The Legend of Zelda.nes",
+                "Metroid.nes",
+                "Mega Man 2.nes",
+                "Castlevania.nes"
+            ]
+
+            for i, rom in enumerate(roms):
+                # Start processing
+                await event_bus.publish(ActiveRequestEvent(
+                    rom_name=rom,
+                    stage="metadata",
+                    status="started",
+                    duration=0.0
                 ))
+
                 await asyncio.sleep(0.3)
 
-            # 5. Simulate media downloads
+                # Update with progress
+                await event_bus.publish(ActiveRequestEvent(
+                    rom_name=rom,
+                    stage="metadata",
+                    status="in_progress",
+                    duration=0.3
+                ))
+
+                await asyncio.sleep(0.2)
+
+                # Complete
+                await event_bus.publish(ActiveRequestEvent(
+                    rom_name=rom,
+                    stage="metadata",
+                    status="completed",
+                    duration=0.5
+                ))
+
+                await event_bus.publish(ROMProgressEvent(
+                    rom_name=rom,
+                    status="complete"
+                ))
+
+                await asyncio.sleep(0.3)
+
+            # 5. Simulate media downloads with logs
+            await event_bus.publish(LogEntryEvent(
+                level=logging.INFO,
+                message="Starting media downloads...",
+                timestamp=datetime.now()
+            ))
+
             await event_bus.publish(MediaDownloadEvent(
                 rom_name="Super Mario Bros.nes",
                 media_type="boxart",
@@ -886,6 +1364,13 @@ if __name__ == "__main__":
                 media_type="boxart",
                 status="complete",
                 url="https://example.com/boxart.jpg"
+            ))
+
+            # Simulate a warning
+            await event_bus.publish(LogEntryEvent(
+                level=logging.WARNING,
+                message="Some boxart images not found on server",
+                timestamp=datetime.now()
             ))
 
             # 6. Simulate game completions for spotlight
@@ -947,22 +1432,42 @@ if __name__ == "__main__":
                 ))
                 await asyncio.sleep(0.5)
 
-            # 8. Simulate warning log
+            # 8. Simulate more log events
             await event_bus.publish(LogEntryEvent(
                 level=logging.WARNING,
                 message="API rate limit approaching threshold",
                 timestamp=datetime.now()
             ))
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
+
+            await event_bus.publish(LogEntryEvent(
+                level=logging.DEBUG,
+                message="Cache statistics: 45 hits, 12 misses (78.9% hit rate)",
+                timestamp=datetime.now()
+            ))
+
+            await asyncio.sleep(1)
 
             # 9. Simulate system completion
+            await event_bus.publish(LogEntryEvent(
+                level=logging.INFO,
+                message="System processing complete",
+                timestamp=datetime.now()
+            ))
+
             await event_bus.publish(SystemCompletedEvent(
                 system_name="nes",
                 successful=85,
                 failed=5,
                 skipped=10,
                 duration=120.5
+            ))
+
+            await event_bus.publish(LogEntryEvent(
+                level=logging.INFO,
+                message="Successfully processed 85 ROMs, 5 failed, 10 skipped",
+                timestamp=datetime.now()
             ))
 
         # Run simulation in background using Textual's worker system
