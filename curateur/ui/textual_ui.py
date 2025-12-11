@@ -1942,10 +1942,15 @@ class CurateurUI(App):
     # Action Handlers
     # ========================================================================
 
-    async def action_quit_app(self) -> None:
+    def action_quit_app(self) -> None:
         """Quit the application with confirmation dialog."""
         logger.info("Quit requested by user")
-
+        
+        # Run the dialog in a worker
+        self.run_worker(self._handle_quit_dialog(), exclusive=True)
+    
+    async def _handle_quit_dialog(self) -> None:
+        """Handle quit confirmation dialog in worker context."""
         # Gather current progress info for the dialog
         if self.current_system:
             current_system_name = self.current_system.system_fullname
@@ -2039,10 +2044,15 @@ class CurateurUI(App):
         except Exception as e:
             logger.debug(f"Failed to set log filter: {e}")
 
-    async def action_show_search_dialog(self) -> None:
+    def action_show_search_dialog(self) -> None:
         """Show interactive search dialog (demo)."""
         logger.info("Interactive search dialog requested")
-
+        
+        # Run the dialog in a worker
+        self.run_worker(self._handle_demo_search_dialog(), exclusive=True)
+    
+    async def _handle_demo_search_dialog(self) -> None:
+        """Handle demo search dialog in worker context."""
         # Create demo search results
         demo_results = [
             {
