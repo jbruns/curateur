@@ -20,6 +20,10 @@ from textual.widgets import (
     Static,
     ProgressBar,
     Rule,
+    Select,
+    Switch,
+    Label,
+    VerticalScroll,
 )
 from textual.reactive import reactive
 from rich.text import Text
@@ -785,6 +789,148 @@ class SystemsTab(Container):
 
 
 # ============================================================================
+# Config Tab
+# ============================================================================
+
+
+class ConfigTab(Container):
+    """Config tab with runtime settings controls in two-column layout."""
+
+    def compose(self) -> ComposeResult:
+        """Compose the config tab layout."""
+        # Two-column layout
+        with Horizontal(id="config-columns"):
+            # Left Column: API and Runtime Settings
+            with VerticalScroll(id="config-left-column"):
+                # API Settings
+                with Container(classes="config-section", id="api-settings-section"):
+                    with Horizontal(classes="config-row"):
+                        yield Label("Request Timeout (s):", classes="config-label")
+                        yield Select(
+                            [("15", 15), ("30", 30), ("45", 45), ("60", 60), ("90", 90)],
+                            value=30,
+                            id="request-timeout",
+                            allow_blank=False,
+                        )
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("Max Retries:", classes="config-label")
+                        yield Select(
+                            [("0", 0), ("1", 1), ("2", 2), ("3", 3), ("4", 4), ("5", 5)],
+                            value=3,
+                            id="max-retries",
+                            allow_blank=False,
+                        )
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("Retry Backoff (s):", classes="config-label")
+                        yield Select(
+                            [("1", 1), ("3", 3), ("5", 5), ("10", 10)],
+                            value=5,
+                            id="retry-backoff",
+                            allow_blank=False,
+                        )
+
+                # Runtime Settings
+                with Container(classes="config-section", id="runtime-settings-section"):
+                    with Horizontal(classes="config-row"):
+                        yield Label("CRC Size Limit:", classes="config-label")
+                        yield Select(
+                            [("0.5 GiB", 0.5), ("1 GiB", 1), ("2 GiB", 2), ("4 GiB", 4), ("None", 0)],
+                            value=1,
+                            id="crc-size-limit",
+                            allow_blank=False,
+                        )
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("Override Limits:", classes="config-label")
+                        yield Switch(value=False, id="rate-limit-override")
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("  Max Workers:", classes="config-label")
+                        yield Select(
+                            [("1", 1), ("2", 2), ("3", 3), ("4", 4), ("5", 5)],
+                            value=1,
+                            id="override-max-workers",
+                            disabled=True,
+                            allow_blank=False,
+                        )
+
+            # Right Column: Logging and Search Settings
+            with VerticalScroll(id="config-right-column"):
+                # Logging Settings
+                with Container(classes="config-section", id="logging-settings-section"):
+                    with Horizontal(classes="config-row"):
+                        yield Label("Log Level:", classes="config-label")
+                        yield Select(
+                            [("DEBUG", "DEBUG"), ("INFO", "INFO"), ("WARNING", "WARNING"), ("ERROR", "ERROR")],
+                            value="INFO",
+                            id="log-level-select",
+                            allow_blank=False,
+                        )
+
+                # Search Settings
+                with Container(classes="config-section", id="search-settings-section"):
+                    with Horizontal(classes="config-row"):
+                        yield Label("Search Fallback:", classes="config-label")
+                        yield Switch(value=False, id="enable-search-fallback")
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("Confidence:", classes="config-label")
+                        yield Select(
+                            [("50%", 0.5), ("60%", 0.6), ("70%", 0.7), ("80%", 0.8), ("90%", 0.9)],
+                            value=0.7,
+                            id="confidence-threshold",
+                            allow_blank=False,
+                        )
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("Max Results:", classes="config-label")
+                        yield Select(
+                            [("1", 1), ("3", 3), ("5", 5), ("7", 7), ("10", 10)],
+                            value=5,
+                            id="max-search-results",
+                            allow_blank=False,
+                        )
+
+                    with Horizontal(classes="config-row"):
+                        yield Label("Interactive:", classes="config-label")
+                        yield Switch(value=False, id="interactive-search")
+
+    def on_mount(self) -> None:
+        """Set border titles for config sections."""
+        self.query_one("#api-settings-section", Container).border_title = "API Settings"
+        self.query_one("#runtime-settings-section", Container).border_title = "Runtime Settings"
+        self.query_one("#logging-settings-section", Container).border_title = "Logging Settings"
+        self.query_one("#search-settings-section", Container).border_title = "Search Settings"
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Handle switch changes."""
+        # Enable/disable rate limit override fields when switch is toggled
+        if event.switch.id == "rate-limit-override":
+            try:
+                self.query_one("#override-max-workers", Select).disabled = not event.value
+            except Exception as e:
+                logger.debug(f"Failed to toggle override fields: {e}")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select dropdown changes."""
+        # If log level changed, update the filterable log widget
+        if event.select.id == "log-level-select":
+            try:
+                # Find the FilterableLogWidget on the Details tab
+                filterable_logs = self.app.query_one("#filterable-logs", FilterableLogWidget)
+                # Convert string level to numeric
+                level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+                filterable_logs.set_log_level(level_map.get(event.value, 20))
+
+                # Show notification
+                self.app.notify(f"Log filter set to: {event.value}", timeout=2)
+            except Exception as e:
+                logger.debug(f"Failed to update log level: {e}")
+
+
+# ============================================================================
 # Main Application
 # ============================================================================
 
@@ -840,6 +986,8 @@ class CurateurUI(App):
                 yield DetailsTab()
             with TabPane("Systems", id="systems"):
                 yield SystemsTab()
+            with TabPane("Config", id="config"):
+                yield ConfigTab()
 
         yield Footer()
 
