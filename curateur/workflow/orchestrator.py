@@ -19,7 +19,7 @@ import time
 if TYPE_CHECKING:
     from ..workflow.thread_pool import ThreadPoolManager
     from ..workflow.performance import PerformanceMonitor
-    from ..ui.console_ui import ConsoleUI
+    from ..ui.headless_logger import HeadlessLogger
     from ..api.throttle import ThrottleManager
 
 from ..config.es_systems import SystemDefinition
@@ -31,7 +31,6 @@ from ..api.cache import MetadataCache
 from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
 from ..api.match_scorer import calculate_match_confidence
 from ..ui.prompts import prompt_for_search_match
-from ..ui.console_ui import Operations
 from ..media.media_downloader import MediaDownloader
 from ..media.media_types import to_singular
 from ..gamelist.generator import GamelistGenerator
@@ -102,7 +101,7 @@ class WorkflowOrchestrator:
         preferred_regions: Optional[List[str]] = None,
         thread_manager: Optional['ThreadPoolManager'] = None,
         performance_monitor: Optional['PerformanceMonitor'] = None,
-        console_ui: Optional['ConsoleUI'] = None,
+        console_ui: Optional['HeadlessLogger'] = None,
         throttle_manager: Optional['ThrottleManager'] = None,
         clear_cache: bool = False,
         event_bus: Optional[Any] = None,
@@ -456,7 +455,7 @@ class WorkflowOrchestrator:
                 if self.console_ui:
                     self.console_ui.display_system_operation(
                         system_name=system.name,
-                        operation=Operations.WRITING_GAMELIST,
+                        operation="Writing gamelist",
                         details=f"Generating gamelist.xml ({scraped_count} entries)..."
                     )
 

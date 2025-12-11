@@ -73,9 +73,12 @@ hiddenimports += [
     'curateur.workflow.evaluator',
     'curateur.workflow.progress',
     'curateur.workflow.performance',
-    'curateur.ui.console_ui',
+    'curateur.ui.headless_logger',
+    'curateur.ui.textual_ui',
+    'curateur.ui.event_bus',
+    'curateur.ui.events',
+    'curateur.ui.event_log_handler',
     'curateur.ui.prompts',
-    'curateur.ui.keyboard_listener',
 ]
 
 a = Analysis(

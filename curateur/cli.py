@@ -7,7 +7,6 @@ import asyncio
 import httpx
 from pathlib import Path
 from typing import Optional
-from rich.logging import RichHandler
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +107,9 @@ For more information, see IMPLEMENTATION_PLAN.md
 
     parser.add_argument(
         '--ui',
-        choices=['console', 'textual'],
-        default='console',
-        help='UI mode: console (rich terminal UI) or textual (interactive TUI). Default: console'
+        choices=['textual', 'headless'],
+        default='textual',
+        help='UI mode: textual (interactive TUI, default) or headless (minimal logging for CI/automation)'
     )
 
     return parser
@@ -122,7 +121,7 @@ def _setup_logging(config: dict, console_ui=None, textual_ui=None, event_bus=Non
 
     Args:
         config: Configuration dictionary
-        console_ui: Optional ConsoleUI instance for integrated logging
+        console_ui: Unused parameter (kept for API compatibility)
         textual_ui: Optional CurateurUI instance for Textual UI
         event_bus: Optional EventBus instance for Textual UI logging
     """
@@ -135,40 +134,17 @@ def _setup_logging(config: dict, console_ui=None, textual_ui=None, event_bus=Non
     # Configure root logger
     handlers = []
 
-    # Console handler - use RichHandler to integrate with Rich UI
+    # Console handler for headless mode only
     # Disable console output when Textual UI is active (it has its own display)
     if logging_config.get('console', True) and not textual_ui:
-        if console_ui:
-            # Use RichHandler when UI is active
-            console_handler = RichHandler(
-                console=console_ui.console,  # Link to UI's console
-                show_time=False,  # Rich UI handles time display
-                show_path=False,  # Cleaner output
-                markup=True,
-                rich_tracebacks=True,
-                tracebacks_show_locals=False
-            )
-        else:
-            # Use standard StreamHandler when no UI (avoids BrokenPipeError from Rich)
-            console_handler = logging.StreamHandler()
-
+        # Use simple StreamHandler for headless mode
+        console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
-        formatter = logging.Formatter('%(message)s')  # Simplified for Rich
+        # Simple format for headless CI/automation
+        formatter = logging.Formatter('%(levelname)s: %(message)s')
         console_handler.setFormatter(formatter)
         handlers.append(console_handler)
 
-        # Add custom handler for ConsoleUI's log panel (if UI is enabled)
-        if console_ui:
-            from curateur.ui.console_ui import RichUILogHandler
-            ui_handler = RichUILogHandler(console_ui)
-            ui_handler.setLevel(level)
-            # Simple formatter - just the message (level is handled by add_log_entry)
-            ui_formatter = logging.Formatter('%(message)s')
-            ui_handler.setFormatter(ui_formatter)
-            handlers.append(ui_handler)
-            # Store reference in console_ui for cleanup
-            console_ui.log_handler = ui_handler
-    
     # Textual UI handler - use EventLogHandler to send logs to event bus
     if textual_ui and event_bus:
         from curateur.ui.event_log_handler import EventLogHandler
@@ -348,10 +324,11 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         event_bus=event_bus
     )
 
-    # Phase D: Initialize UI early for login message
-    from curateur.ui.console_ui import ConsoleUI
-    console_ui = None
+    # Phase D: Initialize UI based on mode
+    from curateur.ui.headless_logger import HeadlessLogger
+    console_ui = None  # Not used (kept for variable name consistency)
     textual_ui = None
+    headless_logger = None
 
     if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
         if args.ui == 'textual':
@@ -359,11 +336,11 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             try:
                 textual_ui = CurateurUI(config, event_bus)
                 logger.debug("Textual UI initialized successfully")
-                
+
                 # Reconfigure logging to use EventLogHandler for Textual UI
                 _setup_logging(config, textual_ui=textual_ui, event_bus=event_bus)
                 logger.debug("Logging reconfigured for Textual UI")
-                
+
                 # Start Textual UI in background task immediately
                 logger.info("Starting Textual UI in background task...")
                 textual_ui_task = asyncio.create_task(textual_ui.run_async())
@@ -375,38 +352,30 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 print(f"Error: Failed to initialize Textual UI: {e}", file=sys.stderr)
                 return 1
         else:
-            # Use Console UI (traditional Rich-based)
-            try:
-                console_ui = ConsoleUI(config)
-                console_ui.start()
-                logger.debug("Console UI started successfully")
+            # Headless mode - minimal console logging
+            headless_logger = HeadlessLogger(config)
+            headless_logger.start()
+            _setup_logging(config)  # Simple logging for headless
+            logger.debug("Headless logger initialized")
+    else:
+        # Non-TTY or dry-run: force headless mode
+        headless_logger = HeadlessLogger(config)
+        headless_logger.start()
+        _setup_logging(config)
+        logger.debug("Headless logger initialized (non-TTY)")
 
-                # Reconfigure logging to integrate with console UI
-                _setup_logging(config, console_ui)
-                logger.debug("Logging reconfigured for console UI")
-            except Exception as e:
-                logger.error(f"Could not initialize console UI: {e}", exc_info=True)
-                console_ui = None
 
-    # Phase E: Initialize thread pool manager (after console_ui for pause state access)
+    # Phase E: Initialize thread pool manager
     from curateur.workflow.thread_pool import ThreadPoolManager
-    thread_manager = ThreadPoolManager(config, console_ui=console_ui, textual_ui=textual_ui)
+    thread_manager = ThreadPoolManager(config, console_ui=headless_logger, textual_ui=textual_ui)
 
     # Authenticate with ScreenScraper and get user limits
-    logger.debug(f"Starting authentication, console_ui={'active' if console_ui else 'disabled'}")
-
-    # Show authentication status in UI
-    if console_ui:
-        console_ui.set_auth_status('in_progress')
+    logger.debug("Starting authentication")
 
     try:
         logger.debug("Calling api_client.get_user_info()")
         user_limits = await api_client.get_user_info()
         logger.debug(f"Authentication successful: {user_limits}")
-
-        # Mark authentication as complete
-        if console_ui:
-            console_ui.set_auth_status('complete')
 
         # Initialize thread pool with actual API limits
         thread_manager.initialize_pools(user_limits)
@@ -429,32 +398,11 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         # Update throttle manager with initial quota
         await throttle_manager.update_quota(user_limits)
 
-        # Set throttle manager UI callback for rate limit status
-        if console_ui:
-            throttle_manager.ui_callback = console_ui.set_throttle_status
-
-        # Update footer with initial quota/thread stats
-        if console_ui and thread_manager.is_initialized():
-            max_workers = thread_manager.max_concurrent
-            logger.debug(f"Updating console UI with max_concurrent={max_workers}")
-            console_ui.update_pipeline_concurrency(max_workers)
-            console_ui.update_footer(
-                stats={'successful': 0, 'failed': 0, 'skipped': 0},
-                api_quota=throttle_manager.get_quota_stats(),
-                thread_stats={
-                    'active_threads': 0,
-                    'max_threads': max_workers
-                }
-            )
     except SystemExit:
         # Authentication failed - exit already logged
-        if console_ui:
-            console_ui.stop()
         raise
     except Exception as e:
         logger.error(f"Unexpected error during authentication: {e}")
-        if console_ui:
-            console_ui.stop()
         raise SystemExit(1)
 
     # Phase D: Count total ROMs for performance monitor
@@ -494,7 +442,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
         thread_manager=thread_manager,
         performance_monitor=performance_monitor,
-        console_ui=console_ui,
+        console_ui=headless_logger,
         throttle_manager=throttle_manager,
         clear_cache=args.clear_cache,
         event_bus=event_bus,
@@ -510,8 +458,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     progress = ProgressTracker()
     error_logger = ErrorLogger()
 
-    # Print header (unless using console UI or textual UI)
-    if not console_ui and not textual_ui:
+    # Print header in headless mode only
+    if headless_logger and not textual_ui:
         print(f"\ncurateur v{__version__}")
         print(f"{'='*60}")
         print(f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}")
@@ -537,18 +485,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
         for system in systems:
             try:
-                # Check for quit request from keyboard controls (Console UI)
-                if console_ui and console_ui.quit_requested:
-                    if console_ui.prompt_confirm("Quit after current ROMs complete? [Y/n]: ", default='y'):
-                        logger.info("Graceful shutdown initiated - completing in-flight ROMs")
-                        # Stop workers gracefully
-                        if thread_manager:
-                            await thread_manager.stop_workers()
-                        break
-                    else:
-                        # User declined quit
-                        console_ui.clear_quit_request()
-
                 # Check for quit request from Textual UI
                 if textual_ui and textual_ui.should_quit:
                     logger.info("Quit requested from Textual UI - graceful shutdown")
@@ -557,31 +493,12 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                         await thread_manager.stop_workers()
                     break
 
-                # Check for skip request from keyboard controls (Console UI)
-                if console_ui and console_ui.skip_requested:
-                    if console_ui.prompt_confirm(f"Skip system {system.name}? [y/N]: ", default='n'):
-                        logger.info(f"Skipping system: {system.name}")
-                        console_ui.clear_skip_request()
-                        progress.finish_system()
-                        continue
-                    else:
-                        # User declined skip
-                        console_ui.clear_skip_request()
-
                 # Check for skip request from Textual UI
                 if textual_ui and textual_ui.should_skip_system:
                     logger.info(f"Skip system requested from Textual UI: {system.name}")
                     textual_ui.should_skip_system = False  # Reset flag for next system
                     progress.finish_system()
                     continue
-
-                # Update UI header
-                if console_ui:
-                    console_ui.update_header(
-                        system_name=system.name,
-                        system_num=systems.index(system) + 1,
-                        total_systems=len(systems)
-                    )
 
                 result = await orchestrator.scrape_system(
                     system=system,
@@ -592,8 +509,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                     total_systems=len(systems)
                 )
 
-                # Log each ROM result (if not using console UI or textual UI)
-                if not console_ui and not textual_ui:
+                # Log each ROM result in headless mode only
+                if headless_logger and not textual_ui:
                     for rom_result in result.results:
                         if rom_result.success:
                             media_info = (
@@ -673,13 +590,12 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             except Exception as e:
                 logger.warning(f"Error during Textual UI shutdown: {e}")
 
-        # Stop console UI LAST after all other cleanup is complete
-        # This ensures shutdown logs are captured in the Activity Log
-        if console_ui:
-            console_ui.stop()
+        # Stop headless logger if active
+        if headless_logger:
+            headless_logger.stop()
 
-    # Print final summary (unless using console UI or textual UI)
-    if not console_ui and not textual_ui:
+    # Print final summary in headless mode only
+    if headless_logger and not textual_ui:
         progress.print_final_summary()
 
         # Print performance summary if available

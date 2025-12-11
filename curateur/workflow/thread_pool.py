@@ -48,7 +48,7 @@ class ThreadPoolManager:
 
         Args:
             config: Configuration dictionary
-            console_ui: Optional ConsoleUI instance for pause state checking
+            console_ui: Optional HeadlessLogger instance for pause state checking
             textual_ui: Optional Textual UI instance for quit/skip flag polling
         """
         self.config = config
