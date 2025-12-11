@@ -17,6 +17,8 @@ from curateur.config.es_systems import parse_es_systems
 from curateur.api.client import ScreenScraperClient
 from curateur.workflow.orchestrator import WorkflowOrchestrator
 from curateur.workflow.progress import ProgressTracker, ErrorLogger
+from curateur.ui.event_bus import EventBus
+from curateur.ui.textual_ui import CurateurUI
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -101,6 +103,13 @@ For more information, see IMPLEMENTATION_PLAN.md
         '--clear-cache',
         action='store_true',
         help='Clear metadata cache before scraping. Forces fresh API queries.'
+    )
+
+    parser.add_argument(
+        '--ui',
+        choices=['console', 'textual'],
+        default='console',
+        help='UI mode: console (rich terminal UI) or textual (interactive TUI). Default: console'
     )
 
     return parser
@@ -320,21 +329,35 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         connection_pool_manager=pool_manager
     )
 
-    # Phase D: Initialize console UI early for login message
+    # Initialize EventBus for UI events
+    # Note: Events are emitted by orchestrator but only consumed by Textual UI when run standalone
+    # For console UI mode, events are emitted but not displayed
+    event_bus = EventBus()
+
+    # Phase D: Initialize UI early for login message
     from curateur.ui.console_ui import ConsoleUI
     console_ui = None
-    if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
-        try:
-            console_ui = ConsoleUI(config)
-            console_ui.start()
-            logger.debug("Console UI started successfully")
 
-            # Reconfigure logging to integrate with console UI
-            _setup_logging(config, console_ui)
-            logger.debug("Logging reconfigured for console UI")
-        except Exception as e:
-            logger.error(f"Could not initialize console UI: {e}", exc_info=True)
-            console_ui = None
+    if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
+        if args.ui == 'textual':
+            # Textual UI mode - for now, instruct user to run standalone
+            print("\nTextual UI mode is currently available in standalone mode only.")
+            print("Run the Textual UI demo with: python -m curateur.ui.textual_ui")
+            print("\nTo use the CLI scraper, omit --ui or use --ui console")
+            return 0
+        else:
+            # Use Console UI (traditional Rich-based)
+            try:
+                console_ui = ConsoleUI(config)
+                console_ui.start()
+                logger.debug("Console UI started successfully")
+
+                # Reconfigure logging to integrate with console UI
+                _setup_logging(config, console_ui)
+                logger.debug("Logging reconfigured for console UI")
+            except Exception as e:
+                logger.error(f"Could not initialize console UI: {e}", exc_info=True)
+                console_ui = None
 
     # Phase E: Initialize thread pool manager (after console_ui for pause state access)
     from curateur.workflow.thread_pool import ThreadPoolManager
@@ -444,7 +467,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         performance_monitor=performance_monitor,
         console_ui=console_ui,
         throttle_manager=throttle_manager,
-        clear_cache=args.clear_cache
+        clear_cache=args.clear_cache,
+        event_bus=event_bus
     )
 
     progress = ProgressTracker()
@@ -512,7 +536,9 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                     system=system,
                     media_types=media_types_to_scrape,
                     preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
-                    progress_tracker=progress
+                    progress_tracker=progress,
+                    current_system_index=systems.index(system),
+                    total_systems=len(systems)
                 )
 
                 # Log each ROM result (if not using console UI)

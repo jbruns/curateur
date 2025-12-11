@@ -104,7 +104,8 @@ class WorkflowOrchestrator:
         performance_monitor: Optional['PerformanceMonitor'] = None,
         console_ui: Optional['ConsoleUI'] = None,
         throttle_manager: Optional['ThrottleManager'] = None,
-        clear_cache: bool = False
+        clear_cache: bool = False,
+        event_bus: Optional[Any] = None
     ):
         """
         Initialize workflow orchestrator.
@@ -127,6 +128,7 @@ class WorkflowOrchestrator:
             console_ui: Optional ConsoleUI for rich display
             throttle_manager: Optional ThrottleManager for quota tracking
             clear_cache: Whether to clear metadata cache before scraping
+            event_bus: Optional EventBus for UI event emissions
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
@@ -147,6 +149,7 @@ class WorkflowOrchestrator:
         self.performance_monitor = performance_monitor
         self.console_ui = console_ui
         self.throttle_manager = throttle_manager
+        self.event_bus = event_bus
 
         # Initialize workflow evaluator with cache for media hash lookups
         self.evaluator = WorkflowEvaluator(self.config, cache=self.api_client.cache if self.api_client else None)
@@ -181,7 +184,9 @@ class WorkflowOrchestrator:
         system: SystemDefinition,
         media_types: List[str] = None,
         preferred_regions: List[str] = None,
-        progress_tracker = None
+        progress_tracker = None,
+        current_system_index: int = 0,
+        total_systems: int = 1
     ) -> SystemResult:
         """
         Scrape a single system.
@@ -191,6 +196,8 @@ class WorkflowOrchestrator:
             media_types: Media types to download (default: ['box-2D', 'ss'])
             preferred_regions: Region priority list (default: ['us', 'wor', 'eu'])
             progress_tracker: Optional progress tracker to update with ROM count
+            current_system_index: Index of this system in the system list (0-based)
+            total_systems: Total number of systems being scraped
 
         Returns:
             SystemResult with scraping statistics
@@ -202,6 +209,7 @@ class WorkflowOrchestrator:
             preferred_regions = ['us', 'wor', 'eu']
 
         # Step 0: System start logging
+        system_start_time = time.time()
         logger.info(f"=== Begin work for system: {system.name} ===")
         logger.info(f"Platform: {system.platform}")
         logger.info(f"Path: {system.path}")
@@ -297,6 +305,19 @@ class WorkflowOrchestrator:
         # Notify progress tracker with actual ROM count
         if progress_tracker:
             progress_tracker.start_system(system.fullname, len(rom_entries))
+
+        # Emit SystemStartedEvent for UI
+        if self.event_bus:
+            from ..ui.events import SystemStartedEvent
+            await self.event_bus.publish(
+                SystemStartedEvent(
+                    system_name=system.name,
+                    system_fullname=system.fullname,
+                    total_roms=len(rom_entries),
+                    current_index=current_system_index,
+                    total_systems=total_systems
+                )
+            )
 
         # Step 2: Parse and validate existing gamelist
         gamelist_path = self.paths['gamelists'] / system.name / 'gamelist.xml'
@@ -454,6 +475,20 @@ class WorkflowOrchestrator:
             f"{scraped_count} successful, {skipped_count} skipped, {failed_count} failed"
         )
         logger.info(f"=== End work for system: {system.name} ===")
+
+        # Emit SystemCompletedEvent for UI
+        if self.event_bus:
+            from ..ui.events import SystemCompletedEvent
+            system_duration = time.time() - system_start_time
+            await self.event_bus.publish(
+                SystemCompletedEvent(
+                    system_name=system.name,
+                    successful=scraped_count,
+                    failed=failed_count,
+                    skipped=skipped_count,
+                    duration=system_duration
+                )
+            )
 
         return SystemResult(
             system_name=system.fullname,
