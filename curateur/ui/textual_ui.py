@@ -7,11 +7,12 @@ scraping progress across three tabs: Overview, Details, and Systems.
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import (
     Header,
     Footer,
@@ -24,6 +25,9 @@ from textual.widgets import (
     Switch,
     Label,
     VerticalScroll,
+    Button,
+    ListView,
+    ListItem,
 )
 from textual.reactive import reactive
 from rich.text import Text
@@ -931,6 +935,420 @@ class ConfigTab(Container):
 
 
 # ============================================================================
+# Confirmation Dialogs
+# ============================================================================
+
+
+class ConfirmDialog(ModalScreen):
+    """Generic confirmation dialog."""
+
+    CSS = """
+    ConfirmDialog {
+        align: center middle;
+    }
+
+    #confirm-dialog {
+        width: 60;
+        height: 12;
+        border: thick $warning;
+        background: $surface;
+    }
+
+    #confirm-header {
+        dock: top;
+        height: 3;
+        background: $warning;
+        color: $text;
+        padding: 1 2;
+    }
+
+    #confirm-message {
+        height: 1fr;
+        padding: 2;
+        content-align: center middle;
+    }
+
+    #confirm-buttons {
+        dock: bottom;
+        height: 3;
+        background: $surface-darken-1;
+        padding: 0 2;
+    }
+
+    #confirm-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, title: str, message: str, confirm_variant: str = "error"):
+        """Initialize confirmation dialog.
+
+        Args:
+            title: Dialog title
+            message: Confirmation message
+            confirm_variant: Button variant for confirm button (default: "error")
+        """
+        super().__init__()
+        self.dialog_title = title
+        self.dialog_message = message
+        self.confirm_variant = confirm_variant
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog layout."""
+        with Container(id="confirm-dialog"):
+            yield Static(f"[bold]{self.dialog_title}[/bold]", id="confirm-header")
+            yield Static(self.dialog_message, id="confirm-message")
+
+            with Horizontal(id="confirm-buttons"):
+                yield Button("Yes", variant=self.confirm_variant, id="yes-btn")
+                yield Button("No", variant="primary", id="no-btn")
+
+    def on_mount(self) -> None:
+        """Focus the No button by default (safer)."""
+        self.query_one("#no-btn", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "yes-btn":
+            self.dismiss(True)
+        elif event.button.id == "no-btn":
+            self.dismiss(False)
+
+    def on_key(self, event) -> None:
+        """Handle keyboard shortcuts."""
+        if event.key == "y":
+            self.dismiss(True)
+        elif event.key == "n" or event.key == "escape":
+            self.dismiss(False)
+
+
+class QuitConfirmDialog(ModalScreen):
+    """Confirmation dialog for quitting the application."""
+
+    CSS = """
+    QuitConfirmDialog {
+        align: center middle;
+    }
+
+    #quit-dialog {
+        width: 70;
+        height: 18;
+        border: thick $error;
+        background: $surface;
+    }
+
+    #quit-header {
+        dock: top;
+        height: 3;
+        background: $error;
+        color: white;
+        padding: 1 2;
+    }
+
+    #quit-content {
+        height: 1fr;
+        padding: 2;
+    }
+
+    #quit-stats {
+        background: $surface-darken-1;
+        border: solid $accent;
+        padding: 1 2;
+        margin: 0 0 1 0;
+    }
+
+    #quit-warning {
+        color: $warning;
+        margin: 1 0;
+    }
+
+    #quit-buttons {
+        dock: bottom;
+        height: 3;
+        background: $surface-darken-1;
+        padding: 0 2;
+    }
+
+    #quit-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, current_system: str, processed: int, total: int):
+        """Initialize quit confirmation dialog.
+
+        Args:
+            current_system: Name of currently processing system
+            processed: Number of ROMs processed
+            total: Total number of ROMs
+        """
+        super().__init__()
+        self.current_system = current_system
+        self.processed = processed
+        self.total = total
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog layout."""
+        with Container(id="quit-dialog"):
+            yield Static("[bold]⚠ Confirm Quit[/bold]", id="quit-header")
+
+            with Container(id="quit-content"):
+                with Container(id="quit-stats"):
+                    stats = Text()
+                    stats.append("Current Progress:\n", style="bold cyan")
+                    stats.append(f"  System: ", style="white")
+                    stats.append(f"{self.current_system}\n", style="bright_magenta")
+                    stats.append(f"  Processed: ", style="white")
+                    stats.append(f"{self.processed}/{self.total} ROMs\n", style="cyan")
+                    remaining = self.total - self.processed
+                    stats.append(f"  Remaining: ", style="white")
+                    stats.append(f"{remaining} ROMs", style="yellow")
+                    yield Static(stats)
+
+                yield Static(
+                    "[bold]Are you sure you want to quit?[/bold]\n\n"
+                    "• Unsaved progress will be lost\n"
+                    "• The current scraping session will be interrupted",
+                    id="quit-warning"
+                )
+
+            with Horizontal(id="quit-buttons"):
+                yield Button("Quit [Y]", variant="error", id="quit-yes-btn")
+                yield Button("Continue Scraping [N]", variant="success", id="quit-no-btn")
+
+    def on_mount(self) -> None:
+        """Focus the No button by default (safer)."""
+        self.query_one("#quit-no-btn", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "quit-yes-btn":
+            self.dismiss(True)
+        elif event.button.id == "quit-no-btn":
+            self.dismiss(False)
+
+    def on_key(self, event) -> None:
+        """Handle keyboard shortcuts."""
+        if event.key == "y":
+            self.dismiss(True)
+        elif event.key == "n" or event.key == "escape":
+            self.dismiss(False)
+
+
+# ============================================================================
+# Interactive Search Screen
+# ============================================================================
+
+
+class SearchResultDialog(ModalScreen):
+    """Modal dialog for selecting search results during interactive search."""
+
+    CSS = """
+    SearchResultDialog {
+        align: center middle;
+    }
+
+    #search-dialog {
+        width: 90;
+        height: 30;
+        border: thick $primary;
+        background: $surface;
+    }
+
+    #search-header {
+        dock: top;
+        height: 3;
+        background: $primary;
+        color: white;
+        padding: 1 2;
+    }
+
+    #rom-info {
+        dock: top;
+        height: 3;
+        background: $surface-darken-1;
+        padding: 1 2;
+    }
+
+    #results-container {
+        height: 1fr;
+        border: solid $secondary;
+        background: $surface-darken-1;
+    }
+
+    #result-details {
+        dock: right;
+        width: 35;
+        border-left: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #search-results {
+        width: 1fr;
+        padding: 1;
+    }
+
+    #action-buttons {
+        dock: bottom;
+        height: 3;
+        background: $surface-darken-1;
+        padding: 0 2;
+    }
+
+    .result-item {
+        padding: 0 1;
+        height: 3;
+    }
+
+    .result-item:hover {
+        background: $accent 20%;
+    }
+
+    ListView > .result-item--highlight {
+        background: $primary;
+    }
+    """
+
+    def __init__(self, rom_filename: str, search_results: List[dict]):
+        """Initialize search result dialog.
+
+        Args:
+            rom_filename: Name of the ROM file being searched
+            search_results: List of search result dictionaries
+        """
+        super().__init__()
+        self.rom_filename = rom_filename
+        self.search_results = search_results
+        self.selected_index = 0
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog layout."""
+        with Container(id="search-dialog"):
+            yield Static("[bold]Interactive Search - Match Required[/bold]", id="search-header")
+            yield Static(f"[bold]ROM File:[/bold] [cyan]{self.rom_filename}[/cyan]", id="rom-info")
+
+            with Horizontal(id="results-container"):
+                with Container(id="search-results"):
+                    yield ListView(*self._create_result_items(), id="result-list")
+
+                yield Static(id="result-details")
+
+            with Horizontal(id="action-buttons"):
+                yield Button("Select [Enter]", variant="primary", id="select-btn")
+                yield Button("Skip ROM [S]", variant="warning", id="skip-btn")
+                yield Button("Manual Search [M]", id="manual-btn")
+                yield Button("Cancel [Esc]", variant="error", id="cancel-btn")
+
+    def _create_result_items(self) -> list:
+        """Create ListItem widgets for each search result."""
+        items = []
+        for idx, result in enumerate(self.search_results):
+            confidence_pct = result["confidence"] * 100
+
+            # Confidence color coding
+            if confidence_pct >= 90:
+                conf_color = "bright_green"
+            elif confidence_pct >= 75:
+                conf_color = "yellow"
+            else:
+                conf_color = "red"
+
+            text = Text()
+            text.append(f"{idx + 1}. ", style="dim")
+            text.append(f"{result['name']}", style="bold cyan")
+            text.append(f" ({result['year']}) ", style="white")
+            text.append(f"[{result['region']}] ", style="bright_magenta")
+            text.append(f"{confidence_pct:.0f}%", style=conf_color)
+
+            item = ListItem(Static(text), classes="result-item")
+            items.append(item)
+
+        return items
+
+    def on_mount(self) -> None:
+        """Update detail panel when mounted."""
+        self.update_details(0)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Update detail panel when selection changes."""
+        self.selected_index = event.list_view.index
+        self.update_details(self.selected_index)
+
+    def update_details(self, index: int) -> None:
+        """Update the detail panel with selected result info.
+
+        Args:
+            index: Index of the selected result
+        """
+        if index < 0 or index >= len(self.search_results):
+            return
+
+        result = self.search_results[index]
+        details = Text()
+
+        details.append("══ Match Details ══\n\n", style="bold magenta")
+
+        details.append("Game ID: ", style="bold cyan")
+        details.append(f"{result['id']}\n", style="white")
+
+        details.append("Title: ", style="bold cyan")
+        details.append(f"{result['name']}\n", style="white")
+
+        details.append("Year: ", style="bold cyan")
+        details.append(f"{result['year']}\n", style="white")
+
+        details.append("Region: ", style="bold cyan")
+        details.append(f"{result['region']}\n", style="bright_magenta")
+
+        details.append("Publisher: ", style="bold cyan")
+        details.append(f"{result['publisher']}\n", style="white")
+
+        details.append("Developer: ", style="bold cyan")
+        details.append(f"{result['developer']}\n", style="white")
+
+        details.append("Players: ", style="bold cyan")
+        details.append(f"{result['players']}\n", style="white")
+
+        confidence_pct = result["confidence"] * 100
+        if confidence_pct >= 90:
+            conf_style = "bold bright_green"
+        elif confidence_pct >= 75:
+            conf_style = "bold yellow"
+        else:
+            conf_style = "bold red"
+
+        details.append("\nConfidence: ", style="bold cyan")
+        details.append(f"{confidence_pct:.1f}%", style=conf_style)
+
+        self.query_one("#result-details", Static).update(details)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "select-btn":
+            selected_result = self.search_results[self.selected_index]
+            self.dismiss(("selected", selected_result))
+        elif event.button.id == "skip-btn":
+            self.dismiss(("skip", None))
+        elif event.button.id == "manual-btn":
+            self.dismiss(("manual", None))
+        elif event.button.id == "cancel-btn":
+            self.dismiss(("cancel", None))
+
+    def on_key(self, event) -> None:
+        """Handle keyboard shortcuts."""
+        if event.key == "enter":
+            selected_result = self.search_results[self.selected_index]
+            self.dismiss(("selected", selected_result))
+        elif event.key == "s":
+            self.dismiss(("skip", None))
+        elif event.key == "m":
+            self.dismiss(("manual", None))
+        elif event.key == "escape":
+            self.dismiss(("cancel", None))
+
+
+# ============================================================================
 # Main Application
 # ============================================================================
 
@@ -1281,11 +1699,38 @@ class CurateurUI(App):
     # Action Handlers
     # ========================================================================
 
-    def action_quit_app(self) -> None:
-        """Quit the application."""
+    async def action_quit_app(self) -> None:
+        """Quit the application with confirmation dialog."""
         logger.info("Quit requested by user")
-        self.should_quit = True
-        self.exit()
+
+        # Gather current progress info for the dialog
+        if self.current_system:
+            current_system_name = self.current_system.system_fullname
+            total_roms = self.current_system.total_roms
+
+            # Get processed count from overall progress widget
+            try:
+                overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
+                processed = overall_progress.processed
+            except Exception:
+                processed = 0
+        else:
+            current_system_name = "No active system"
+            total_roms = 0
+            processed = 0
+
+        # Show confirmation dialog
+        result = await self.push_screen_wait(
+            QuitConfirmDialog(current_system_name, processed, total_roms)
+        )
+
+        if result:
+            logger.info("User confirmed quit")
+            self.should_quit = True
+            self.exit()
+        else:
+            logger.info("User cancelled quit")
+            self.notify("Continuing scraping session", timeout=2)
 
     def action_skip_system(self) -> None:
         """Skip current system."""
@@ -1351,10 +1796,67 @@ class CurateurUI(App):
         except Exception as e:
             logger.debug(f"Failed to set log filter: {e}")
 
-    def action_show_search_dialog(self) -> None:
+    async def action_show_search_dialog(self) -> None:
         """Show interactive search dialog (demo)."""
-        # Phase 7: Will implement actual search dialog
-        self.notify("Interactive search - Implementation in progress", timeout=3)
+        logger.info("Interactive search dialog requested")
+
+        # Create demo search results
+        demo_results = [
+            {
+                "id": "12345",
+                "name": "Super Mario Bros.",
+                "year": "1985",
+                "region": "USA",
+                "publisher": "Nintendo",
+                "developer": "Nintendo",
+                "players": "1-2",
+                "confidence": 0.95
+            },
+            {
+                "id": "12346",
+                "name": "Super Mario Bros. (Europe)",
+                "year": "1987",
+                "region": "EUR",
+                "publisher": "Nintendo",
+                "developer": "Nintendo",
+                "players": "1-2",
+                "confidence": 0.85
+            },
+            {
+                "id": "12347",
+                "name": "Super Mario Bros. (Japan)",
+                "year": "1985",
+                "region": "JPN",
+                "publisher": "Nintendo",
+                "developer": "Nintendo",
+                "players": "1-2",
+                "confidence": 0.75
+            }
+        ]
+
+        # Show search dialog
+        result = await self.push_screen_wait(
+            SearchResultDialog("Super Mario Bros. (USA).nes", demo_results)
+        )
+
+        # Handle user's selection
+        action, data = result
+        if action == "selected":
+            self.notify(
+                f"Selected: {data['name']} (ID: {data['id']})",
+                severity="success",
+                timeout=3
+            )
+            logger.info(f"User selected search result: {data['name']}")
+        elif action == "skip":
+            self.notify("ROM skipped", severity="warning", timeout=2)
+            logger.info("User chose to skip ROM")
+        elif action == "manual":
+            self.notify("Manual search not yet implemented", timeout=2)
+            logger.info("User requested manual search")
+        elif action == "cancel":
+            self.notify("Search cancelled", timeout=2)
+            logger.info("User cancelled search")
 
     async def shutdown(self) -> None:
         """Graceful shutdown of the UI."""
