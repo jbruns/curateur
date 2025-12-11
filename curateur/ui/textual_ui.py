@@ -46,6 +46,9 @@ from curateur.ui.events import (
     SearchRequestEvent,
 )
 
+import asyncio
+import types
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -1480,6 +1483,7 @@ class CurateurUI(App):
             config: Configuration dictionary from config.yaml
             event_bus: Event bus for receiving scraping events
         """
+
         super().__init__()
         self.config = config
         self.event_bus = event_bus
@@ -2110,10 +2114,6 @@ class CurateurUI(App):
 
 
 if __name__ == "__main__":
-    import asyncio
-    import types
-    from datetime import datetime
-
     # Create event bus for testing
     event_bus = EventBus()
 
