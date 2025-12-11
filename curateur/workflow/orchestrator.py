@@ -105,7 +105,8 @@ class WorkflowOrchestrator:
         console_ui: Optional['ConsoleUI'] = None,
         throttle_manager: Optional['ThrottleManager'] = None,
         clear_cache: bool = False,
-        event_bus: Optional[Any] = None
+        event_bus: Optional[Any] = None,
+        textual_ui: Optional[Any] = None
     ):
         """
         Initialize workflow orchestrator.
@@ -129,6 +130,7 @@ class WorkflowOrchestrator:
             throttle_manager: Optional ThrottleManager for quota tracking
             clear_cache: Whether to clear metadata cache before scraping
             event_bus: Optional EventBus for UI event emissions
+            textual_ui: Optional Textual UI instance for flag polling
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
@@ -150,6 +152,7 @@ class WorkflowOrchestrator:
         self.console_ui = console_ui
         self.throttle_manager = throttle_manager
         self.event_bus = event_bus
+        self.textual_ui = textual_ui
 
         # Initialize workflow evaluator with cache for media hash lookups
         self.evaluator = WorkflowEvaluator(self.config, cache=self.api_client.cache if self.api_client else None)
@@ -1947,6 +1950,16 @@ class WorkflowOrchestrator:
 
             # Sequential processing using _scrape_rom
             for rom_info in rom_entries:
+                # Check for quit request from Textual UI
+                if self.textual_ui and self.textual_ui.should_quit:
+                    logger.info("Quit requested from Textual UI during sequential processing")
+                    break
+
+                # Check for skip system request from Textual UI
+                if self.textual_ui and self.textual_ui.should_skip_system:
+                    logger.info("Skip system requested from Textual UI during sequential processing")
+                    break
+
                 rom_count += 1
 
                 # Update UI

@@ -339,14 +339,18 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Phase D: Initialize UI early for login message
     from curateur.ui.console_ui import ConsoleUI
     console_ui = None
+    textual_ui = None
 
     if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
         if args.ui == 'textual':
-            # Textual UI mode - for now, instruct user to run standalone
-            print("\nTextual UI mode is currently available in standalone mode only.")
-            print("Run the Textual UI demo with: python -m curateur.ui.textual_ui")
-            print("\nTo use the CLI scraper, omit --ui or use --ui console")
-            return 0
+            # Textual UI mode - initialize and prepare for async execution
+            try:
+                textual_ui = CurateurUI(config, event_bus)
+                logger.debug("Textual UI initialized successfully")
+            except Exception as e:
+                logger.error(f"Could not initialize Textual UI: {e}", exc_info=True)
+                print(f"Error: Failed to initialize Textual UI: {e}", file=sys.stderr)
+                return 1
         else:
             # Use Console UI (traditional Rich-based)
             try:
@@ -363,7 +367,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
     # Phase E: Initialize thread pool manager (after console_ui for pause state access)
     from curateur.workflow.thread_pool import ThreadPoolManager
-    thread_manager = ThreadPoolManager(config, console_ui=console_ui)
+    thread_manager = ThreadPoolManager(config, console_ui=console_ui, textual_ui=textual_ui)
 
     # Authenticate with ScreenScraper and get user limits
     logger.debug(f"Starting authentication, console_ui={'active' if console_ui else 'disabled'}")
@@ -470,14 +474,15 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         console_ui=console_ui,
         throttle_manager=throttle_manager,
         clear_cache=args.clear_cache,
-        event_bus=event_bus
+        event_bus=event_bus,
+        textual_ui=textual_ui
     )
 
     progress = ProgressTracker()
     error_logger = ErrorLogger()
 
-    # Print header (unless using console UI)
-    if not console_ui:
+    # Print header (unless using console UI or textual UI)
+    if not console_ui and not textual_ui:
         print(f"\ncurateur v{__version__}")
         print(f"{'='*60}")
         print(f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}")
@@ -492,6 +497,15 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
     # Process each system
     try:
+        # Start Textual UI in background task if enabled
+        textual_ui_task = None
+        if textual_ui:
+            logger.info("Starting Textual UI in background task...")
+            textual_ui_task = asyncio.create_task(textual_ui.run_async())
+            # Give UI a moment to initialize
+            await asyncio.sleep(0.5)
+            logger.debug("Textual UI task created")
+
         # Convert ES-DE directory names to ScreenScraper media types
         from curateur.media.media_types import convert_directory_names_to_media_types
         configured_media = config['media'].get('media_types', ['covers', 'screenshots'])
@@ -503,7 +517,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
         for system in systems:
             try:
-                # Check for quit request from keyboard controls
+                # Check for quit request from keyboard controls (Console UI)
                 if console_ui and console_ui.quit_requested:
                     if console_ui.prompt_confirm("Quit after current ROMs complete? [Y/n]: ", default='y'):
                         logger.info("Graceful shutdown initiated - completing in-flight ROMs")
@@ -515,7 +529,15 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                         # User declined quit
                         console_ui.clear_quit_request()
 
-                # Check for skip request from keyboard controls
+                # Check for quit request from Textual UI
+                if textual_ui and textual_ui.should_quit:
+                    logger.info("Quit requested from Textual UI - graceful shutdown")
+                    # Stop workers gracefully
+                    if thread_manager:
+                        await thread_manager.stop_workers()
+                    break
+
+                # Check for skip request from keyboard controls (Console UI)
                 if console_ui and console_ui.skip_requested:
                     if console_ui.prompt_confirm(f"Skip system {system.name}? [y/N]: ", default='n'):
                         logger.info(f"Skipping system: {system.name}")
@@ -525,6 +547,13 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                     else:
                         # User declined skip
                         console_ui.clear_skip_request()
+
+                # Check for skip request from Textual UI
+                if textual_ui and textual_ui.should_skip_system:
+                    logger.info(f"Skip system requested from Textual UI: {system.name}")
+                    textual_ui.should_skip_system = False  # Reset flag for next system
+                    progress.finish_system()
+                    continue
 
                 # Update UI header
                 if console_ui:
@@ -543,8 +572,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                     total_systems=len(systems)
                 )
 
-                # Log each ROM result (if not using console UI)
-                if not console_ui:
+                # Log each ROM result (if not using console UI or textual UI)
+                if not console_ui and not textual_ui:
                     for rom_result in result.results:
                         if rom_result.success:
                             media_info = (
@@ -611,13 +640,26 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         if throttle_manager:
             throttle_manager.reset()
 
+        # Stop Textual UI if running
+        if textual_ui_task and not textual_ui_task.done():
+            logger.info("Shutting down Textual UI...")
+            try:
+                await textual_ui.shutdown()
+                textual_ui_task.cancel()
+                try:
+                    await textual_ui_task
+                except asyncio.CancelledError:
+                    pass
+            except Exception as e:
+                logger.warning(f"Error during Textual UI shutdown: {e}")
+
         # Stop console UI LAST after all other cleanup is complete
         # This ensures shutdown logs are captured in the Activity Log
         if console_ui:
             console_ui.stop()
 
-    # Print final summary (unless using console UI)
-    if not console_ui:
+    # Print final summary (unless using console UI or textual UI)
+    if not console_ui and not textual_ui:
         progress.print_final_summary()
 
         # Print performance summary if available

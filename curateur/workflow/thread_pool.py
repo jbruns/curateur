@@ -42,16 +42,18 @@ class ThreadPoolManager:
         await manager.stop_workers()
     """
 
-    def __init__(self, config: dict, console_ui=None):
+    def __init__(self, config: dict, console_ui=None, textual_ui=None):
         """
         Initialize task pool manager
 
         Args:
             config: Configuration dictionary
             console_ui: Optional ConsoleUI instance for pause state checking
+            textual_ui: Optional Textual UI instance for quit/skip flag polling
         """
         self.config = config
         self.console_ui = console_ui
+        self.textual_ui = textual_ui
         self.max_concurrent = 1  # Conservative default
         self.semaphore: Optional[asyncio.Semaphore] = None
         self._initialized = False
@@ -265,6 +267,19 @@ class ThreadPoolManager:
             elif paused_logged:
                 logger.debug(f"Task {task_id} resumed")
                 paused_logged = False
+
+            # Check for quit request from Textual UI
+            if self.textual_ui and self.textual_ui.should_quit:
+                logger.info(f"Task {task_id} - quit requested from Textual UI, setting shutdown event")
+                self._shutdown_event.set()
+                break
+
+            # Check for skip system request from Textual UI
+            if self.textual_ui and self.textual_ui.should_skip_system:
+                logger.info(f"Task {task_id} - skip system requested from Textual UI, marking system complete")
+                self._work_queue.mark_system_complete()
+                # Don't reset the flag here - let the orchestrator handle it
+                # The workers will finish current ROMs and exit cleanly
 
             # Check if work queue is done
             if self._work_queue.is_system_complete() and self._work_queue.is_empty():
