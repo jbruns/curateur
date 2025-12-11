@@ -201,10 +201,29 @@ class SearchRequestEvent:
     """Emitted when interactive search is needed.
 
     Attributes:
+        request_id: Unique identifier for this search request
         rom_name: ROM filename requiring manual match
-        search_results: List of search result dicts from API
-        response_queue: Async queue for user response
+        rom_path: Full path to ROM file
+        system: System name
+        search_results: List of scored candidates from search
+            Each candidate is dict with: {"game_data": {...}, "confidence": 0.XX}
     """
+    request_id: str
     rom_name: str
+    rom_path: str
+    system: str
     search_results: list[dict]
-    # Note: response mechanism will be handled by callback, not stored in event
+
+
+@dataclass(frozen=True)
+class SearchResponseEvent:
+    """Emitted when user responds to search prompt.
+
+    Attributes:
+        request_id: ID matching the SearchRequestEvent
+        action: User's choice ('selected', 'skip', 'cancel')
+        selected_game: Game data if action='selected', None otherwise
+    """
+    request_id: str
+    action: Literal['selected', 'skip', 'cancel']
+    selected_game: Optional[dict] = None

@@ -154,6 +154,10 @@ class WorkflowOrchestrator:
         self.event_bus = event_bus
         self.textual_ui = textual_ui
 
+        # Search response handling for interactive search
+        self.search_response_queues: Dict[str, asyncio.Queue] = {}  # request_id -> response queue
+        self.search_response_lock = asyncio.Lock()
+
         # Initialize workflow evaluator with cache for media hash lookups
         self.evaluator = WorkflowEvaluator(self.config, cache=self.api_client.cache if self.api_client else None)
 
@@ -2058,13 +2062,35 @@ class WorkflowOrchestrator:
                 game_name = game.get('names', {}).get('en', 'Unknown')
                 logger.debug(f"  {i}. {game_name} - {score:.1%}")
 
-            # Interactive mode: prompt user
+            # Interactive mode: wait for user selection via UI or console prompt
             if self.interactive_search:
-                return prompt_for_search_match(
-                    rom_info.filename,
-                    scored_candidates,
-                    self.search_confidence_threshold
-                )
+                if self.textual_ui:
+                    # Textual UI: use async event-driven flow
+                    import uuid
+                    request_id = str(uuid.uuid4())
+
+                    selected_game = await self._wait_for_search_response(
+                        request_id,
+                        rom_info,
+                        scored_candidates
+                    )
+
+                    if selected_game:
+                        game_name = selected_game.get('names', {}).get('en', 'Unknown')
+                        logger.info(
+                            f"[{rom_info.filename}] User selected: {game_name}"
+                        )
+                        return selected_game
+                    else:
+                        logger.info(f"[{rom_info.filename}] User skipped/cancelled search")
+                        return None
+                else:
+                    # Console UI: use blocking prompt
+                    return prompt_for_search_match(
+                        rom_info.filename,
+                        scored_candidates,
+                        self.search_confidence_threshold
+                    )
 
             # Automatic mode: take best if above threshold
             best_game, best_score = scored_candidates[0]
@@ -2089,6 +2115,84 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.error(f"[{rom_info.filename}] Unexpected error in search fallback: {e}")
             return None
+
+    async def _wait_for_search_response(
+        self,
+        request_id: str,
+        rom_info: ROMInfo,
+        scored_candidates: list
+    ) -> Optional[Dict]:
+        """Wait for user response to search prompt.
+
+        Creates response queue, emits SearchRequestEvent, waits for response.
+        No timeout - waits indefinitely while other work continues.
+
+        Args:
+            request_id: Unique request identifier
+            rom_info: ROM information
+            scored_candidates: List of (game_data, confidence) tuples
+
+        Returns:
+            Selected game data or None if skipped/cancelled
+        """
+        # Create response queue for this request
+        response_queue = asyncio.Queue()
+        async with self.search_response_lock:
+            self.search_response_queues[request_id] = response_queue
+
+        # Prepare search results for event
+        search_results = [
+            {
+                "game_data": game_data,
+                "confidence": confidence
+            }
+            for game_data, confidence in scored_candidates
+        ]
+
+        # Emit event to UI
+        if self.event_bus:
+            from ..ui.events import SearchRequestEvent
+            await self.event_bus.publish(
+                SearchRequestEvent(
+                    request_id=request_id,
+                    rom_name=rom_info.filename,
+                    rom_path=str(rom_info.path),
+                    system=rom_info.system,
+                    search_results=search_results
+                )
+            )
+            logger.debug(f"[{rom_info.filename}] Emitted SearchRequestEvent, waiting for user response...")
+
+        # Wait for response (no timeout)
+        try:
+            response = await response_queue.get()
+            logger.info(f"[{rom_info.filename}] User response: {response.action}")
+
+            if response.action == 'selected' and response.selected_game:
+                return response.selected_game
+            else:
+                return None
+
+        finally:
+            # Clean up queue
+            async with self.search_response_lock:
+                self.search_response_queues.pop(request_id, None)
+
+    async def handle_search_response(self, response) -> None:
+        """Handle search response from UI.
+
+        Called by event bus when user makes selection.
+        Puts response into the appropriate queue.
+
+        Args:
+            response: SearchResponseEvent from UI
+        """
+        async with self.search_response_lock:
+            if response.request_id in self.search_response_queues:
+                await self.search_response_queues[response.request_id].put(response)
+                logger.debug(f"Search response delivered for request {response.request_id}")
+            else:
+                logger.warning(f"Received response for unknown request_id: {response.request_id}")
 
     def _generate_gamelist(
         self,

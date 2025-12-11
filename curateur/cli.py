@@ -478,6 +478,12 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         textual_ui=textual_ui
     )
 
+    # Connect orchestrator to Textual UI for search response handling
+    if textual_ui:
+        textual_ui.orchestrator = orchestrator
+        from curateur.ui.events import SearchResponseEvent
+        event_bus.subscribe(SearchResponseEvent, orchestrator.handle_search_response)
+
     progress = ProgressTracker()
     error_logger = ErrorLogger()
 

@@ -43,6 +43,7 @@ from curateur.ui.events import (
     PerformanceUpdateEvent,
     GameCompletedEvent,
     ActiveRequestEvent,
+    SearchRequestEvent,
 )
 
 
@@ -1236,7 +1237,6 @@ class SearchResultDialog(ModalScreen):
             with Horizontal(id="action-buttons"):
                 yield Button("Select [Enter]", variant="primary", id="select-btn")
                 yield Button("Skip ROM [S]", variant="warning", id="skip-btn")
-                yield Button("Manual Search [M]", id="manual-btn")
                 yield Button("Cancel [Esc]", variant="error", id="cancel-btn")
 
     def _create_result_items(self) -> list:
@@ -1329,8 +1329,6 @@ class SearchResultDialog(ModalScreen):
             self.dismiss(("selected", selected_result))
         elif event.button.id == "skip-btn":
             self.dismiss(("skip", None))
-        elif event.button.id == "manual-btn":
-            self.dismiss(("manual", None))
         elif event.button.id == "cancel-btn":
             self.dismiss(("cancel", None))
 
@@ -1341,8 +1339,6 @@ class SearchResultDialog(ModalScreen):
             self.dismiss(("selected", selected_result))
         elif event.key == "s":
             self.dismiss(("skip", None))
-        elif event.key == "m":
-            self.dismiss(("manual", None))
         elif event.key == "escape":
             self.dismiss(("cancel", None))
 
@@ -1392,6 +1388,11 @@ class CurateurUI(App):
         self.event_bus = event_bus
         self.current_system = None
 
+        # Interactive search queue
+        self.search_queue = asyncio.Queue()
+        self.current_search_dialog = None  # Track active dialog
+        self.search_processor_running = False  # Track if processor is running
+
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
         yield Header(show_clock=True)
@@ -1423,6 +1424,12 @@ class CurateurUI(App):
         self.event_bus.subscribe(PerformanceUpdateEvent, self.on_performance_update)
         self.event_bus.subscribe(GameCompletedEvent, self.on_game_completed)
         self.event_bus.subscribe(ActiveRequestEvent, self.on_active_request)
+        self.event_bus.subscribe(SearchRequestEvent, self.on_search_request)
+
+        # Subscribe orchestrator to search responses (set by CLI after initialization)
+        if hasattr(self, 'orchestrator'):
+            from ..ui.events import SearchResponseEvent
+            self.event_bus.subscribe(SearchResponseEvent, self.orchestrator.handle_search_response)
 
         # Start event processing in background
         self.run_worker(self.event_bus.process_events(), name="event_processor")
@@ -1693,6 +1700,139 @@ class CurateurUI(App):
 
         except Exception as e:
             logger.debug(f"Failed to update active requests table: {e}")
+
+    async def on_search_request(self, event) -> None:
+        """Handle search request from orchestrator.
+
+        Adds to queue and starts processor if not running.
+
+        Args:
+            event: SearchRequestEvent with ROM and search results
+        """
+        logger.info(f"Received search request for {event.rom_name}")
+        await self.search_queue.put(event)
+
+        # Start search prompt handler if not already running
+        if not self.search_processor_running:
+            self.search_processor_running = True
+            self.run_worker(self._process_search_queue(), name="search_prompt_processor")
+
+    async def _process_search_queue(self) -> None:
+        """Process search requests one at a time.
+
+        Shows dialogs sequentially from queue.
+        """
+        logger.info("Search queue processor started")
+        try:
+            while True:
+                # Get next search request
+                try:
+                    request = await asyncio.wait_for(
+                        self.search_queue.get(),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    # Check if we should exit
+                    if self.should_quit:
+                        logger.info("Search queue processor exiting due to quit")
+                        break
+                    continue
+
+                # Show dialog and wait for user decision
+                try:
+                    self.current_search_dialog = request
+                    await self._show_search_dialog(request)
+                except Exception as e:
+                    logger.error(f"Error showing search dialog: {e}", exc_info=True)
+                finally:
+                    self.current_search_dialog = None
+        finally:
+            self.search_processor_running = False
+            logger.info("Search queue processor stopped")
+
+    async def _show_search_dialog(self, request) -> None:
+        """Show search result dialog and emit response.
+
+        Args:
+            request: SearchRequestEvent with ROM and results
+        """
+        from ..ui.events import SearchResponseEvent
+
+        # Convert search results to dialog format
+        dialog_results = []
+        for result in request.search_results:
+            game_data = result["game_data"]
+            confidence = result["confidence"]
+
+            # Extract display fields
+            names = game_data.get('names', {})
+            title = names.get('en') or names.get('us') or (list(names.values())[0] if names else 'Unknown')
+
+            dates = game_data.get('dates', {})
+            year = list(dates.values())[0] if dates else 'N/A'
+
+            regions = game_data.get('regions', [])
+            region = regions[0] if regions else 'Unknown'
+
+            dialog_results.append({
+                "id": game_data.get('id', ''),
+                "name": title,
+                "year": year,
+                "region": region,
+                "publisher": game_data.get('publisher', 'Unknown'),
+                "developer": game_data.get('developer', 'Unknown'),
+                "players": game_data.get('players', 'Unknown'),
+                "confidence": confidence,
+                "_full_data": game_data  # Keep original for return
+            })
+
+        # Show dialog
+        result = await self.push_screen_wait(
+            SearchResultDialog(request.rom_name, dialog_results)
+        )
+
+        action, data = result
+
+        # Emit response event
+        if action == "selected" and data:
+            selected_game = data.get("_full_data")
+            response = SearchResponseEvent(
+                request_id=request.request_id,
+                action="selected",
+                selected_game=selected_game
+            )
+            await self.event_bus.publish(response)
+
+            self.notify(
+                f"Selected: {data['name']}",
+                severity="information",
+                timeout=3
+            )
+        elif action == "skip":
+            response = SearchResponseEvent(
+                request_id=request.request_id,
+                action="skip",
+                selected_game=None
+            )
+            await self.event_bus.publish(response)
+
+            self.notify(
+                f"Skipped: {request.rom_name}",
+                severity="warning",
+                timeout=2
+            )
+        else:  # cancel
+            response = SearchResponseEvent(
+                request_id=request.request_id,
+                action="cancel",
+                selected_game=None
+            )
+            await self.event_bus.publish(response)
+
+            self.notify(
+                "Search cancelled",
+                timeout=2
+            )
 
     # ========================================================================
     # Action Handlers
