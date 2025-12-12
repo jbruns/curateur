@@ -140,7 +140,6 @@ class CurrentSystemOperations(Container):
     gamelist_existing = reactive(0)
     gamelist_added = reactive(0)
     gamelist_updated = reactive(0)
-    gamelist_removed = reactive(0)
     
     # Spinner animation frame counter
     spinner_frame = 0
@@ -229,7 +228,6 @@ class CurrentSystemOperations(Container):
         gamelist_content.append("Gamelist\n", style="bold cyan")
         gamelist_content.append(f"✓ {self.gamelist_existing} ", style="white")
         gamelist_content.append(f"+ {self.gamelist_added} ", style="bright_green")
-        gamelist_content.append(f"− {self.gamelist_removed} ", style="red")
         gamelist_content.append(f"↻ {self.gamelist_updated}", style="yellow")
         
         self.query_one("#gamelist-content", Static).update(gamelist_content)
@@ -306,46 +304,70 @@ class GameSpotlightWidget(Static):
         self.update_display()
 
     def update_display(self) -> None:
-        """Render current game."""
-        if not self.games:
-            self.update("■ WAITING FOR COMPLETED GAMES ■")
-            return
-
-        game = self.games[self.index]
-
-        # Build display text
         content = Text()
-        content.append("Completed: ", style="bold")
-        content.append(game.get("title", "Unknown"), style="bold magenta")
-        content.append(f" ({game.get('year', 'N/A')})", style="cyan")
-        content.append("\n\n")
 
-        # Metadata
-        content.append("Genre: ", style="dim")
-        content.append(game.get("genre", "Unknown"), style="cyan")
-        content.append(" | ", style="dim")
-        content.append("Developer: ", style="dim")
-        content.append(game.get("developer", "Unknown"), style="bright_green")
-        content.append("\n\n")
+        if not self.games:
+            content.append("No games completed yet", style="dim italic")
+        else:
+            game = self.games[self.index]
+            title = game.get('title', 'Unknown')
+            year = game.get('year', 'N/A')
+            genre = game.get('genre', 'N/A')
+            developer = game.get('developer', 'N/A')
+            publisher = game.get('publisher', 'N/A')
+            players = game.get('players', 'N/A')
+            rating = game.get('rating')
+            description = game.get('description', 'No description available')
 
-        # Description
-        content.append("Description:\n", style="bold dim")
-        desc = game.get("description", "No description available")
-        # Truncate if too long
-        if len(desc) > 300:
-            desc = desc[:297] + "..."
-        content.append(desc, style="white")
-        content.append("\n")
+            # Line 1: Title and year
+            content.append("Completed: ", style="bold cyan")
+            content.append(f"{title}", style="bright_magenta")
+            if year and year != 'N/A':
+                content.append(f" ({year})", style="white")
+            content.append("\n")
 
-        # Confidence
-        confidence = game.get("confidence", 0.0)
-        content.append(f"\nMatch Confidence: {confidence*100:.0f}%", style="bright_magenta")
+            # Line 2: Genre and developer
+            content.append("Genre: ", style="bold cyan")
+            content.append(f"{genre}", style="white")
+            content.append(" | ", style="dim")
+            content.append("Developer: ", style="bold cyan")
+            content.append(f"{developer}", style="white")
+            content.append("\n")
 
-        # Navigation hint
-        nav_text = f"({self.index + 1}/{len(self.games)})"
-        content.append("\n\n" + " " * (60 - len(nav_text)), style="dim")
-        content.append(nav_text, style="dim")
-        content.append(" [N, B] Navigate", style="dim cyan")
+            # Line 3: Publisher and players
+            content.append("Publisher: ", style="bold cyan")
+            content.append(f"{publisher}", style="white")
+            content.append(" | ", style="dim")
+            content.append("Players: ", style="bold cyan")
+            content.append(f"{players}", style="white")
+            content.append("\n")
+
+            # Line 4: Rating
+            content.append("Rating: ", style="bold cyan")
+            if rating is not None:
+                # Convert ScreenScraper 0-20 scale to X.X/5 format
+                rating_out_of_5 = rating / 4.0
+                content.append(f"{rating_out_of_5:.1f}/5", style="yellow")
+            else:
+                content.append("N/A", style="dim")
+            content.append("\n\n")
+
+            # Description (truncate if too long)
+            max_desc_len = 300
+            if len(description) > max_desc_len:
+                description = description[:max_desc_len] + "..."
+            content.append("Description:\n", style="bold cyan")
+            content.append(description, style="white")
+
+            # Navigation hint
+            if len(self.games) > 1:
+                content.append("\n\n", style="dim")
+                content.append(f"[{self.index + 1}/{len(self.games)}] ", style="dim")
+                content.append("Press ", style="dim")
+                content.append("B", style="bold cyan")
+                content.append("/", style="dim")
+                content.append("N", style="bold cyan")
+                content.append(" to navigate", style="dim")
 
         self.update(content)
 
@@ -1706,8 +1728,46 @@ class CurateurUI(App):
             try:
                 overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
                 overall_progress.processed += 1
+                
+                # Also update overall success/failed/skipped counters
+                if event.status == "complete":
+                    overall_progress.successful += 1
+                elif event.status == "failed":
+                    overall_progress.failed += 1
+                elif event.status == "skipped":
+                    overall_progress.skipped += 1
             except Exception as e:
                 logger.debug(f"Failed to update overall progress: {e}")
+            
+            # Update system detail panel with real-time stats
+            try:
+                detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+                if self.current_system and event.system == self.current_system.system_name:
+                    # Get current stats or initialize
+                    current_stats = detail_panel.system_stats.get(event.system, {})
+                    
+                    # Increment appropriate counter
+                    if event.status == "complete":
+                        current_stats["successful"] = current_stats.get("successful", 0) + 1
+                    elif event.status == "failed":
+                        current_stats["failed"] = current_stats.get("failed", 0) + 1
+                    elif event.status == "skipped":
+                        current_stats["skipped"] = current_stats.get("skipped", 0) + 1
+                    
+                    # Update summary with current progress
+                    total = current_stats.get("successful", 0) + current_stats.get("failed", 0) + current_stats.get("skipped", 0)
+                    total_roms = current_stats.get("total_roms", 0)
+                    current_stats["summary"] = (
+                        f"Processing: {total}/{total_roms} ROMs\n"
+                        f"  ✓ {current_stats.get('successful', 0)} successful\n"
+                        f"  ✗ {current_stats.get('failed', 0)} failed\n"
+                        f"  ⊝ {current_stats.get('skipped', 0)} skipped"
+                    )
+                    
+                    # Update the stats (preserves other fields like fullname, total_roms, status)
+                    detail_panel.update_system_stats(event.system, current_stats)
+            except Exception as e:
+                logger.debug(f"Failed to update system detail panel: {e}")
 
     async def on_hashing_progress(self, event: HashingProgressEvent) -> None:
         """Handle hashing progress event."""
