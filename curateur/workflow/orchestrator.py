@@ -719,8 +719,10 @@ class WorkflowOrchestrator:
                                     year=game_info.get('releasedate', 'Unknown')[:4] if game_info.get('releasedate') else 'Unknown',
                                     genre=game_info.get('genre', 'Unknown'),
                                     developer=game_info.get('developer', 'Unknown'),
-                                    description=game_info.get('desc', '')[:300],  # Truncate for performance
-                                    confidence=1.0  # Hash match = 100% confidence
+                                    publisher=game_info.get('publisher', 'Unknown'),
+                                    players=game_info.get('players', 'Unknown'),
+                                    rating=game_info.get('rating'),
+                                    description=game_info.get('desc', '')[:300]  # Truncate for performance
                                 )
                             )
 

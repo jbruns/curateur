@@ -132,26 +132,16 @@ class PerformanceUpdateEvent:
 
 @dataclass(frozen=True)
 class GameCompletedEvent:
-    """Emitted when a game is successfully matched.
-
-    Used to populate the game spotlight widget.
-
-    Attributes:
-        game_id: ScreenScraper game ID
-        title: Game title
-        year: Release year
-        genre: Game genre(s)
-        developer: Developer name
-        description: Game description/synopsis
-        confidence: Match confidence score (0.0-1.0)
-    """
+    """Event emitted when a game is successfully scraped and added to gamelist."""
     game_id: str
     title: str
     year: Optional[str] = None
     genre: Optional[str] = None
     developer: Optional[str] = None
+    publisher: Optional[str] = None
+    players: Optional[str] = None
+    rating: Optional[float] = None
     description: Optional[str] = None
-    confidence: float = 1.0
 
 
 @dataclass(frozen=True)

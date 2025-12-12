@@ -1821,8 +1821,10 @@ class CurateurUI(App):
                 "year": event.year,
                 "genre": event.genre,
                 "developer": event.developer,
+                "publisher": event.publisher,
+                "players": event.players,
+                "rating": event.rating,
                 "description": event.description,
-                "confidence": event.confidence,
             }
             spotlight.add_game(game)
         except Exception as e:
