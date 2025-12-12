@@ -144,13 +144,27 @@ class EventBus:
     async def stop(self) -> None:
         """Stop processing events.
 
-        Waits for all pending events to be processed before stopping.
+        Waits for pending events to be processed before stopping, with a timeout.
         """
         logger.info("Stopping event bus...")
         self._processing = False
 
-        # Wait for queue to be empty
-        await self._queue.join()
+        # Wait for queue to be empty with a timeout
+        try:
+            await asyncio.wait_for(self._queue.join(), timeout=1.0)
+            logger.debug("Event queue drained successfully")
+        except asyncio.TimeoutError:
+            # Queue didn't drain in time - force drain remaining items
+            remaining = self._queue.qsize()
+            if remaining > 0:
+                logger.warning(f"Event queue timeout - {remaining} events remaining, force draining")
+                # Drain remaining items without processing
+                while not self._queue.empty():
+                    try:
+                        self._queue.get_nowait()
+                        self._queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
 
         logger.info(
             f"Event bus stopped. Processed {self._event_count} events "

@@ -411,8 +411,14 @@ class ThreadPoolManager:
         if self._work_queue and not self._workers_stopped:
             # Use shorter timeout and poll to allow interruption
             while not self._work_queue.queue.empty() and not self._workers_stopped:
+                # Check for quit request from Textual UI
+                if self.textual_ui and self.textual_ui.should_quit:
+                    logger.info("Quit requested during wait_for_completion - stopping workers")
+                    await self.stop_workers()
+                    break
+                    
                 try:
-                    # Wait up to 1 second at a time, allows checking _workers_stopped
+                    # Wait up to 1 second at a time, allows checking _workers_stopped and quit
                     # Note: drain() will log a warning if timeout is hit, but this is
                     # expected during periodic checks - we catch TimeoutError to continue
                     await asyncio.wait_for(self._work_queue.drain(timeout=1.0), timeout=1.0)
