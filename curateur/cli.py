@@ -288,7 +288,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
     # Create initial client with conservative pool size (will be updated after auth)
     client = pool_manager.create_client(max_connections=10)
-    logger.info(f"HTTP connection pool created (initial size: 10, will scale after authentication)")
+    logger.debug(f"HTTP connection pool created (initial size: 10, will scale after authentication)")
 
     # Phase E: Validate API configuration
     max_retries = config.get('api', {}).get('max_retries', 3)
@@ -561,7 +561,15 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                                 ''
                             )
 
-                progress.finish_system()
+                # Pass stats when using Textual UI (since log_rom isn't called)
+                if textual_ui:
+                    progress.finish_system(
+                        succeeded=result.scraped,
+                        failed=result.failed,
+                        skipped=result.skipped
+                    )
+                else:
+                    progress.finish_system()
 
             except KeyboardInterrupt:
                 logger.info("Interrupted by user, stopping pipeline tasks gracefully...")
@@ -618,6 +626,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         # Reconfigure logging to console after UI shutdown
         if textual_ui:
             _setup_logging(config)
+            logger.info("Textual UI has shut down successfully")
             print("\n" + "="*60)
             print("curateur: shutting down remaining resources...")
             print("="*60)
