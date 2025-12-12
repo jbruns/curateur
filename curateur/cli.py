@@ -328,6 +328,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     from curateur.ui.headless_logger import HeadlessLogger
     console_ui = None  # Not used (kept for variable name consistency)
     textual_ui = None
+    textual_ui_task = None
     headless_logger = None
 
     if sys.stdout.isatty() and not config['runtime'].get('dry_run', False):
@@ -685,6 +686,23 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Cleanup: close async client
     if client:
         await client.aclose()
+
+    # Shutdown Textual UI if running
+    if textual_ui_task and not textual_ui_task.done():
+        logger.info("Shutting down Textual UI...")
+        if textual_ui:
+            # Gracefully shutdown the UI
+            await textual_ui.shutdown()
+        # Wait for UI task to complete with timeout
+        try:
+            await asyncio.wait_for(textual_ui_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("Textual UI did not shut down gracefully, cancelling...")
+            textual_ui_task.cancel()
+            try:
+                await textual_ui_task
+            except asyncio.CancelledError:
+                pass
 
     return 0
 
