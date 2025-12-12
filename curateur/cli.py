@@ -390,6 +390,10 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 username=user_limits.get('id')
             ))
 
+        # Initialize throttle manager with initial quota values from authentication
+        await api_client.throttle_manager.update_quota(user_limits)
+        logger.debug(f"Throttle manager initialized with quota: {user_limits.get('requeststoday', 0)}/{user_limits.get('maxrequestsperday', 0)}")
+
         # Initialize thread pool with actual API limits
         thread_manager.initialize_pools(user_limits)
         logger.debug(f"Thread pool initialized with {thread_manager.max_concurrent} concurrent tasks")
