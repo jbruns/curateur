@@ -593,21 +593,33 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         # Stop Textual UI first if running
         if textual_ui_task and not textual_ui_task.done():
             logger.info("Shutting down Textual UI...")
+            logger.debug(f"UI task state: done={textual_ui_task.done()}, cancelled={textual_ui_task.cancelled()}")
             try:
+                # Call shutdown which will call exit()
                 await textual_ui.shutdown()
-                textual_ui_task.cancel()
+                logger.debug("Shutdown method completed, waiting for UI task to finish...")
+                
+                # Wait for the UI task to complete (exit should have been called)
+                # Give it a reasonable timeout to exit gracefully
                 try:
-                    await textual_ui_task
-                except asyncio.CancelledError:
-                    pass
+                    await asyncio.wait_for(textual_ui_task, timeout=2.0)
+                    logger.debug("UI task completed successfully")
+                except asyncio.TimeoutError:
+                    logger.warning("UI task did not complete within timeout, forcing cancellation")
+                    textual_ui_task.cancel()
+                    try:
+                        await textual_ui_task
+                    except asyncio.CancelledError:
+                        logger.debug("UI task cancelled")
             except Exception as e:
                 logger.warning(f"Error during Textual UI shutdown: {e}")
+                logger.debug("Exception details:", exc_info=True)
         
         # Reconfigure logging to console after UI shutdown
         if textual_ui:
             _setup_logging(config)
             print("\n" + "="*60)
-            print("Textual UI closed - shutting down remaining resources...")
+            print("curateur: shutting down remaining resources...")
             print("="*60)
         
         # Shutdown thread manager
