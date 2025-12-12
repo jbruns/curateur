@@ -643,8 +643,8 @@ class FilterableLogWidget(Container):
             text.append(message)
 
             log_widget.write(text)
-        except Exception as e:
-            logger.debug(f"Failed to append log: {e}")
+        except Exception:
+            pass  # Silently ignore logging errors to prevent feedback loop
 
     def on_input_changed(self, event) -> None:
         """Handle filter text changes."""
@@ -1995,14 +1995,14 @@ class CurateurUI(App):
 
     async def on_log_entry(self, event: LogEntryEvent) -> None:
         """Handle log entry event."""
-        logger.debug(f"Log: [{logging.getLevelName(event.level)}] {event.message}")
-
+        # Don't log here - creates infinite feedback loop
+        
         # Add log to Details tab
         try:
             filterable_logs = self.query_one("#filterable-logs", FilterableLogWidget)
             filterable_logs.append_log(event.level, event.message, event.timestamp)
-        except Exception as e:
-            logger.debug(f"Failed to add log to Details tab: {e}")
+        except Exception:
+            pass  # Silently ignore logging errors to prevent feedback loop
 
         # Show notification on Overview tab for WARNING/ERROR
         if event.level >= logging.WARNING and self.current_tab == "overview":
@@ -2528,6 +2528,9 @@ class CurateurUI(App):
         logger.info("Shutting down Curateur UI...")
         await self.event_bus.stop()
         logger.info("UI shutdown complete")
+        # Exit the application if not already exiting
+        if self.is_running:
+            self.exit()
 
 
 # ============================================================================
