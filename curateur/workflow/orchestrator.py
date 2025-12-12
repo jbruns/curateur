@@ -2307,7 +2307,7 @@ class WorkflowOrchestrator:
 
         # Import event types
         from ..ui.events import (
-            PerformanceUpdateEvent, ThreadPoolUpdateEvent, APIQuotaEvent,
+            PerformanceUpdateEvent,
             CacheMetricsEvent, MediaStatsEvent
         )
 
