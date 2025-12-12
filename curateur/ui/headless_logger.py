@@ -176,10 +176,6 @@ class HeadlessLogger:
         """No-op for headless."""
         pass
 
-    def increment_gamelist_removed(self) -> None:
-        """No-op for headless."""
-        pass
-
     def increment_completed(self, success: bool = True, skipped: bool = False) -> None:
         """Track completion stats."""
         self.processed_in_system += 1
