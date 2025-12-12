@@ -2501,6 +2501,32 @@ class WorkflowOrchestrator:
             )
         )
 
+        # Emit processing summary (categorized results mirroring summary log format)
+        if results:
+            successful = []
+            skipped = []
+            failed = []
+            
+            for result in results:
+                rom_name = result.rom_path.name
+                if result.success and not result.error:
+                    successful.append(rom_name)
+                elif hasattr(result, 'skipped') and result.skipped:
+                    skip_reason = getattr(result, 'skip_reason', 'Unknown reason')
+                    skipped.append((rom_name, skip_reason))
+                elif not result.success:
+                    error_msg = result.error or 'Unknown error'
+                    failed.append((rom_name, error_msg))
+            
+            from ..ui.events import ProcessingSummaryEvent
+            await self.event_bus.publish(
+                ProcessingSummaryEvent(
+                    successful=sorted(successful, key=str.lower),
+                    skipped=sorted(skipped, key=lambda x: x[0].lower()),
+                    failed=sorted(failed, key=lambda x: x[0].lower())
+                )
+            )
+
     def _prompt_gamelist_validation_failure(
         self,
         system_name: str,

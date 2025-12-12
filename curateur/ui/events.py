@@ -291,3 +291,20 @@ class MediaStatsEvent:
     total_validated: int
     total_skipped: int
     total_failed: int
+
+
+@dataclass(frozen=True)
+class ProcessingSummaryEvent:
+    """Emitted with categorized processing results (mirrors summary log format).
+
+    Provides real-time view of results breakdown matching what will be written
+    to the summary log file.
+
+    Attributes:
+        successful: List of successful ROM filenames
+        skipped: List of tuples (filename, skip_reason)
+        failed: List of tuples (filename, error_message)
+    """
+    successful: list[str]
+    skipped: list[tuple[str, str]]
+    failed: list[tuple[str, str]]
