@@ -67,7 +67,7 @@ class OverallProgressWidget(Container):
     """Displays overall run progress with progress bar."""
 
     # Reactive properties updated by events
-    systems_complete = reactive(0)
+    current_system_index = reactive(0)  # 1-based index of current system being processed
     systems_total = reactive(0)
     processed = reactive(0)
     total_roms = reactive(0)
@@ -92,8 +92,8 @@ class OverallProgressWidget(Container):
         """Update display when successful count changes."""
         self.update_display()
 
-    def watch_systems_complete(self, old_value: int, new_value: int) -> None:
-        """Update display when systems complete count changes."""
+    def watch_current_system_index(self, old_value: int, new_value: int) -> None:
+        """Update display when current system index changes."""
         self.update_display()
 
     def update_display(self) -> None:
@@ -102,7 +102,7 @@ class OverallProgressWidget(Container):
 
         # Header text
         header = Text()
-        header.append(f"Systems: {self.systems_complete}/{self.systems_total}\n", style="white")
+        header.append(f"Systems: {self.current_system_index}/{self.systems_total}\n", style="white")
         header.append(f"ROMs: {self.processed}/{self.total_roms} ", style="cyan")
         header.append(f"({progress_pct:.1f}%)", style="bright_green")
         header.append("\n")
@@ -136,6 +136,8 @@ class CurrentSystemOperations(Container):
     search_unmatched_count = reactive(0)
     media_in_flight = reactive(0)
     media_downloaded = reactive(0)
+    media_validated = reactive(0)
+    media_skipped = reactive(0)
     media_failed = reactive(0)
     
     # Cache statistics
@@ -183,6 +185,46 @@ class CurrentSystemOperations(Container):
 
     def watch_media_in_flight(self, old_value: int, new_value: int) -> None:
         """Update display when media downloads change."""
+        self.update_media()
+
+    def watch_cache_hit_rate(self, old_value: float, new_value: float) -> None:
+        """Update display when cache hit rate changes."""
+        self.update_cache()
+
+    def watch_cache_existing(self, old_value: int, new_value: int) -> None:
+        """Update display when cache existing count changes."""
+        self.update_cache()
+
+    def watch_cache_new(self, old_value: int, new_value: int) -> None:
+        """Update display when cache new count changes."""
+        self.update_cache()
+
+    def watch_gamelist_existing(self, old_value: int, new_value: int) -> None:
+        """Update display when gamelist existing count changes."""
+        self.update_gamelist()
+
+    def watch_gamelist_added(self, old_value: int, new_value: int) -> None:
+        """Update display when gamelist added count changes."""
+        self.update_gamelist()
+
+    def watch_gamelist_updated(self, old_value: int, new_value: int) -> None:
+        """Update display when gamelist updated count changes."""
+        self.update_gamelist()
+
+    def watch_media_downloaded(self, old_value: int, new_value: int) -> None:
+        """Update display when media downloaded count changes."""
+        self.update_media()
+
+    def watch_media_validated(self, old_value: int, new_value: int) -> None:
+        """Update display when media validated count changes."""
+        self.update_media()
+
+    def watch_media_skipped(self, old_value: int, new_value: int) -> None:
+        """Update display when media skipped count changes."""
+        self.update_media()
+
+    def watch_media_failed(self, old_value: int, new_value: int) -> None:
+        """Update display when media failed count changes."""
         self.update_media()
 
     def update_display(self) -> None:
@@ -281,7 +323,12 @@ class CurrentSystemOperations(Container):
         if self.media_in_flight > 0:
             media_content.append(f"⬇ {self.media_in_flight} ", style="yellow")
         media_content.append(f"✓ {self.media_downloaded} ", style="bright_green")
-        media_content.append(f"✗ {self.media_failed}", style="red")
+        if self.media_validated > 0:
+            media_content.append(f"✔ {self.media_validated} ", style="white")
+        if self.media_skipped > 0:
+            media_content.append(f"⊝ {self.media_skipped} ", style="dim")
+        if self.media_failed > 0:
+            media_content.append(f"✗ {self.media_failed}", style="red")
 
         self.query_one("#media-content", Static).update(media_content)
 
@@ -423,13 +470,15 @@ class PerformancePanel(Container):
     quota_limit = reactive(0)
     threads_in_use = reactive(0)
     threads_limit = reactive(0)
+    system_eta = reactive("")
 
     def compose(self) -> ComposeResult:
-        yield Static(id="account-info")
+        # Order matches mockup: Throughput, API Rate, Account+Threads, Quota, ETA
         yield Static(id="throughput")
         yield Static(id="api-rate")
-        yield Static(id="threads-info")
+        yield Static(id="account-info")
         yield Static(id="api-quota")
+        yield Static(id="eta-stats")
 
     def on_mount(self) -> None:
         """Initialize performance panel."""
@@ -437,6 +486,7 @@ class PerformancePanel(Container):
         self.account_name = "Authenticating..."
         self.throughput_history = []
         self.api_rate_history = []
+        self.system_eta = "—"
         self.update_display()
 
     def watch_quota_used(self, old_value: int, new_value: int) -> None:
@@ -445,7 +495,7 @@ class PerformancePanel(Container):
 
     def watch_threads_in_use(self, old_value: int, new_value: int) -> None:
         """Update display when thread usage changes."""
-        self.update_threads()
+        self.update_account_info()
 
     def watch_throughput_history(self, old_value: list, new_value: list) -> None:
         """Update display when throughput history changes."""
@@ -459,24 +509,21 @@ class PerformancePanel(Container):
         """Update display when account name changes."""
         self.update_account_info()
 
+    def watch_threads_limit(self, old_value: int, new_value: int) -> None:
+        """Update display when thread limit changes."""
+        self.update_account_info()
+
+    def watch_system_eta(self, old_value: str, new_value: str) -> None:
+        """Update display when system ETA changes."""
+        self.update_eta_stats()
+
     def update_display(self) -> None:
         """Render all metrics."""
-        self.update_account_info()
         self.update_throughput()
         self.update_api_rate()
-        self.update_threads()
+        self.update_account_info()
         self.update_quota()
-
-    def update_account_info(self) -> None:
-        """Update account info line."""
-        if self.account_name:
-            self.query_one("#account-info", Static).update(
-                f"[bold]Logged in as:[/bold] [bright_magenta]{self.account_name}[/bright_magenta]"
-            )
-        else:
-            self.query_one("#account-info", Static).update(
-                "[dim italic]Authenticating...[/dim italic]"
-            )
+        self.update_eta_stats()
 
     def update_throughput(self) -> None:
         """Update throughput line."""
@@ -494,11 +541,17 @@ class PerformancePanel(Container):
             f"[bold]API Rate:[/bold]   [yellow]{spark}[/yellow] [cyan]{current:.1f} calls/min[/cyan]"
         )
 
-    def update_threads(self) -> None:
-        """Update threads line."""
-        self.query_one("#threads-info", Static).update(
-            f"[bold]Threads:[/bold] {self.threads_in_use}/{self.threads_limit}"
-        )
+    def update_account_info(self) -> None:
+        """Update account info line with threads on same line."""
+        if self.account_name:
+            self.query_one("#account-info", Static).update(
+                f"[bold]Logged in as:[/bold] [bright_magenta]{self.account_name}[/bright_magenta] | "
+                f"[bold]Threads:[/bold] {self.threads_in_use}/{self.threads_limit}"
+            )
+        else:
+            self.query_one("#account-info", Static).update(
+                "[dim italic]Authenticating...[/dim italic]"
+            )
 
     def update_quota(self) -> None:
         """Update quota line."""
@@ -506,6 +559,13 @@ class PerformancePanel(Container):
         quota_bar = self.create_inline_progress_bar(self.quota_used, self.quota_limit, 30)
         self.query_one("#api-quota", Static).update(
             f"[bold]API Quota:[/bold] {self.quota_used}/{self.quota_limit} ({quota_pct:.1f}%) [yellow]{quota_bar}[/yellow]"
+        )
+
+    def update_eta_stats(self) -> None:
+        """Update ETA and system stats line."""
+        # TODO: Add memory and CPU tracking when implemented
+        self.query_one("#eta-stats", Static).update(
+            f"[bold]System ETA:[/bold] [yellow]{self.system_eta}[/yellow]"
         )
 
     @staticmethod
@@ -612,8 +672,9 @@ class FilterableLogWidget(Container):
 class ActiveRequestsTable(Container):
     """Table showing currently active requests."""
 
-    # Track active requests by ROM name
+    # Track active requests by ROM name with start times
     active_requests = reactive(dict)
+    request_start_times = {}  # Maps rom_name -> start timestamp
 
     def compose(self) -> ComposeResult:
         from textual.widgets import DataTable
@@ -624,14 +685,19 @@ class ActiveRequestsTable(Container):
         from textual.widgets import DataTable
         self.border_title = "Active Requests (0 concurrent)"
         self.active_requests = {}
+        self.request_start_times = {}
 
         table = self.query_one("#active-requests-table", DataTable)
         table.add_columns("ROM", "Stage", "Duration", "Status")
         table.cursor_type = "row"
+        
+        # Start timer to update durations every 0.5 seconds
+        self.set_interval(0.5, self._update_durations)
 
     def update_request(self, rom_name: str, stage: str, status: str, duration: float = 0.0) -> None:
         """Add or update an active request."""
         from textual.widgets import DataTable
+        import time
 
         try:
             table = self.query_one("#active-requests-table", DataTable)
@@ -653,6 +719,8 @@ class ActiveRequestsTable(Container):
                     status
                 )
                 self.active_requests = {**self.active_requests, rom_name: row_key}
+                # Track start time for this request
+                self.request_start_times[rom_name] = time.time()
 
             # Update border title with count
             count = len(self.active_requests)
@@ -675,6 +743,10 @@ class ActiveRequestsTable(Container):
                 new_requests = dict(self.active_requests)
                 del new_requests[rom_name]
                 self.active_requests = new_requests
+                
+                # Remove start time tracking
+                if rom_name in self.request_start_times:
+                    del self.request_start_times[rom_name]
 
                 # Update border title with count
                 count = len(self.active_requests)
@@ -682,6 +754,26 @@ class ActiveRequestsTable(Container):
 
         except Exception as e:
             logger.debug(f"Failed to remove active request: {e}")
+
+    def _update_durations(self) -> None:
+        """Update duration column for all active requests in real-time."""
+        from textual.widgets import DataTable
+        import time
+
+        try:
+            if not self.active_requests:
+                return
+
+            table = self.query_one("#active-requests-table", DataTable)
+            current_time = time.time()
+
+            for rom_name, row_key in self.active_requests.items():
+                if rom_name in self.request_start_times:
+                    elapsed = current_time - self.request_start_times[rom_name]
+                    table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
+
+        except Exception as e:
+            logger.debug(f"Failed to update durations: {e}")
 
     def clear_all(self) -> None:
         """Clear all active requests."""
@@ -954,6 +1046,7 @@ class ConfigTab(Container):
                             value=3,
                             id="max-retries",
                             allow_blank=False,
+                            compact=True
                         )
 
                     with Horizontal(classes="config-row"):
@@ -963,6 +1056,7 @@ class ConfigTab(Container):
                             value=5,
                             id="retry-backoff",
                             allow_blank=False,
+                            compact=True
                         )
 
                 # Runtime Settings
@@ -979,6 +1073,7 @@ class ConfigTab(Container):
                             id="max-workers-select",
                             disabled=True,
                             allow_blank=False,
+                            compact=True
                         )
 
             # Right Column: Logging and Search Settings
@@ -1698,6 +1793,7 @@ class CurateurUI(App):
         try:
             overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
             overall_progress.systems_total = event.total_systems
+            overall_progress.current_system_index = event.current_index + 1  # Convert to 1-based
             overall_progress.total_roms += event.total_roms
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
@@ -1744,11 +1840,13 @@ class CurateurUI(App):
             f"Success: {event.successful}, Failed: {event.failed}, Skipped: {event.skipped}"
         )
 
-        # Update overall progress widget - only increment systems_complete
+        # Update overall progress widget - system completed
         # (successful/failed/skipped are already updated per-ROM in on_rom_progress)
+        # Note: current_system_index is already set when system starts
         try:
             overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
-            overall_progress.systems_complete += 1
+            # No need to update anything here - index already shows current system
+            pass
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
 
@@ -2234,6 +2332,8 @@ class CurateurUI(App):
                 stats.get('successful', 0) for stats in event.by_type.values()
             )
             current_system.media_downloaded = total_downloaded
+            current_system.media_validated = event.total_validated
+            current_system.media_skipped = event.total_skipped
             current_system.media_failed = event.total_failed
         except Exception as e:
             logger.debug(f"Failed to update media stats: {e}")
