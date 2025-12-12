@@ -49,6 +49,7 @@ from curateur.ui.events import (
     MediaStatsEvent,
     SearchActivityEvent,
     AuthenticationEvent,
+    ProcessingSummaryEvent,
 )
 
 import asyncio
@@ -1768,6 +1769,7 @@ class CurateurUI(App):
         self.event_bus.subscribe(MediaStatsEvent, self.on_media_stats_event)
         self.event_bus.subscribe(SearchActivityEvent, self.on_search_activity_event)
         self.event_bus.subscribe(AuthenticationEvent, self.on_authentication_event)
+        self.event_bus.subscribe(ProcessingSummaryEvent, self.on_processing_summary_event)
 
         # Subscribe orchestrator to search responses (set by CLI after initialization)
         if hasattr(self, 'orchestrator') and self.orchestrator is not None:
@@ -2307,6 +2309,85 @@ class CurateurUI(App):
                 severity="error",
                 timeout=5
             )
+
+    async def on_processing_summary_event(self, event) -> None:
+        """Handle processing summary event."""
+        from ..ui.events import ProcessingSummaryEvent
+        if not isinstance(event, ProcessingSummaryEvent):
+            return
+        
+        logger.debug(
+            f"Processing summary: {len(event.successful)} successful, "
+            f"{len(event.skipped)} skipped, {len(event.failed)} failed"
+        )
+        
+        # Update Systems tab detail panel with summary
+        try:
+            detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+            if self.current_system:
+                system_name = self.current_system.system_name
+                # Initialize stats if they don't exist yet
+                if system_name not in detail_panel.system_stats:
+                    detail_panel.system_stats = {
+                        **detail_panel.system_stats,
+                        system_name: {
+                            "fullname": system_name,
+                            "total_roms": 0,
+                            "successful": 0,
+                            "failed": 0,
+                            "skipped": 0,
+                            "status": "in_progress",
+                            "summary": "Processing..."
+                        }
+                    }
+                
+                # Build detailed summary text matching log format
+                summary_lines = []
+                
+                # Overall counts
+                total = len(event.successful) + len(event.skipped) + len(event.failed)
+                summary_lines.append(f"Total: {total}")
+                summary_lines.append(f"  ✓ {len(event.successful)} successful")
+                summary_lines.append(f"  ⊝ {len(event.skipped)} skipped")
+                summary_lines.append(f"  ✗ {len(event.failed)} failed")
+                summary_lines.append("")
+                
+                # Add sample entries from each category (limit to avoid overwhelming UI)
+                max_samples = 5
+                
+                if event.successful:
+                    summary_lines.append("Recent Successful:")
+                    for filename in event.successful[-max_samples:]:
+                        summary_lines.append(f"  • {filename}")
+                    if len(event.successful) > max_samples:
+                        summary_lines.append(f"  ... and {len(event.successful) - max_samples} more")
+                    summary_lines.append("")
+                
+                if event.skipped:
+                    summary_lines.append("Recent Skipped:")
+                    for filename, reason in event.skipped[-max_samples:]:
+                        summary_lines.append(f"  • {filename}")
+                        summary_lines.append(f"    ({reason})")
+                    if len(event.skipped) > max_samples:
+                        summary_lines.append(f"  ... and {len(event.skipped) - max_samples} more")
+                    summary_lines.append("")
+                
+                if event.failed:
+                    summary_lines.append("Recent Failed:")
+                    for filename, error in event.failed[-max_samples:]:
+                        # Truncate long error messages
+                        error_short = error[:60] + "..." if len(error) > 60 else error
+                        summary_lines.append(f"  • {filename}")
+                        summary_lines.append(f"    ({error_short})")
+                    if len(event.failed) > max_samples:
+                        summary_lines.append(f"  ... and {len(event.failed) - max_samples} more")
+                
+                # Update stats with summary
+                current_stats = dict(detail_panel.system_stats[system_name])
+                current_stats['summary'] = "\n".join(summary_lines)
+                detail_panel.update_system_stats(system_name, current_stats)
+        except Exception as e:
+            logger.debug(f"Failed to update processing summary: {e}")
 
     async def on_search_activity_event(self, event) -> None:
         """Handle search activity event."""
