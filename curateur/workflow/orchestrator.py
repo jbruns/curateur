@@ -2480,6 +2480,17 @@ class WorkflowOrchestrator:
                 )
             )
 
+        # Emit gamelist stats
+        from ..ui.events import GamelistUpdateEvent
+        await self.event_bus.publish(
+            GamelistUpdateEvent(
+                system='current',  # Generic system identifier during processing
+                existing=self.session_stats['gamelist_existing'],
+                added=self.session_stats['gamelist_added'],
+                updated=self.session_stats['gamelist_updated']
+            )
+        )
+
         # Emit media stats
         await self.event_bus.publish(
             MediaStatsEvent(
