@@ -156,11 +156,19 @@ def _setup_logging(config: dict, console_ui=None, textual_ui=None, event_bus=Non
     # File handler (if configured)
     log_file = logging_config.get('file')
     if log_file:
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(level)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        handlers.append(file_handler)
+        try:
+            log_path = Path(log_file)
+            # Create parent directory if it doesn't exist
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setLevel(level)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+            handlers.append(file_handler)
+        except (OSError, PermissionError) as e:
+            print(f"Error: Could not create log file '{log_file}': {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Configure root logger
     logging.basicConfig(
@@ -686,27 +694,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Write error log if needed
     if error_logger.has_errors():
         error_logger.write_summary('scraping_errors.log')
-
-    # Cleanup: close async client
-    if client:
-        await client.aclose()
-
-    # Shutdown Textual UI if running
-    if textual_ui_task and not textual_ui_task.done():
-        logger.info("Shutting down Textual UI...")
-        if textual_ui:
-            # Gracefully shutdown the UI
-            await textual_ui.shutdown()
-        # Wait for UI task to complete with timeout
-        try:
-            await asyncio.wait_for(textual_ui_task, timeout=2.0)
-        except asyncio.TimeoutError:
-            logger.warning("Textual UI did not shut down gracefully, cancelling...")
-            textual_ui_task.cancel()
-            try:
-                await textual_ui_task
-            except asyncio.CancelledError:
-                pass
 
     return 0
 
