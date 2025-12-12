@@ -1947,8 +1947,23 @@ class WorkflowOrchestrator:
 
             logger.info(f"Pipeline tasks spawned. Waiting for completion...")
 
+            # Start periodic UI updates in background
+            ui_update_task = None
+            if self.event_bus:
+                ui_update_task = asyncio.create_task(
+                    self._periodic_ui_update(not_found_items, len(rom_entries))
+                )
+
             # Wait for all work to complete and collect results
             task_results = await self.thread_manager.wait_for_completion()
+            
+            # Stop periodic UI updates
+            if ui_update_task:
+                ui_update_task.cancel()
+                try:
+                    await ui_update_task
+                except asyncio.CancelledError:
+                    pass
 
             logger.info(f"All pipeline tasks completed ({len(task_results)} results)")
 
