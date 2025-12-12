@@ -680,9 +680,35 @@ class WorkflowOrchestrator:
 
                 api_start = time.time()
 
+                # Emit ActiveRequestEvent - API fetch started (only if not from cache)
+                if self.event_bus and not from_cache:
+                    from ..ui.events import ActiveRequestEvent
+                    await self.event_bus.publish(
+                        ActiveRequestEvent(
+                            request_id=f"{rom_info.filename}-api",
+                            rom_name=rom_info.filename,
+                            stage="API Fetch",
+                            status="started",
+                            duration=0.0
+                        )
+                    )
+
                 try:
                     game_info = await self.api_client.query_game(rom_info, shutdown_event=shutdown_event)
                     api_duration = time.time() - api_start
+
+                    # Emit ActiveRequestEvent - API fetch completed (only if not from cache)
+                    if self.event_bus and not from_cache:
+                        from ..ui.events import ActiveRequestEvent
+                        await self.event_bus.publish(
+                            ActiveRequestEvent(
+                                request_id=f"{rom_info.filename}-api",
+                                rom_name=rom_info.filename,
+                                stage="API Fetch",
+                                status="completed",
+                                duration=api_duration
+                            )
+                        )
 
                     # Track cache additions (new API calls that get cached)
                     if game_info and not from_cache:
@@ -753,21 +779,63 @@ class WorkflowOrchestrator:
                 except SkippableAPIError as e:
                     logger.debug(f"[{rom_info.filename}] Hash lookup failed: {e}")
 
+                    # Emit ActiveRequestEvent - API fetch failed
+                    if self.event_bus and not from_cache:
+                        from ..ui.events import ActiveRequestEvent
+                        await self.event_bus.publish(
+                            ActiveRequestEvent(
+                                request_id=f"{rom_info.filename}-api",
+                                rom_name=rom_info.filename,
+                                stage="API Fetch",
+                                status="failed",
+                                duration=time.time() - api_start,
+                                last_failure=str(e)
+                            )
+                        )
+
                     # Try search fallback if enabled
                     if self.enable_search_fallback:
                         logger.info(f"[{rom_info.filename}] Attempting search fallback")
                         
+                        # Emit ActiveRequestEvent - Search started
+                        if self.event_bus:
+                            from ..ui.events import ActiveRequestEvent
+                            await self.event_bus.publish(
+                                ActiveRequestEvent(
+                                    request_id=f"{rom_info.filename}-search",
+                                    rom_name=rom_info.filename,
+                                    stage="Search",
+                                    status="started",
+                                    duration=0.0
+                                )
+                            )
+                        
                         # Track search fallback attempt
                         self.session_stats['search_fallback'] += 1
                         
+                        search_start = time.time()
                         game_info = await self._search_fallback(
                             rom_info,
                             preferred_regions,
                             shutdown_event=shutdown_event
                         )
+                        search_duration = time.time() - search_start
 
                         if game_info:
                             api_duration = time.time() - api_start
+
+                            # Emit ActiveRequestEvent - Search completed
+                            if self.event_bus:
+                                from ..ui.events import ActiveRequestEvent
+                                await self.event_bus.publish(
+                                    ActiveRequestEvent(
+                                        request_id=f"{rom_info.filename}-search",
+                                        rom_name=rom_info.filename,
+                                        stage="Search",
+                                        status="completed",
+                                        duration=search_duration
+                                    )
+                                )
 
                             # Record API timing
                             if hasattr(self, 'performance_monitor') and self.performance_monitor:
@@ -778,6 +846,20 @@ class WorkflowOrchestrator:
                             # Increment task counter but don't emit completion status
                             completed_tasks += 1
                         else:
+                            # Emit ActiveRequestEvent - Search failed
+                            if self.event_bus:
+                                from ..ui.events import ActiveRequestEvent
+                                await self.event_bus.publish(
+                                    ActiveRequestEvent(
+                                        request_id=f"{rom_info.filename}-search",
+                                        rom_name=rom_info.filename,
+                                        stage="Search",
+                                        status="failed",
+                                        duration=search_duration,
+                                        last_failure="No matches found"
+                                    )
+                                )
+                            
                             logger.info(f"[{rom_info.filename}] Search fallback: no matches found")
                     else:
                         raise
