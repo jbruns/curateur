@@ -373,7 +373,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     logger.debug("Starting authentication")
 
     # Emit authentication started event
-    from curateur.ui.events import AuthenticationEvent, APIQuotaEvent
+    from curateur.ui.events import AuthenticationEvent
     if event_bus:
         await event_bus.publish(AuthenticationEvent(status='authenticating', username=None))
 
@@ -387,12 +387,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             await event_bus.publish(AuthenticationEvent(
                 status='authenticated',
                 username=user_limits.get('id')
-            ))
-            # Emit initial API quota
-            await event_bus.publish(APIQuotaEvent(
-                requests_used=user_limits.get('requeststoday', 0),
-                requests_limit=user_limits.get('maxrequestsperday', 0),
-                username=user_limits.get('id', 'unknown')
             ))
 
         # Initialize thread pool with actual API limits
