@@ -207,25 +207,21 @@ class ThreadPoolManager:
 
     async def spawn_workers(
         self,
-        work_queue: 'WorkQueueManager',
-        rom_processor: Callable[[Any, Optional[Callable]], Awaitable[Any]],
-        operation_callback: Optional[
-            Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]
-        ],
-        count: int,
-        stagger_delay: float = 0.0
+        work_queue: Any,
+        rom_processor: Callable,
+        operation_callback: Optional[Callable] = None,
+        result_callback: Optional[Callable] = None,
+        count: int = 1,
+        stagger_delay: float = 0.0  # Deprecated - kept for backwards compatibility
     ) -> None:
         """
-        Spawn concurrent task coroutines that continuously process items from work queue
-
-        Tasks pull work items from queue, process them, and repeat until:
-        - Queue is empty AND system marked complete
-        - Shutdown event is set
+        Spawn concurrent worker tasks to process work queue
 
         Args:
             work_queue: WorkQueueManager instance to pull work from
             rom_processor: Async function to process each ROM
             operation_callback: Optional UI callback for progress updates
+            result_callback: Optional callback invoked when each ROM completes (receives rom_info, result)
             count: Number of concurrent tasks to spawn
             stagger_delay: Delay in seconds between starting each task (default: 0.0, deprecated)
         """
@@ -236,6 +232,7 @@ class ThreadPoolManager:
         self._work_queue = work_queue
         self._rom_processor = rom_processor
         self._operation_callback = operation_callback
+        self._result_callback = result_callback
 
         logger.info(f"Spawning {count} concurrent task(s)")
 
@@ -371,6 +368,13 @@ class ThreadPoolManager:
                 # Store result
                 async with self._results_lock:
                     self._results.append((rom_info, result))
+
+                # Call result callback immediately (for real-time UI updates)
+                if self._result_callback:
+                    try:
+                        await self._result_callback(rom_info, result)
+                    except Exception as e:
+                        logger.error(f"Result callback failed for {rom_info.filename}: {e}")
 
                 # Mark as processed
                 await self._work_queue.mark_processed(work_item)

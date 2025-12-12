@@ -444,37 +444,14 @@ class WorkflowOrchestrator:
             existing_entries
         )
 
-        # Count results and emit progress events
+        # Count results
         for result in results:
             if result.success:
                 scraped_count += 1
-                # Emit completion event
-                if self.event_bus:
-                    from ..ui.events import ROMProgressEvent
-                    await self.event_bus.publish(
-                        ROMProgressEvent(
-                            rom_name=result.rom_path.name,
-                            system=system.name,
-                            status="complete",
-                            detail=f"Successfully processed"
-                        )
-                    )
             elif result.error:
                 failed_count += 1
-                # Emit failure event
-                if self.event_bus:
-                    from ..ui.events import ROMProgressEvent
-                    await self.event_bus.publish(
-                        ROMProgressEvent(
-                            rom_name=result.rom_path.name,
-                            system=system.name,
-                            status="failed",
-                            detail=result.error
-                        )
-                    )
             else:
                 skipped_count += 1
-                # Note: Skipped ROMs already emit event during _scrape_rom
 
         # Step 5: Generate gamelist
         # Write gamelist if there are new entries OR existing entries to maintain
@@ -1960,11 +1937,47 @@ class WorkflowOrchestrator:
             # Clear any previous results
             self.thread_manager.clear_results()
 
+            # Create result callback for real-time UI updates
+            async def on_rom_complete(rom_info, result):
+                """Called immediately when each ROM completes processing"""
+                # Emit real-time progress event
+                if self.event_bus:
+                    from ..ui.events import ROMProgressEvent
+                    if result.success:
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=result.rom_path.name,
+                                system=system.name,
+                                status="complete",
+                                detail=f"Successfully processed"
+                            )
+                        )
+                    elif result.error:
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=result.rom_path.name,
+                                system=system.name,
+                                status="failed",
+                                detail=result.error
+                            )
+                        )
+                    else:
+                        # Skipped
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=result.rom_path.name,
+                                system=system.name,
+                                status="skipped",
+                                detail="ROM skipped"
+                            )
+                        )
+
             # Spawn concurrent tasks that will continuously process from queue
             await self.thread_manager.spawn_workers(
                 work_queue=self.work_queue,
                 rom_processor=rom_processor,
                 operation_callback=None,
+                result_callback=on_rom_complete,
                 count=self.thread_manager.max_concurrent
             )
 
@@ -2043,6 +2056,41 @@ class WorkflowOrchestrator:
                         existing_entries=existing_entries
                     )
                     results.append(result)
+
+                    # Emit real-time progress event for this ROM
+                    if self.event_bus:
+                        from ..ui.events import ROMProgressEvent
+                        if result.success:
+                            await self.event_bus.publish(
+                                ROMProgressEvent(
+                                    rom_name=result.rom_path.name,
+                                    system=system.name,
+                                    status="complete",
+                                    detail=f"Successfully processed"
+                                )
+                            )
+                        elif result.error:
+                            await self.event_bus.publish(
+                                ROMProgressEvent(
+                                    rom_name=result.rom_path.name,
+                                    system=system.name,
+                                    status="failed",
+                                    detail=result.error
+                                )
+                            )
+                        else:
+                            # Skipped
+                            await self.event_bus.publish(
+                                ROMProgressEvent(
+                                    rom_name=result.rom_path.name,
+                                    system=system.name,
+                                    status="skipped",
+                                    detail="ROM skipped"
+                                )
+                            )
+                        
+                        # Yield to event loop to allow events to be processed
+                        await asyncio.sleep(0)
 
                     # Track not found items
                     if not result.success and result.error == "No game info found from API":

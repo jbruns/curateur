@@ -117,10 +117,24 @@ class ProgressTracker:
             detail=detail
         ))
     
-    def finish_system(self) -> None:
-        """Finish tracking current system and print summary."""
+    def finish_system(self, succeeded: Optional[int] = None, failed: Optional[int] = None, skipped: Optional[int] = None) -> None:
+        """Finish tracking current system and print summary.
+        
+        Args:
+            succeeded: Override succeeded count (for Textual UI mode)
+            failed: Override failed count (for Textual UI mode)
+            skipped: Override skipped count (for Textual UI mode)
+        """
         if not self.current_system:
             return
+        
+        # Use provided stats if available (for Textual UI mode where log_rom isn't called)
+        if succeeded is not None:
+            self.current_system.succeeded = succeeded
+        if failed is not None:
+            self.current_system.failed = failed
+        if skipped is not None:
+            self.current_system.skipped = skipped
         
         self.current_system.end_time = time.time()
         
