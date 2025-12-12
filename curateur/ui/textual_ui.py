@@ -44,6 +44,11 @@ from curateur.ui.events import (
     GameCompletedEvent,
     ActiveRequestEvent,
     SearchRequestEvent,
+    CacheMetricsEvent,
+    GamelistUpdateEvent,
+    MediaStatsEvent,
+    SearchActivityEvent,
+    AuthenticationEvent,
 )
 
 import asyncio
@@ -127,6 +132,8 @@ class CurrentSystemOperations(Container):
     metadata_total = reactive(0)
     search_in_flight = reactive(0)
     search_total = reactive(0)
+    search_fallback_count = reactive(0)
+    search_unmatched_count = reactive(0)
     media_in_flight = reactive(0)
     media_downloaded = reactive(0)
     media_failed = reactive(0)
@@ -255,6 +262,14 @@ class CurrentSystemOperations(Container):
         else:
             api_content.append("Idle ", style="dim")
         api_content.append(f"✓ {self.search_total}", style="bright_green")
+        
+        # Search fallback and unmatched stats
+        if self.search_fallback_count > 0 or self.search_unmatched_count > 0:
+            api_content.append("\n", style="dim")
+            if self.search_fallback_count > 0:
+                api_content.append(f"↻ {self.search_fallback_count} fallback ", style="yellow")
+            if self.search_unmatched_count > 0:
+                api_content.append(f"✗ {self.search_unmatched_count} unmatched", style="red")
 
         self.query_one("#api-content", Static).update(api_content)
 
@@ -401,6 +416,7 @@ class PerformancePanel(Container):
     """Displays performance metrics."""
 
     # Reactive properties
+    account_name = reactive("")
     throughput_history = reactive(list)
     api_rate_history = reactive(list)
     quota_used = reactive(0)
@@ -409,6 +425,7 @@ class PerformancePanel(Container):
     threads_limit = reactive(0)
 
     def compose(self) -> ComposeResult:
+        yield Static(id="account-info")
         yield Static(id="throughput")
         yield Static(id="api-rate")
         yield Static(id="threads-info")
@@ -417,6 +434,7 @@ class PerformancePanel(Container):
     def on_mount(self) -> None:
         """Initialize performance panel."""
         self.border_title = "Performance Metrics"
+        self.account_name = "Authenticating..."
         self.throughput_history = []
         self.api_rate_history = []
         self.update_display()
@@ -437,12 +455,28 @@ class PerformancePanel(Container):
         """Update display when API rate history changes."""
         self.update_api_rate()
 
+    def watch_account_name(self, old_value: str, new_value: str) -> None:
+        """Update display when account name changes."""
+        self.update_account_info()
+
     def update_display(self) -> None:
         """Render all metrics."""
+        self.update_account_info()
         self.update_throughput()
         self.update_api_rate()
         self.update_threads()
         self.update_quota()
+
+    def update_account_info(self) -> None:
+        """Update account info line."""
+        if self.account_name:
+            self.query_one("#account-info", Static).update(
+                f"[bold]Logged in as:[/bold] [bright_magenta]{self.account_name}[/bright_magenta]"
+            )
+        else:
+            self.query_one("#account-info", Static).update(
+                "[dim italic]Authenticating...[/dim italic]"
+            )
 
     def update_throughput(self) -> None:
         """Update throughput line."""
@@ -725,6 +759,30 @@ class SystemDetailPanel(Container):
             content.append(f"  Successful: {stats.get('successful', 0):>4}\n", style="bright_green")
             content.append(f"  Failed:     {stats.get('failed', 0):>4}\n", style="red")
             content.append(f"  Skipped:    {stats.get('skipped', 0):>4}\n\n", style="yellow")
+
+            # Media Statistics (per-type breakdown)
+            media_by_type = stats.get('media_by_type', {})
+            if media_by_type:
+                content.append("● MEDIA STATISTICS\n", style="bold cyan")
+                # Sort media types alphabetically for consistent display
+                for media_type in sorted(media_by_type.keys()):
+                    type_stats = media_by_type[media_type]
+                    successful = type_stats.get('successful', 0)
+                    validated = type_stats.get('validated', 0)
+                    failed = type_stats.get('failed', 0)
+                    
+                    # Format media type name (capitalize and replace hyphens)
+                    display_name = media_type.replace('-', ' ').replace('_', ' ').title()
+                    content.append(f"  {display_name:<15}", style="white")
+                    
+                    if successful > 0:
+                        content.append(f"✓ {successful:>3} ", style="bright_green")
+                    if validated > 0:
+                        content.append(f"↻ {validated:>3} ", style="dim")
+                    if failed > 0:
+                        content.append(f"✗ {failed:>3} ", style="red")
+                    content.append("\n")
+                content.append("\n")
 
             # Processing Status
             status = stats.get('status', 'pending')
@@ -1564,6 +1622,10 @@ class CurateurUI(App):
         self.current_search_dialog = None  # Track active dialog
         self.search_processor_running = False  # Track if processor is running
 
+        # Cumulative metadata tracking
+        self.cumulative_metadata_calls = 0
+        self.previous_metadata_in_flight = 0
+
         # Will be set by CLI after orchestrator is created
         self.orchestrator = None
 
@@ -1599,6 +1661,11 @@ class CurateurUI(App):
         self.event_bus.subscribe(GameCompletedEvent, self.on_game_completed)
         self.event_bus.subscribe(ActiveRequestEvent, self.on_active_request)
         self.event_bus.subscribe(SearchRequestEvent, self.on_search_request)
+        self.event_bus.subscribe(CacheMetricsEvent, self.on_cache_metrics_event)
+        self.event_bus.subscribe(GamelistUpdateEvent, self.on_gamelist_update_event)
+        self.event_bus.subscribe(MediaStatsEvent, self.on_media_stats_event)
+        self.event_bus.subscribe(SearchActivityEvent, self.on_search_activity_event)
+        self.event_bus.subscribe(AuthenticationEvent, self.on_authentication_event)
 
         # Subscribe orchestrator to search responses (set by CLI after initialization)
         if hasattr(self, 'orchestrator') and self.orchestrator is not None:
@@ -1677,13 +1744,11 @@ class CurateurUI(App):
             f"Success: {event.successful}, Failed: {event.failed}, Skipped: {event.skipped}"
         )
 
-        # Update overall progress widget
+        # Update overall progress widget - only increment systems_complete
+        # (successful/failed/skipped are already updated per-ROM in on_rom_progress)
         try:
             overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
             overall_progress.systems_complete += 1
-            overall_progress.successful += event.successful
-            overall_progress.failed += event.failed
-            overall_progress.skipped += event.skipped
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
 
@@ -1793,11 +1858,18 @@ class CurateurUI(App):
             f"search {event.search_in_flight} in-flight"
         )
 
+        # Track cumulative metadata calls
+        # Detect completion when in-flight count decreases
+        if event.metadata_in_flight < self.previous_metadata_in_flight:
+            completed = self.previous_metadata_in_flight - event.metadata_in_flight
+            self.cumulative_metadata_calls += completed
+        self.previous_metadata_in_flight = event.metadata_in_flight
+
         # Update current system widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             current_system.metadata_in_flight = event.metadata_in_flight
-            current_system.metadata_total = event.metadata_total
+            current_system.metadata_total = self.cumulative_metadata_calls  # Use cumulative count
             current_system.search_in_flight = event.search_in_flight
             current_system.search_total = event.search_total
         except Exception as e:
@@ -2058,8 +2130,15 @@ class CurateurUI(App):
             f"Cache metrics: existing={event.existing}, added={event.added}, "
             f"hits={event.hits}, misses={event.misses}, hit_rate={event.hit_rate:.1f}%"
         )
-        # Cache metrics are displayed in system operations panel
-        # Could update a dedicated cache widget here if needed
+        
+        # Update current system operations widget
+        try:
+            current_system = self.query_one("#current-system", CurrentSystemOperations)
+            current_system.cache_existing = event.existing
+            current_system.cache_new = event.added
+            current_system.cache_hit_rate = event.hit_rate / 100.0  # Convert percentage to decimal
+        except Exception as e:
+            logger.debug(f"Failed to update cache metrics: {e}")
 
     async def on_gamelist_update_event(self, event) -> None:
         """Handle gamelist update event."""
@@ -2071,8 +2150,15 @@ class CurateurUI(App):
             f"Gamelist update [{event.system}]: existing={event.existing}, "
             f"added={event.added}, updated={event.updated}"
         )
-        # Gamelist stats are displayed in system operations panel
-        # Could update a dedicated gamelist widget here if needed
+        
+        # Update current system operations widget
+        try:
+            current_system = self.query_one("#current-system", CurrentSystemOperations)
+            current_system.gamelist_existing = event.existing
+            current_system.gamelist_added = event.added
+            current_system.gamelist_updated = event.updated
+        except Exception as e:
+            logger.debug(f"Failed to update gamelist stats: {e}")
 
     async def on_authentication_event(self, event) -> None:
         """Handle authentication event."""
@@ -2082,7 +2168,19 @@ class CurateurUI(App):
         
         logger.debug(f"Authentication: status={event.status}, username={event.username}")
         
-        # Update header with auth status
+        # Update Performance Panel with account name
+        try:
+            performance = self.query_one("#performance", PerformancePanel)
+            if event.status == 'authenticating':
+                performance.account_name = "Authenticating..."
+            elif event.status == 'authenticated' and event.username:
+                performance.account_name = event.username
+            elif event.status == 'failed':
+                performance.account_name = "Authentication failed"
+        except Exception as e:
+            logger.debug(f"Failed to update account name: {e}")
+        
+        # Show notifications
         if event.status == 'authenticating':
             self.notify("Authenticating with ScreenScraper...", timeout=2)
         elif event.status == 'authenticated':
@@ -2098,18 +2196,6 @@ class CurateurUI(App):
                 timeout=5
             )
 
-    async def on_api_quota_event(self, event) -> None:
-        """Handle API quota event."""
-        from ..ui.events import APIQuotaEvent
-        if not isinstance(event, APIQuotaEvent):
-            return
-        
-        logger.debug(
-            f"API quota: {event.requests_used}/{event.requests_limit} "
-            f"({event.username})"
-        )
-        # Quota is displayed in performance panel via PerformanceUpdateEvent
-
     async def on_search_activity_event(self, event) -> None:
         """Handle search activity event."""
         from ..ui.events import SearchActivityEvent
@@ -2120,7 +2206,14 @@ class CurateurUI(App):
             f"Search activity: fallback={event.fallback_count}, "
             f"unmatched={event.unmatched_count}"
         )
-        # Search activity stats are displayed in system operations panel
+        
+        # Update current system operations widget
+        try:
+            current_system = self.query_one("#current-system", CurrentSystemOperations)
+            current_system.search_fallback_count = event.fallback_count
+            current_system.search_unmatched_count = event.unmatched_count
+        except Exception as e:
+            logger.debug(f"Failed to update search activity stats: {e}")
 
     async def on_media_stats_event(self, event) -> None:
         """Handle media stats event."""
@@ -2132,7 +2225,30 @@ class CurateurUI(App):
             f"Media stats: validated={event.total_validated}, "
             f"skipped={event.total_skipped}, failed={event.total_failed}"
         )
-        # Media stats are displayed in system operations panel
+        
+        # Update current system operations widget
+        try:
+            current_system = self.query_one("#current-system", CurrentSystemOperations)
+            # Calculate total downloaded from by_type breakdown
+            total_downloaded = sum(
+                stats.get('successful', 0) for stats in event.by_type.values()
+            )
+            current_system.media_downloaded = total_downloaded
+            current_system.media_failed = event.total_failed
+        except Exception as e:
+            logger.debug(f"Failed to update media stats: {e}")
+        
+        # Update Systems tab detail panel with media breakdown
+        try:
+            detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+            if self.current_system:
+                system_name = self.current_system.system_name
+                if system_name in detail_panel.system_stats:
+                    current_stats = dict(detail_panel.system_stats[system_name])
+                    current_stats['media_by_type'] = event.by_type
+                    detail_panel.update_system_stats(system_name, current_stats)
+        except Exception as e:
+            logger.debug(f"Failed to update system media breakdown: {e}")
 
     # ========================================================================
     # Action Handlers
