@@ -5,6 +5,7 @@ Coordinates URL selection, downloading, validation, and organization of game med
 """
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from .url_selector import MediaURLSelector
@@ -171,6 +172,39 @@ class MediaDownloader:
             if progress_callback:
                 progress_callback(media_type, idx, total_media)
 
+            # Emit ActiveRequestEvent - Media download started
+            if self.event_bus:
+                try:
+                    from ..ui.events import ActiveRequestEvent
+                    await self.event_bus.publish(
+                        ActiveRequestEvent(
+                            request_id=f"{rom_basename}-{media_type}",
+                            rom_name=rom_basename,
+                            stage="Media DL",
+                            status="started",
+                            duration=0.0
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the download
+
+            # Emit MediaDownloadEvent - downloading
+            if self.event_bus:
+                try:
+                    from ..ui.events import MediaDownloadEvent
+                    await self.event_bus.publish(
+                        MediaDownloadEvent(
+                            rom_name=rom_basename,
+                            media_type=media_type,
+                            status="downloading"
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the download
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the download
+
             # Emit MediaDownloadEvent - downloading
             if self.event_bus:
                 try:
@@ -195,6 +229,25 @@ class MediaDownloader:
                 result = await self._download_single_media(
                     media_type, media_info, system, rom_basename
                 )
+
+            download_duration = time.time() - download_start
+
+            # Emit ActiveRequestEvent - Media download complete or failed
+            if self.event_bus:
+                try:
+                    from ..ui.events import ActiveRequestEvent
+                    await self.event_bus.publish(
+                        ActiveRequestEvent(
+                            request_id=f"{rom_basename}-{media_type}",
+                            rom_name=rom_basename,
+                            stage="Media DL",
+                            status="completed" if result.success else "failed",
+                            duration=download_duration,
+                            last_failure=result.error if not result.success else None
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the download
 
             # Emit MediaDownloadEvent - complete or failed
             if self.event_bus:
