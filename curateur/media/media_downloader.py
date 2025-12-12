@@ -202,6 +202,9 @@ class MediaDownloader:
                 except Exception:
                     pass  # Don't let event emission break the download
 
+            # Record download start time
+            download_start = time.time()
+
             # Acquire semaphore if provided (limits concurrent downloads globally)
             if self.download_semaphore:
                 async with self.download_semaphore:
