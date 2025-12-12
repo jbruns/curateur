@@ -1866,6 +1866,16 @@ class CurateurUI(App):
 
             # Update detail panel stats
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+            
+            # Build summary with optional duration
+            if event.elapsed_time:
+                summary = f"Completed in {event.elapsed_time:.1f}s\n"
+            else:
+                summary = "Completed\n"
+            summary += (f"  ✓ {event.successful} successful\n"
+                       f"  ✗ {event.failed} failed\n"
+                       f"  ⊝ {event.skipped} skipped")
+            
             detail_panel.update_system_stats(event.system_name, {
                 "fullname": event.system_name,
                 "total_roms": total_roms,
@@ -1873,11 +1883,8 @@ class CurateurUI(App):
                 "failed": event.failed,
                 "skipped": event.skipped,
                 "status": "complete",
-                "duration": event.duration,
-                "summary": f"Completed in {event.duration:.1f}s\n"
-                          f"  ✓ {event.successful} successful\n"
-                          f"  ✗ {event.failed} failed\n"
-                          f"  ⊝ {event.skipped} skipped"
+                "elapsed_time": event.elapsed_time,
+                "summary": summary
             })
         except Exception as e:
             logger.debug(f"Failed to update Systems tab: {e}")
