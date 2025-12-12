@@ -589,19 +589,8 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 continue
     finally:
         # Phase D & E: Clean up resources
-        # Shutdown thread manager first to allow logging to UI
-        if thread_manager:
-            await thread_manager.shutdown(wait=True)
-
-        # Close HTTP client
-        if client:
-            await client.aclose()
-
-        # Reset throttle manager state
-        if throttle_manager:
-            throttle_manager.reset()
-
-        # Stop Textual UI if running
+        
+        # Stop Textual UI first if running
         if textual_ui_task and not textual_ui_task.done():
             logger.info("Shutting down Textual UI...")
             try:
@@ -613,10 +602,37 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                     pass
             except Exception as e:
                 logger.warning(f"Error during Textual UI shutdown: {e}")
+        
+        # Reconfigure logging to console after UI shutdown
+        if textual_ui:
+            _setup_logging(config)
+            print("\n" + "="*60)
+            print("Textual UI closed - shutting down remaining resources...")
+            print("="*60)
+        
+        # Shutdown thread manager
+        if thread_manager:
+            print("Stopping worker threads...")
+            await thread_manager.shutdown(wait=True)
+            print("Worker threads stopped")
+
+        # Close HTTP client
+        if client:
+            print("Closing HTTP connections...")
+            await client.aclose()
+            print("HTTP connections closed")
+
+        # Reset throttle manager state
+        if throttle_manager:
+            throttle_manager.reset()
 
         # Stop headless logger if active
         if headless_logger:
             headless_logger.stop()
+        
+        if textual_ui:
+            print("Shutdown complete")
+            print("="*60 + "\n")
 
     # Print final summary in headless mode only
     if headless_logger and not textual_ui:
