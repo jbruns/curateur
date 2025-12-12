@@ -100,6 +100,14 @@ def _parse_jeu_element(jeu_elem: etree.Element, preferred_language: str = 'en') 
                 descriptions[langue] = decode_html_entities(text)
         if descriptions:
             game_data['descriptions'] = descriptions
+            
+            # Extract single description (prefer preferred_language, then 'en', then first available)
+            if preferred_language in descriptions:
+                game_data['desc'] = descriptions[preferred_language]
+            elif 'en' in descriptions:
+                game_data['desc'] = descriptions['en']
+            elif descriptions:
+                game_data['desc'] = list(descriptions.values())[0]
 
     # Dates
     dates = jeu_elem.find('dates')
