@@ -444,14 +444,37 @@ class WorkflowOrchestrator:
             existing_entries
         )
 
-        # Count results
+        # Count results and emit progress events
         for result in results:
             if result.success:
                 scraped_count += 1
+                # Emit completion event
+                if self.event_bus:
+                    from ..ui.events import ROMProgressEvent
+                    await self.event_bus.publish(
+                        ROMProgressEvent(
+                            rom_name=result.rom_path.name,
+                            system=system.name,
+                            status="complete",
+                            detail=f"Successfully processed"
+                        )
+                    )
             elif result.error:
                 failed_count += 1
+                # Emit failure event
+                if self.event_bus:
+                    from ..ui.events import ROMProgressEvent
+                    await self.event_bus.publish(
+                        ROMProgressEvent(
+                            rom_name=result.rom_path.name,
+                            system=system.name,
+                            status="failed",
+                            detail=result.error
+                        )
+                    )
             else:
                 skipped_count += 1
+                # Note: Skipped ROMs already emit event during _scrape_rom
 
         # Step 5: Generate gamelist
         # Write gamelist if there are new entries OR existing entries to maintain
