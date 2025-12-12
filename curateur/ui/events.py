@@ -256,13 +256,11 @@ class GamelistUpdateEvent:
         existing: Existing entries in gamelist at start
         added: New entries added this session
         updated: Existing entries updated this session
-        removed: Entries removed this session
     """
     system: str
     existing: int
     added: int
     updated: int
-    removed: int
 
 
 @dataclass(frozen=True)

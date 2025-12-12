@@ -2007,7 +2007,7 @@ class CurateurUI(App):
         
         logger.debug(
             f"Gamelist update [{event.system}]: existing={event.existing}, "
-            f"added={event.added}, updated={event.updated}, removed={event.removed}"
+            f"added={event.added}, updated={event.updated}"
         )
         # Gamelist stats are displayed in system operations panel
         # Could update a dedicated gamelist widget here if needed
