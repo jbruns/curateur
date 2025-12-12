@@ -70,7 +70,6 @@ class OverallProgressWidget(Container):
     # Reactive properties updated by events
     current_system_index = reactive(0)  # 1-based index of current system being processed
     systems_total = reactive(0)
-    processed = reactive(0)
     total_roms = reactive(0)
     successful = reactive(0)
     skipped = reactive(0)
@@ -85,12 +84,20 @@ class OverallProgressWidget(Container):
         self.border_title = "Overall Progress"
         self.update_display()
 
-    def watch_processed(self, old_value: int, new_value: int) -> None:
-        """Update display when processed count changes."""
-        self.update_display()
-
     def watch_successful(self, old_value: int, new_value: int) -> None:
         """Update display when successful count changes."""
+        self.update_display()
+
+    def watch_failed(self, old_value: int, new_value: int) -> None:
+        """Update display when failed count changes."""
+        self.update_display()
+
+    def watch_skipped(self, old_value: int, new_value: int) -> None:
+        """Update display when skipped count changes."""
+        self.update_display()
+
+    def watch_total_roms(self, old_value: int, new_value: int) -> None:
+        """Update display when total_roms count changes."""
         self.update_display()
 
     def watch_current_system_index(self, old_value: int, new_value: int) -> None:
@@ -99,12 +106,14 @@ class OverallProgressWidget(Container):
 
     def update_display(self) -> None:
         """Render overall progress."""
-        progress_pct = (self.processed / self.total_roms * 100) if self.total_roms > 0 else 0
+        # Calculate processed as aggregate of successful + failed + skipped
+        processed = self.successful + self.failed + self.skipped
+        progress_pct = (processed / self.total_roms * 100) if self.total_roms > 0 else 0
 
         # Header text
         header = Text()
         header.append(f"Systems: {self.current_system_index}/{self.systems_total}\n", style="white")
-        header.append(f"ROMs: {self.processed}/{self.total_roms} ", style="cyan")
+        header.append(f"ROMs: {processed}/{self.total_roms} ", style="cyan")
         header.append(f"({progress_pct:.1f}%)", style="bright_green")
         header.append("\n")
 
@@ -117,7 +126,7 @@ class OverallProgressWidget(Container):
 
         # Update progress bar
         progress_bar = self.query_one("#overall-progress-bar", ProgressBar)
-        progress_bar.update(total=self.total_roms if self.total_roms > 0 else 100, progress=self.processed)
+        progress_bar.update(total=self.total_roms if self.total_roms > 0 else 100, progress=processed)
 
 
 class CurrentSystemOperations(Container):
@@ -455,7 +464,7 @@ class GameSpotlightWidget(Static):
 
             # Description (truncate if too long)
             content.append("Description:\n", style="bold cyan")
-            max_desc_len = 300
+            max_desc_len = 500
             if len(description) > max_desc_len:
                 truncated_desc = description[:max_desc_len] + "..."
                 content.append(truncated_desc, style="white")
@@ -768,12 +777,15 @@ class ActiveRequestsTable(Container):
 
             # Format media type display
             media_display = media_type if media_type else "-"
+            
+            # Truncate ROM name to 40 characters max
+            rom_display = rom_name[:40] + "..." if len(rom_name) > 40 else rom_name
 
             # Update or add request
             if request_key in self.active_requests:
                 # Update existing row
                 row_key = self.active_requests[request_key]
-                table.update_cell(row_key, "ROM", rom_name)
+                table.update_cell(row_key, "ROM", rom_display)
                 table.update_cell(row_key, "Stage", stage)
                 table.update_cell(row_key, "Media Type", media_display)
                 table.update_cell(row_key, "Duration", f"{duration:.1f}s")
@@ -781,7 +793,7 @@ class ActiveRequestsTable(Container):
             else:
                 # Add new row
                 row_key = table.add_row(
-                    rom_name,
+                    rom_display,
                     stage,
                     media_display,
                     f"{duration:.1f}s",
@@ -1047,7 +1059,7 @@ class SystemsTab(Container):
             if systems:
                 for system_name in systems:
                     # Add placeholder nodes for configured systems
-                    label = f"⏸ {system_name} (0/0)"
+                    label = f"⏸ {system_name}"
                     tree.root.add_leaf(label, data=system_name)
 
                 tree.root.expand()
@@ -1079,7 +1091,7 @@ class SystemsTab(Container):
                 icon = "⏸"
 
             # Find and update the node
-            label = f"{icon} {fullname} ({successful}/{total})"
+            label = f"{icon} {fullname}"
 
             # Search for the node with matching data
             for node in tree.root.children:
@@ -1987,9 +1999,9 @@ class CurateurUI(App):
         if event.status in ["complete", "failed", "skipped"]:
             try:
                 overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
-                overall_progress.processed += 1
                 
-                # Also update overall success/failed/skipped counters
+                # Update overall success/failed/skipped counters
+                # processed is calculated as successful + failed + skipped in update_display()
                 if event.status == "complete":
                     overall_progress.successful += 1
                 elif event.status == "failed":
@@ -2599,9 +2611,10 @@ class CurateurUI(App):
             total_roms = self.current_system.total_roms
 
             # Get processed count from overall progress widget
+            # processed = successful + failed + skipped
             try:
                 overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
-                processed = overall_progress.processed
+                processed = overall_progress.successful + overall_progress.failed + overall_progress.skipped
             except Exception:
                 processed = 0
         else:
