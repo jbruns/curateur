@@ -63,7 +63,6 @@ def test_headless_logger_no_ops():
     logger.increment_media_validation_failed("screenshot")
     logger.increment_gamelist_added()
     logger.increment_gamelist_updated()
-    logger.increment_gamelist_removed()
     logger.add_completed_game({})
     logger.spotlight_next()
     logger.spotlight_prev()
