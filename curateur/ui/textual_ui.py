@@ -339,28 +339,66 @@ class GameSpotlightWidget(Static):
 
     games = reactive(list)
     index = reactive(0)
+    auto_cycle_interval = None  # Timer handle for auto-cycling
+    user_navigated = False  # Track if user manually navigated
 
     def on_mount(self) -> None:
         """Set up spotlight."""
         self.border_title = "Game Spotlight"
         self.games = []
         self.update_display()
+        # Start auto-cycle timer (10 seconds)
+        self._start_auto_cycle(10.0)
 
     def add_game(self, game: dict) -> None:
-        """Add a completed game to the spotlight."""
-        self.games = self.games + [game]
+        """Add a completed game to the spotlight, keeping only the 10 most recent."""
+        new_games = self.games + [game]
+        # Keep only the 10 most recent games
+        if len(new_games) > 10:
+            new_games = new_games[-10:]
+            # Adjust index if needed to stay in bounds
+            if self.index >= len(new_games):
+                self.index = len(new_games) - 1
+        self.games = new_games
         if len(self.games) == 1:
             self.update_display()
 
     def next_game(self) -> None:
-        """Advance to next game."""
+        """Advance to next game (user-initiated)."""
         if len(self.games) > 0:
             self.index = (self.index + 1) % len(self.games)
+            self._on_user_navigation()
 
     def prev_game(self) -> None:
-        """Go to previous game."""
+        """Go to previous game (user-initiated)."""
         if len(self.games) > 0:
             self.index = (self.index - 1) % len(self.games)
+            self._on_user_navigation()
+
+    def _on_user_navigation(self) -> None:
+        """Handle user navigation: pause auto-cycle for 30 seconds."""
+        self.user_navigated = True
+        # Cancel existing timer
+        if self.auto_cycle_interval is not None:
+            self.auto_cycle_interval.stop()
+        # Restart with 30 second delay, then return to 10 second cycles
+        self._start_auto_cycle(30.0)
+
+    def _start_auto_cycle(self, interval: float) -> None:
+        """Start or restart the auto-cycle timer."""
+        if self.auto_cycle_interval is not None:
+            self.auto_cycle_interval.stop()
+        self.auto_cycle_interval = self.set_interval(interval, self._auto_advance, pause=False)
+
+    def _auto_advance(self) -> None:
+        """Automatically advance to next game."""
+        if len(self.games) > 1:
+            self.index = (self.index + 1) % len(self.games)
+        
+        # If this was the delayed cycle after user navigation, reset to 10 second interval
+        if self.user_navigated:
+            self.user_navigated = False
+            self._start_auto_cycle(10.0)
 
     def watch_index(self, old_index: int, new_index: int) -> None:
         """Update display when index changes."""
@@ -383,7 +421,7 @@ class GameSpotlightWidget(Static):
             description = game.get('description', 'No description available')
 
             # Line 1: Title and year
-            content.append("Completed: ", style="bold cyan")
+            content.append("Now Scraping: ", style="bold cyan")
             content.append(f"{title}", style="bright_magenta")
             if year and year != 'N/A':
                 content.append(f" ({year})", style="white")
@@ -416,21 +454,25 @@ class GameSpotlightWidget(Static):
             content.append("\n\n")
 
             # Description (truncate if too long)
+            content.append("Description:\n", style="bold cyan")
             max_desc_len = 300
             if len(description) > max_desc_len:
-                description = description[:max_desc_len] + "..."
-            content.append("Description:\n", style="bold cyan")
-            content.append(description, style="white")
+                truncated_desc = description[:max_desc_len] + "..."
+                content.append(truncated_desc, style="white")
+            else:
+                content.append(description, style="white")
 
-            # Navigation hint
+            # Navigation hint - always show when games exist
+            content.append("\n\n", style="dim")
+            content.append(f"[{self.index + 1}/{len(self.games)}] ", style="dim")
             if len(self.games) > 1:
-                content.append("\n\n", style="dim")
-                content.append(f"[{self.index + 1}/{len(self.games)}] ", style="dim")
-                content.append("Press ", style="dim")
+                content.append("Auto-cycling • Press ", style="dim")
                 content.append("B", style="bold cyan")
                 content.append("/", style="dim")
                 content.append("N", style="bold cyan")
                 content.append(" to navigate", style="dim")
+            else:
+                content.append("Waiting for more games...", style="dim")
 
         self.update(content)
 
@@ -673,9 +715,9 @@ class FilterableLogWidget(Container):
 class ActiveRequestsTable(Container):
     """Table showing currently active requests."""
 
-    # Track active requests by ROM name with start times
+    # Track active requests by unique key (rom_name or rom_name:media_type) with start times
     active_requests = reactive(dict)
-    request_start_times = {}  # Maps rom_name -> start timestamp
+    request_start_times = {}  # Maps request_key -> start timestamp
 
     def compose(self) -> ComposeResult:
         from textual.widgets import DataTable
@@ -689,26 +731,51 @@ class ActiveRequestsTable(Container):
         self.request_start_times = {}
 
         table = self.query_one("#active-requests-table", DataTable)
-        table.add_columns("ROM", "Stage", "Duration", "Status")
+        table.add_columns("ROM", "Stage", "Media Type", "Duration", "Status")
         table.cursor_type = "row"
         
         # Start timer to update durations every 0.5 seconds
         self.set_interval(0.5, self._update_durations)
 
-    def update_request(self, rom_name: str, stage: str, status: str, duration: float = 0.0) -> None:
-        """Add or update an active request."""
+    def update_request(self, rom_name: str, stage: str, status: str, media_type: str = None, duration: float = None) -> None:
+        """Add or update an active request.
+        
+        Args:
+            rom_name: Name of the ROM file
+            stage: Processing stage (e.g., "Metadata", "Media DL")
+            status: Request status
+            media_type: Optional media type for media downloads (e.g., "cover", "screenshot")
+            duration: Optional duration override
+        """
         from textual.widgets import DataTable
         import time
 
         try:
             table = self.query_one("#active-requests-table", DataTable)
+            
+            # Create unique key: for media downloads, append media type
+            if media_type:
+                request_key = f"{rom_name}:{media_type}"
+            else:
+                request_key = rom_name
+            
+            # Calculate duration if not provided
+            if duration is None:
+                if request_key in self.request_start_times:
+                    duration = time.time() - self.request_start_times[request_key]
+                else:
+                    duration = 0.0
+
+            # Format media type display
+            media_display = media_type if media_type else "-"
 
             # Update or add request
-            if rom_name in self.active_requests:
+            if request_key in self.active_requests:
                 # Update existing row
-                row_key = self.active_requests[rom_name]
+                row_key = self.active_requests[request_key]
                 table.update_cell(row_key, "ROM", rom_name)
                 table.update_cell(row_key, "Stage", stage)
+                table.update_cell(row_key, "Media Type", media_display)
                 table.update_cell(row_key, "Duration", f"{duration:.1f}s")
                 table.update_cell(row_key, "Status", status)
             else:
@@ -716,12 +783,13 @@ class ActiveRequestsTable(Container):
                 row_key = table.add_row(
                     rom_name,
                     stage,
+                    media_display,
                     f"{duration:.1f}s",
                     status
                 )
-                self.active_requests = {**self.active_requests, rom_name: row_key}
+                self.active_requests = {**self.active_requests, request_key: row_key}
                 # Track start time for this request
-                self.request_start_times[rom_name] = time.time()
+                self.request_start_times[request_key] = time.time()
 
             # Update border title with count
             count = len(self.active_requests)
@@ -730,24 +798,35 @@ class ActiveRequestsTable(Container):
         except Exception as e:
             logger.debug(f"Failed to update active request: {e}")
 
-    def remove_request(self, rom_name: str) -> None:
-        """Remove a completed request."""
+    def remove_request(self, rom_name: str, media_type: str = None) -> None:
+        """Remove a completed request.
+        
+        Args:
+            rom_name: Name of the ROM file
+            media_type: Optional media type for media downloads
+        """
         from textual.widgets import DataTable
 
         try:
-            if rom_name in self.active_requests:
+            # Create unique key matching what was used in update_request
+            if media_type:
+                request_key = f"{rom_name}:{media_type}"
+            else:
+                request_key = rom_name
+            
+            if request_key in self.active_requests:
                 table = self.query_one("#active-requests-table", DataTable)
-                row_key = self.active_requests[rom_name]
+                row_key = self.active_requests[request_key]
                 table.remove_row(row_key)
 
                 # Update dictionary
                 new_requests = dict(self.active_requests)
-                del new_requests[rom_name]
+                del new_requests[request_key]
                 self.active_requests = new_requests
                 
                 # Remove start time tracking
-                if rom_name in self.request_start_times:
-                    del self.request_start_times[rom_name]
+                if request_key in self.request_start_times:
+                    del self.request_start_times[request_key]
 
                 # Update border title with count
                 count = len(self.active_requests)
@@ -761,27 +840,30 @@ class ActiveRequestsTable(Container):
         from textual.widgets import DataTable
         import time
 
+        if not self.active_requests:
+            return
+
         try:
-            if not self.active_requests:
-                return
-
             table = self.query_one("#active-requests-table", DataTable)
-            current_time = time.time()
+        except Exception:
+            # Table not available yet
+            return
 
-            # Use list() to create a snapshot and avoid race conditions during iteration
-            for rom_name, row_key in list(self.active_requests.items()):
-                if rom_name in self.request_start_times:
-                    elapsed = current_time - self.request_start_times[rom_name]
-                    try:
-                        # Check if row still exists before updating
-                        if row_key in table.rows:
-                            table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
-                    except (KeyError, ValueError):
-                        # Row was removed between iteration and update - ignore
-                        pass
+        current_time = time.time()
 
-        except Exception as e:
-            logger.debug(f"Failed to update durations: {e}")
+        # Use list() to create a snapshot and avoid race conditions during iteration
+        for request_key, row_key in list(self.active_requests.items()):
+            # Skip if request was already removed (race condition with remove_request)
+            if request_key not in self.request_start_times:
+                continue
+                
+            elapsed = current_time - self.request_start_times[request_key]
+            try:
+                table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
+            except Exception:
+                # Row was removed between iteration and update - silently ignore
+                # This is expected in concurrent scenarios
+                pass
 
     def clear_all(self) -> None:
         """Clear all active requests."""
@@ -1192,7 +1274,6 @@ class ConfigTab(Container):
             try:
                 if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
                     self.app.orchestrator.update_search_config(enable_fallback=new_value)
-                    self._show_temp_change_notification()
             except Exception as e:
                 logger.error(f"Failed to update search fallback: {e}")
 
@@ -1207,7 +1288,6 @@ class ConfigTab(Container):
                 filterable_logs = self.app.query_one("#filterable-logs", FilterableLogWidget)
                 level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
                 filterable_logs.set_log_level(level_map.get(new_value, 20))
-                self._show_temp_change_notification()
             except Exception as e:
                 logger.debug(f"Failed to update log level: {e}")
 
@@ -1216,7 +1296,6 @@ class ConfigTab(Container):
             try:
                 if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.api_client:
                     self.app.orchestrator.api_client.update_runtime_config(max_retries=new_value)
-                    self._show_temp_change_notification()
             except Exception as e:
                 logger.error(f"Failed to update max retries: {e}")
 
@@ -1224,7 +1303,6 @@ class ConfigTab(Container):
             try:
                 if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.api_client:
                     self.app.orchestrator.api_client.update_runtime_config(retry_backoff=new_value)
-                    self._show_temp_change_notification()
             except Exception as e:
                 logger.error(f"Failed to update retry backoff: {e}")
 
@@ -1233,7 +1311,6 @@ class ConfigTab(Container):
             try:
                 if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.throttle_manager:
                     self.app.orchestrator.throttle_manager.update_concurrency_limit(new_value)
-                    self._show_temp_change_notification()
             except Exception as e:
                 logger.error(f"Failed to update max workers: {e}")
 
@@ -1244,7 +1321,6 @@ class ConfigTab(Container):
                     # Convert percentage to float (70 -> 0.7)
                     threshold = new_value / 100.0
                     self.app.orchestrator.update_search_config(confidence_threshold=threshold)
-                    self._show_temp_change_notification()
             except Exception as e:
                 logger.error(f"Failed to update confidence threshold: {e}")
 
@@ -1252,18 +1328,8 @@ class ConfigTab(Container):
             try:
                 if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
                     self.app.orchestrator.update_search_config(max_results=new_value)
-                    self._show_temp_change_notification()
             except Exception as e:
                 logger.error(f"Failed to update max results: {e}")
-
-    def _show_temp_change_notification(self) -> None:
-        """Show notification that setting change is temporary."""
-        self.app.notify(
-            "Setting applied (temporary - reverts on restart)",
-            severity="information",
-            timeout=2
-        )
-
 
 # ============================================================================
 # Confirmation Dialogs
@@ -1751,6 +1817,7 @@ class CurateurUI(App):
     def on_mount(self) -> None:
         """Setup event listeners after UI is mounted."""
         logger.info("Curateur UI mounted, subscribing to events...")
+        logger.debug(f"UI initialization - is_running: {self.is_running}")
 
         # Subscribe to all event types
         self.event_bus.subscribe(SystemStartedEvent, self.on_system_started)
@@ -1780,6 +1847,7 @@ class CurateurUI(App):
         self.run_worker(self.event_bus.process_events(), name="event_processor")
 
         logger.info("Event subscriptions complete, UI ready")
+        logger.debug(f"UI fully initialized - is_running: {self.is_running}")
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Track which tab is currently active."""
@@ -1808,7 +1876,15 @@ class CurateurUI(App):
             overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
             overall_progress.systems_total = event.total_systems
             overall_progress.current_system_index = event.current_index + 1  # Convert to 1-based
-            overall_progress.total_roms += event.total_roms
+            # Add ROM count to cumulative total (only after scanning is complete)
+            if event.total_roms > 0:
+                overall_progress.total_roms += event.total_roms
+                logger.debug(
+                    f"Updated overall progress: total_roms={overall_progress.total_roms} "
+                    f"(added {event.total_roms} from {event.system_fullname})"
+                )
+            else:
+                logger.debug(f"System {event.system_fullname} has 0 ROMs, not updating total_roms")
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
 
@@ -1994,23 +2070,67 @@ class CurateurUI(App):
         except Exception as e:
             logger.debug(f"Failed to update current system: {e}")
 
+    async def on_active_request(self, event: ActiveRequestEvent) -> None:
+        """Handle active request event."""
+        logger.debug(
+            f"Active request: {event.rom_name} - {event.stage} - {event.status}"
+        )
+
+        # Update Details tab active requests table
+        try:
+            active_requests = self.query_one("#active-requests", ActiveRequestsTable)
+
+            # Skip media download events - those are handled by MediaDownloadEvent
+            if event.stage == "Media DL":
+                return
+
+            if event.status in ["started", "in_progress", "retry"]:
+                # Add or update the request (duration will be calculated by the table)
+                active_requests.update_request(
+                    event.rom_name,
+                    event.stage,
+                    event.status
+                )
+            elif event.status in ["completed", "failed", "cancelled"]:
+                # Remove the request
+                active_requests.remove_request(event.rom_name)
+
+        except Exception as e:
+            logger.debug(f"Failed to update active requests table: {e}")
+
     async def on_media_download(self, event: MediaDownloadEvent) -> None:
         """Handle media download event."""
         logger.debug(
             f"Media: {event.media_type} for {event.rom_name} - {event.status}"
         )
 
+        # Update Details tab active requests table for media downloads
+        try:
+            active_requests = self.query_one("#active-requests", ActiveRequestsTable)
+            
+            if event.status == "downloading":
+                # Add media download as an active request
+                active_requests.update_request(
+                    event.rom_name,
+                    "Media DL",
+                    "in_progress",
+                    media_type=event.media_type
+                )
+            elif event.status in ["complete", "failed"]:
+                # Remove the specific media download request
+                active_requests.remove_request(event.rom_name, media_type=event.media_type)
+        except Exception as e:
+            logger.debug(f"Failed to update active requests for media: {e}")
+
         # Update current system widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             if event.status == "downloading":
                 current_system.media_in_flight += 1
-            elif event.status == "complete":
+            elif event.status in ["complete", "failed"]:
+                # Only track in-flight count here
+                # Completed/failed counts are managed by MediaStatsEvent to avoid race conditions
                 current_system.media_in_flight = max(0, current_system.media_in_flight - 1)
-                current_system.media_downloaded += 1
-            elif event.status == "failed":
-                current_system.media_in_flight = max(0, current_system.media_in_flight - 1)
-                current_system.media_failed += 1
         except Exception as e:
             logger.debug(f"Failed to update current system: {e}")
 
@@ -2026,7 +2146,7 @@ class CurateurUI(App):
             pass  # Silently ignore logging errors to prevent feedback loop
 
         # Show notification on Overview tab for WARNING/ERROR
-        if event.level >= logging.WARNING and self.current_tab == "overview":
+        if event.level >= logging.WARNING and self.current_tab == "--content-tab-overview":
             severity = "error" if event.level >= logging.ERROR else "warning"
             short_msg = event.message[:60] + "..." if len(event.message) > 60 else event.message
             self.notify(
@@ -2092,12 +2212,11 @@ class CurateurUI(App):
             active_requests = self.query_one("#active-requests", ActiveRequestsTable)
 
             if event.status in ["started", "in_progress", "retry"]:
-                # Add or update the request
+                # Add or update the request (duration will be calculated by the table)
                 active_requests.update_request(
                     event.rom_name,
                     event.stage,
-                    event.status,
-                    event.duration
+                    event.status
                 )
             elif event.status in ["completed", "failed", "cancelled"]:
                 # Remove the request
@@ -2301,7 +2420,7 @@ class CurateurUI(App):
         
         # Show notifications
         if event.status == 'authenticating':
-            self.notify("Authenticating with ScreenScraper...", timeout=2)
+            self.notify("Authenticating with ScreenScraper...", timeout=4)
         elif event.status == 'authenticated':
             self.notify(
                 f"Authenticated as {event.username}",
@@ -2380,9 +2499,12 @@ class CurateurUI(App):
                         summary_lines.append(f"  • {filename}")
                         summary_lines.append(f"    ({error_short})")
                 
-                # Update stats with summary
+                # Update stats with summary and counts
                 current_stats = dict(detail_panel.system_stats[system_name])
                 current_stats['summary'] = "\n".join(summary_lines)
+                current_stats['successful'] = len(event.successful)
+                current_stats['failed'] = len(event.failed)
+                current_stats['skipped'] = len(event.skipped)
                 detail_panel.update_system_stats(system_name, current_stats)
         except Exception as e:
             logger.debug(f"Failed to update processing summary: {e}")
@@ -2515,7 +2637,7 @@ class CurateurUI(App):
 
     def action_prev_game(self) -> None:
         """Navigate to previous game in spotlight."""
-        if self.current_tab != "overview":
+        if self.current_tab != "--content-tab-overview":
             self.notify(
                 "Game navigation is only available on the Overview tab",
                 severity="warning",
@@ -2531,7 +2653,7 @@ class CurateurUI(App):
 
     def action_next_game(self) -> None:
         """Navigate to next game in spotlight."""
-        if self.current_tab != "overview":
+        if self.current_tab != "--content-tab-overview":
             self.notify(
                 "Game navigation is only available on the Overview tab",
                 severity="warning",
@@ -2547,7 +2669,7 @@ class CurateurUI(App):
 
     def action_filter_logs(self, level: int) -> None:
         """Filter logs by level (only available on Details tab)."""
-        if self.current_tab != "details":
+        if self.current_tab != "--content-tab-details":
             self.notify(
                 "Log filtering is only available on the Details tab",
                 severity="warning",
@@ -2634,11 +2756,14 @@ class CurateurUI(App):
     async def shutdown(self) -> None:
         """Graceful shutdown of the UI."""
         logger.info("Shutting down Curateur UI...")
+        logger.debug(f"UI state before shutdown - is_running: {self.is_running}")
         await self.event_bus.stop()
+        logger.debug(f"Event bus stopped - is_running: {self.is_running}")
+        # Exit the application - safe to call even if already exiting
+        logger.debug("Calling self.exit()...")
+        self.exit()
+        logger.debug(f"self.exit() called - is_running: {self.is_running}")
         logger.info("UI shutdown complete")
-        # Exit the application if not already exiting
-        if self.is_running:
-            self.exit()
 
 
 # ============================================================================
