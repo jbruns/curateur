@@ -696,6 +696,19 @@ class WorkflowOrchestrator:
                 try:
                     game_info = await self.api_client.query_game(rom_info, shutdown_event=shutdown_event)
                     api_duration = time.time() - api_start
+                    
+                    # Ensure 'desc' field is extracted from 'descriptions' if missing (for old cache entries)
+                    if game_info and 'descriptions' in game_info and 'desc' not in game_info:
+                        descriptions = game_info['descriptions']
+                        preferred_lang = self.config.get('scraping', {}).get('preferred_language', 'en')
+                        
+                        # Extract description using same logic as response_parser
+                        if preferred_lang in descriptions:
+                            game_info['desc'] = descriptions[preferred_lang]
+                        elif 'en' in descriptions:
+                            game_info['desc'] = descriptions['en']
+                        elif descriptions:
+                            game_info['desc'] = list(descriptions.values())[0]
 
                     # Emit ActiveRequestEvent - API fetch completed (only if not from cache)
                     if self.event_bus and not from_cache:
@@ -738,12 +751,22 @@ class WorkflowOrchestrator:
                         # Emit GameCompletedEvent
                         if self.event_bus:
                             from ..ui.events import GameCompletedEvent
+                            
+                            # Extract year from release_dates (prefer us, wor, eu)
+                            release_dates = game_info.get('release_dates', {})
+                            release_date_str = release_dates.get('us') or release_dates.get('wor') or release_dates.get('eu') or None
+                            year = release_date_str[:4] if release_date_str and len(release_date_str) >= 4 else 'Unknown'
+                            
+                            # Extract single genre from genres list
+                            genres = game_info.get('genres', [])
+                            genre = ', '.join(genres[:2]) if genres else 'Unknown'  # Limit to 2 genres for display
+                            
                             await self.event_bus.publish(
                                 GameCompletedEvent(
                                     game_id=game_info.get('id', ''),
                                     title=game_info.get('name', 'Unknown'),
-                                    year=game_info.get('releasedate', 'Unknown')[:4] if game_info.get('releasedate') else 'Unknown',
-                                    genre=game_info.get('genre', 'Unknown'),
+                                    year=year,
+                                    genre=genre,
                                     developer=game_info.get('developer', 'Unknown'),
                                     publisher=game_info.get('publisher', 'Unknown'),
                                     players=game_info.get('players', 'Unknown'),
@@ -751,6 +774,7 @@ class WorkflowOrchestrator:
                                     description=game_info.get('desc', '')[:300]  # Truncate for performance
                                 )
                             )
+                            await asyncio.sleep(0)  # Yield to event processor
 
                     logger.debug(f"[{rom_info.filename}] Hash lookup successful")
                     # Increment task counter but don't emit completion status
@@ -767,6 +791,7 @@ class WorkflowOrchestrator:
                                 detail=f"Fetched metadata for {game_info.get('name', 'Unknown')}"
                             )
                         )
+                        await asyncio.sleep(0)  # Yield to event processor
 
                 except asyncio.CancelledError:
                     # Shutdown requested during API call
@@ -1787,6 +1812,7 @@ class WorkflowOrchestrator:
                         in_progress=(current_count < total)
                     )
                 )
+                await asyncio.sleep(0)  # Yield to event processor
 
         # Emit final HashingProgressEvent
         if self.event_bus:
