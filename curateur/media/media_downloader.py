@@ -201,23 +201,6 @@ class MediaDownloader:
                     )
                 except Exception:
                     pass  # Don't let event emission break the download
-                    )
-                except Exception:
-                    pass  # Don't let event emission break the download
-
-            # Emit MediaDownloadEvent - downloading
-            if self.event_bus:
-                try:
-                    from ..ui.events import MediaDownloadEvent
-                    await self.event_bus.publish(
-                        MediaDownloadEvent(
-                            rom_name=rom_basename,
-                            media_type=media_type,
-                            status="downloading"
-                        )
-                    )
-                except Exception:
-                    pass  # Don't let event emission break the download
 
             # Acquire semaphore if provided (limits concurrent downloads globally)
             if self.download_semaphore:
