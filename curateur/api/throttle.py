@@ -81,7 +81,7 @@ class ThrottleManager:
         self.max_media_downloads = 20  # Allow more concurrent media downloads
         self.media_download_semaphore = asyncio.Semaphore(self.max_media_downloads)
 
-        logger.info(
+        logger.debug(
             "Throttle manager initialized with max %s concurrent API requests, %s concurrent media downloads",
             self.max_concurrent,
             self.max_media_downloads
