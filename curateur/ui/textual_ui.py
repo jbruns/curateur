@@ -1783,8 +1783,13 @@ class CurateurUI(App):
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Track which tab is currently active."""
-        self.current_tab = event.tab.id
-        logger.debug(f"Tab activated: {event.tab.id}")
+        # event.tab is the TabPane widget, get its ID from the pane itself
+        tab_pane = event.tab
+        if hasattr(tab_pane, 'id') and tab_pane.id:
+            self.current_tab = str(tab_pane.id)
+            logger.debug(f"Tab activated: {self.current_tab}")
+        else:
+            logger.debug(f"Tab activated but no ID found: {tab_pane}")
 
     # ========================================================================
     # Event Handlers (Stubs - to be implemented in later phases)
@@ -2352,35 +2357,28 @@ class CurateurUI(App):
                 summary_lines.append(f"  ✗ {len(event.failed)} failed")
                 summary_lines.append("")
                 
-                # Add sample entries from each category (limit to avoid overwhelming UI)
-                max_samples = 5
+                # Add all entries from each category (already sorted alphabetically)
                 
                 if event.successful:
-                    summary_lines.append("Recent Successful:")
-                    for filename in event.successful[-max_samples:]:
+                    summary_lines.append("Successful:")
+                    for filename in event.successful:
                         summary_lines.append(f"  • {filename}")
-                    if len(event.successful) > max_samples:
-                        summary_lines.append(f"  ... and {len(event.successful) - max_samples} more")
                     summary_lines.append("")
                 
                 if event.skipped:
-                    summary_lines.append("Recent Skipped:")
-                    for filename, reason in event.skipped[-max_samples:]:
+                    summary_lines.append("Skipped:")
+                    for filename, reason in event.skipped:
                         summary_lines.append(f"  • {filename}")
                         summary_lines.append(f"    ({reason})")
-                    if len(event.skipped) > max_samples:
-                        summary_lines.append(f"  ... and {len(event.skipped) - max_samples} more")
                     summary_lines.append("")
                 
                 if event.failed:
-                    summary_lines.append("Recent Failed:")
-                    for filename, error in event.failed[-max_samples:]:
+                    summary_lines.append("Failed:")
+                    for filename, error in event.failed:
                         # Truncate long error messages
                         error_short = error[:60] + "..." if len(error) > 60 else error
                         summary_lines.append(f"  • {filename}")
                         summary_lines.append(f"    ({error_short})")
-                    if len(event.failed) > max_samples:
-                        summary_lines.append(f"  ... and {len(event.failed) - max_samples} more")
                 
                 # Update stats with summary
                 current_stats = dict(detail_panel.system_stats[system_name])
