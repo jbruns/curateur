@@ -767,10 +767,17 @@ class ActiveRequestsTable(Container):
             table = self.query_one("#active-requests-table", DataTable)
             current_time = time.time()
 
-            for rom_name, row_key in self.active_requests.items():
+            # Use list() to create a snapshot and avoid race conditions during iteration
+            for rom_name, row_key in list(self.active_requests.items()):
                 if rom_name in self.request_start_times:
                     elapsed = current_time - self.request_start_times[rom_name]
-                    table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
+                    try:
+                        # Check if row still exists before updating
+                        if row_key in table.rows:
+                            table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
+                    except (KeyError, ValueError):
+                        # Row was removed between iteration and update - ignore
+                        pass
 
         except Exception as e:
             logger.debug(f"Failed to update durations: {e}")
