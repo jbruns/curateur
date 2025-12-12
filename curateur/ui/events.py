@@ -266,32 +266,6 @@ class AuthenticationEvent:
 
 
 @dataclass(frozen=True)
-class ThreadPoolUpdateEvent:
-    """Emitted for thread pool status updates.
-
-    Attributes:
-        active_tasks: Number of currently active worker tasks
-        max_tasks: Maximum allowed concurrent tasks
-    """
-    active_tasks: int
-    max_tasks: int
-
-
-@dataclass(frozen=True)
-class APIQuotaEvent:
-    """Emitted for API quota tracking.
-
-    Attributes:
-        requests_used: API requests used today
-        requests_limit: Daily API request limit
-        username: Logged in username
-    """
-    requests_used: int
-    requests_limit: int
-    username: str
-
-
-@dataclass(frozen=True)
 class SearchActivityEvent:
     """Emitted for search fallback and unmatched ROM tracking.
 
