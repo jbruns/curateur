@@ -372,10 +372,28 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Authenticate with ScreenScraper and get user limits
     logger.debug("Starting authentication")
 
+    # Emit authentication started event
+    from curateur.ui.events import AuthenticationEvent, APIQuotaEvent
+    if event_bus:
+        await event_bus.publish(AuthenticationEvent(status='authenticating', username=None))
+
     try:
         logger.debug("Calling api_client.get_user_info()")
         user_limits = await api_client.get_user_info()
         logger.debug(f"Authentication successful: {user_limits}")
+
+        # Emit authentication success event
+        if event_bus:
+            await event_bus.publish(AuthenticationEvent(
+                status='authenticated',
+                username=user_limits.get('id')
+            ))
+            # Emit initial API quota
+            await event_bus.publish(APIQuotaEvent(
+                requests_used=user_limits.get('requeststoday', 0),
+                requests_limit=user_limits.get('maxrequestsperday', 0),
+                username=user_limits.get('id', 'unknown')
+            ))
 
         # Initialize thread pool with actual API limits
         thread_manager.initialize_pools(user_limits)
@@ -442,7 +460,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         preferred_regions=config['scraping'].get('preferred_regions', ['us', 'wor', 'eu']),
         thread_manager=thread_manager,
         performance_monitor=performance_monitor,
-        console_ui=headless_logger,
         throttle_manager=throttle_manager,
         clear_cache=args.clear_cache,
         event_bus=event_bus,

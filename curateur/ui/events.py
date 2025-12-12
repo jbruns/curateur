@@ -227,3 +227,105 @@ class SearchResponseEvent:
     request_id: str
     action: Literal['selected', 'skip', 'cancel']
     selected_game: Optional[dict] = None
+
+
+@dataclass(frozen=True)
+class CacheMetricsEvent:
+    """Emitted for cache metrics tracking.
+
+    Attributes:
+        existing: Cache entries loaded at startup
+        added: New cache entries added this session
+        hits: Total cache hits
+        misses: Total cache misses
+        hit_rate: Cache hit rate percentage (0.0-100.0)
+    """
+    existing: int
+    added: int
+    hits: int
+    misses: int
+    hit_rate: float
+
+
+@dataclass(frozen=True)
+class GamelistUpdateEvent:
+    """Emitted for gamelist update tracking.
+
+    Attributes:
+        system: System short name
+        existing: Existing entries in gamelist at start
+        added: New entries added this session
+        updated: Existing entries updated this session
+        removed: Entries removed this session
+    """
+    system: str
+    existing: int
+    added: int
+    updated: int
+    removed: int
+
+
+@dataclass(frozen=True)
+class AuthenticationEvent:
+    """Emitted for authentication status updates.
+
+    Attributes:
+        status: Authentication status
+        username: Logged in username (None if authenticating/failed)
+    """
+    status: Literal['authenticating', 'authenticated', 'failed']
+    username: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ThreadPoolUpdateEvent:
+    """Emitted for thread pool status updates.
+
+    Attributes:
+        active_tasks: Number of currently active worker tasks
+        max_tasks: Maximum allowed concurrent tasks
+    """
+    active_tasks: int
+    max_tasks: int
+
+
+@dataclass(frozen=True)
+class APIQuotaEvent:
+    """Emitted for API quota tracking.
+
+    Attributes:
+        requests_used: API requests used today
+        requests_limit: Daily API request limit
+        username: Logged in username
+    """
+    requests_used: int
+    requests_limit: int
+    username: str
+
+
+@dataclass(frozen=True)
+class SearchActivityEvent:
+    """Emitted for search fallback and unmatched ROM tracking.
+
+    Attributes:
+        fallback_count: Number of times search fallback was used
+        unmatched_count: Number of ROMs that could not be matched
+    """
+    fallback_count: int
+    unmatched_count: int
+
+
+@dataclass(frozen=True)
+class MediaStatsEvent:
+    """Emitted for media download statistics.
+
+    Attributes:
+        by_type: Per-media-type breakdown {'box-2D': {'successful': N, 'failed': M}, ...}
+        total_validated: Total media files validated (already existed)
+        total_skipped: Total media downloads skipped
+        total_failed: Total media downloads failed
+    """
+    by_type: dict
+    total_validated: int
+    total_skipped: int
+    total_failed: int

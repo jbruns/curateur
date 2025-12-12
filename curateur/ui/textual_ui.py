@@ -1986,6 +1986,92 @@ class CurateurUI(App):
                 timeout=2
             )
 
+    async def on_cache_metrics_event(self, event) -> None:
+        """Handle cache metrics event."""
+        from ..ui.events import CacheMetricsEvent
+        if not isinstance(event, CacheMetricsEvent):
+            return
+        
+        logger.debug(
+            f"Cache metrics: existing={event.existing}, added={event.added}, "
+            f"hits={event.hits}, misses={event.misses}, hit_rate={event.hit_rate:.1f}%"
+        )
+        # Cache metrics are displayed in system operations panel
+        # Could update a dedicated cache widget here if needed
+
+    async def on_gamelist_update_event(self, event) -> None:
+        """Handle gamelist update event."""
+        from ..ui.events import GamelistUpdateEvent
+        if not isinstance(event, GamelistUpdateEvent):
+            return
+        
+        logger.debug(
+            f"Gamelist update [{event.system}]: existing={event.existing}, "
+            f"added={event.added}, updated={event.updated}, removed={event.removed}"
+        )
+        # Gamelist stats are displayed in system operations panel
+        # Could update a dedicated gamelist widget here if needed
+
+    async def on_authentication_event(self, event) -> None:
+        """Handle authentication event."""
+        from ..ui.events import AuthenticationEvent
+        if not isinstance(event, AuthenticationEvent):
+            return
+        
+        logger.debug(f"Authentication: status={event.status}, username={event.username}")
+        
+        # Update header with auth status
+        if event.status == 'authenticating':
+            self.notify("Authenticating with ScreenScraper...", timeout=2)
+        elif event.status == 'authenticated':
+            self.notify(
+                f"Authenticated as {event.username}",
+                severity="information",
+                timeout=3
+            )
+        elif event.status == 'failed':
+            self.notify(
+                "Authentication failed",
+                severity="error",
+                timeout=5
+            )
+
+    async def on_api_quota_event(self, event) -> None:
+        """Handle API quota event."""
+        from ..ui.events import APIQuotaEvent
+        if not isinstance(event, APIQuotaEvent):
+            return
+        
+        logger.debug(
+            f"API quota: {event.requests_used}/{event.requests_limit} "
+            f"({event.username})"
+        )
+        # Quota is displayed in performance panel via PerformanceUpdateEvent
+
+    async def on_search_activity_event(self, event) -> None:
+        """Handle search activity event."""
+        from ..ui.events import SearchActivityEvent
+        if not isinstance(event, SearchActivityEvent):
+            return
+        
+        logger.debug(
+            f"Search activity: fallback={event.fallback_count}, "
+            f"unmatched={event.unmatched_count}"
+        )
+        # Search activity stats are displayed in system operations panel
+
+    async def on_media_stats_event(self, event) -> None:
+        """Handle media stats event."""
+        from ..ui.events import MediaStatsEvent
+        if not isinstance(event, MediaStatsEvent):
+            return
+        
+        logger.debug(
+            f"Media stats: validated={event.total_validated}, "
+            f"skipped={event.total_skipped}, failed={event.total_failed}"
+        )
+        # Media stats are displayed in system operations panel
+
     # ========================================================================
     # Action Handlers
     # ========================================================================
