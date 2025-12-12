@@ -2357,10 +2357,25 @@ class CurateurUI(App):
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
             if self.current_system:
                 system_name = self.current_system.system_name
-                if system_name in detail_panel.system_stats:
-                    current_stats = dict(detail_panel.system_stats[system_name])
-                    current_stats['media_by_type'] = event.by_type
-                    detail_panel.update_system_stats(system_name, current_stats)
+                # Initialize stats if they don't exist yet
+                if system_name not in detail_panel.system_stats:
+                    detail_panel.system_stats = {
+                        **detail_panel.system_stats,
+                        system_name: {
+                            "fullname": system_name,
+                            "total_roms": 0,
+                            "successful": 0,
+                            "failed": 0,
+                            "skipped": 0,
+                            "status": "in_progress",
+                            "summary": "Processing..."
+                        }
+                    }
+                
+                # Update with media breakdown
+                current_stats = dict(detail_panel.system_stats[system_name])
+                current_stats['media_by_type'] = event.by_type
+                detail_panel.update_system_stats(system_name, current_stats)
         except Exception as e:
             logger.debug(f"Failed to update system media breakdown: {e}")
 
