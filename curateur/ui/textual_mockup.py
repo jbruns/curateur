@@ -1615,7 +1615,7 @@ class TextualMockupApp(App):
             spotlight = self.query_one(GameSpotlightWidget)
             spotlight.next_game()
         except Exception:
-            pass
+            self.notify("Game navigation failed (Overview tab or widget not available)", severity="warning", timeout=3)
 
     def action_simulate_log(self) -> None:
         """Simulate a new log entry (demo feature)"""
