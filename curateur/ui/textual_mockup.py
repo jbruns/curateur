@@ -874,7 +874,6 @@ class SystemDetailPanel(VerticalScroll):
         # Media Statistics
         content.append("● MEDIA DOWNLOADS\n", style="bold cyan")
         for media_type, stats in system["media"].items():
-            total = stats["downloaded"] + stats["skipped"]
             content.append(f"  {media_type}:\n", style="bright_magenta")
             content.append(f"    Downloaded: {stats['downloaded']:>3}  ", style="bright_green")
             content.append(f"Skipped: {stats['skipped']:>3}  ", style="yellow")
