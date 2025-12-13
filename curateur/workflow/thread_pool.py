@@ -42,16 +42,18 @@ class ThreadPoolManager:
         await manager.stop_workers()
     """
 
-    def __init__(self, config: dict, console_ui=None):
+    def __init__(self, config: dict, console_ui=None, textual_ui=None):
         """
         Initialize task pool manager
 
         Args:
             config: Configuration dictionary
-            console_ui: Optional ConsoleUI instance for pause state checking
+            console_ui: Optional HeadlessLogger instance for pause state checking
+            textual_ui: Optional Textual UI instance for quit/skip flag polling
         """
         self.config = config
         self.console_ui = console_ui
+        self.textual_ui = textual_ui
         self.max_concurrent = 1  # Conservative default
         self.semaphore: Optional[asyncio.Semaphore] = None
         self._initialized = False
@@ -205,25 +207,21 @@ class ThreadPoolManager:
 
     async def spawn_workers(
         self,
-        work_queue: 'WorkQueueManager',
-        rom_processor: Callable[[Any, Optional[Callable]], Awaitable[Any]],
-        operation_callback: Optional[
-            Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]
-        ],
-        count: int,
-        stagger_delay: float = 0.0
+        work_queue: Any,
+        rom_processor: Callable,
+        operation_callback: Optional[Callable] = None,
+        result_callback: Optional[Callable] = None,
+        count: int = 1,
+        stagger_delay: float = 0.0  # Deprecated - kept for backwards compatibility
     ) -> None:
         """
-        Spawn concurrent task coroutines that continuously process items from work queue
-
-        Tasks pull work items from queue, process them, and repeat until:
-        - Queue is empty AND system marked complete
-        - Shutdown event is set
+        Spawn concurrent worker tasks to process work queue
 
         Args:
             work_queue: WorkQueueManager instance to pull work from
             rom_processor: Async function to process each ROM
             operation_callback: Optional UI callback for progress updates
+            result_callback: Optional callback invoked when each ROM completes (receives rom_info, result)
             count: Number of concurrent tasks to spawn
             stagger_delay: Delay in seconds between starting each task (default: 0.0, deprecated)
         """
@@ -234,6 +232,7 @@ class ThreadPoolManager:
         self._work_queue = work_queue
         self._rom_processor = rom_processor
         self._operation_callback = operation_callback
+        self._result_callback = result_callback
 
         logger.info(f"Spawning {count} concurrent task(s)")
 
@@ -265,6 +264,19 @@ class ThreadPoolManager:
             elif paused_logged:
                 logger.debug(f"Task {task_id} resumed")
                 paused_logged = False
+
+            # Check for quit request from Textual UI
+            if self.textual_ui and self.textual_ui.should_quit:
+                logger.info(f"Task {task_id} - quit requested from Textual UI, setting shutdown event")
+                self._shutdown_event.set()
+                break
+
+            # Check for skip system request from Textual UI
+            if self.textual_ui and self.textual_ui.should_skip_system:
+                logger.info(f"Task {task_id} - skip system requested from Textual UI, marking system complete")
+                self._work_queue.mark_system_complete()
+                # Don't reset the flag here - let the orchestrator handle it
+                # The workers will finish current ROMs and exit cleanly
 
             # Check if work queue is done
             if self._work_queue.is_system_complete() and self._work_queue.is_empty():
@@ -357,6 +369,13 @@ class ThreadPoolManager:
                 async with self._results_lock:
                     self._results.append((rom_info, result))
 
+                # Call result callback immediately (for real-time UI updates)
+                if self._result_callback:
+                    try:
+                        await self._result_callback(rom_info, result)
+                    except Exception as e:
+                        logger.error(f"Result callback failed for {rom_info.filename}: {e}")
+
                 # Mark as processed
                 await self._work_queue.mark_processed(work_item)
 
@@ -396,8 +415,14 @@ class ThreadPoolManager:
         if self._work_queue and not self._workers_stopped:
             # Use shorter timeout and poll to allow interruption
             while not self._work_queue.queue.empty() and not self._workers_stopped:
+                # Check for quit request from Textual UI
+                if self.textual_ui and self.textual_ui.should_quit:
+                    logger.info("Quit requested during wait_for_completion - stopping workers")
+                    await self.stop_workers()
+                    break
+                    
                 try:
-                    # Wait up to 1 second at a time, allows checking _workers_stopped
+                    # Wait up to 1 second at a time, allows checking _workers_stopped and quit
                     # Note: drain() will log a warning if timeout is hit, but this is
                     # expected during periodic checks - we catch TimeoutError to continue
                     await asyncio.wait_for(self._work_queue.drain(timeout=1.0), timeout=1.0)

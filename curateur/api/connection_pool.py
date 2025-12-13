@@ -107,8 +107,8 @@ class ConnectionPoolManager:
             http2=False  # Explicit HTTP/1.1 (ScreenScraper does not support HTTP/2)
         )
         
-        logger.info(
-            f"Connection pool created: max_connections={max_connections}, "
+        logger.debug(
+            f"Connection pool: max_connections={max_connections}, "
             f"timeout={timeout}s"
         )
         

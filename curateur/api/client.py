@@ -53,7 +53,8 @@ class ScreenScraperClient:
         throttle_manager: ThrottleManager,
         client: Optional[httpx.AsyncClient] = None,
         cache: Optional[MetadataCache] = None,
-        connection_pool_manager: Optional[Any] = None
+        connection_pool_manager: Optional[Any] = None,
+        event_bus: Optional[Any] = None
     ):
         """
         Initialize API client.
@@ -64,6 +65,7 @@ class ScreenScraperClient:
             client: Optional httpx.AsyncClient for connection pooling
             cache: Optional MetadataCache for response caching
             connection_pool_manager: Optional ConnectionPoolManager for health tracking
+            event_bus: Optional EventBus for UI event emissions
         """
         # Authentication
         self.devid = config['screenscraper']['devid']
@@ -100,6 +102,9 @@ class ScreenScraperClient:
         
         # Connection pool manager for health tracking (optional)
         self.connection_pool_manager = connection_pool_manager
+
+        # Event bus for UI events (optional)
+        self.event_bus = event_bus
 
         # Track if we've extracted rate limits from API
         self._rate_limits_initialized = False
@@ -297,6 +302,21 @@ class ScreenScraperClient:
 
         return user_info
 
+    def update_runtime_config(self, max_retries: int = None, retry_backoff: float = None) -> None:
+        """Update API client configuration at runtime.
+
+        Args:
+            max_retries: New max retry count (None to skip)
+            retry_backoff: New retry backoff in seconds (None to skip)
+        """
+        if max_retries is not None:
+            self.max_retries = max_retries
+            logger.info(f"Updated max_retries to {max_retries}")
+
+        if retry_backoff is not None:
+            self.retry_backoff = retry_backoff
+            logger.info(f"Updated retry_backoff to {retry_backoff}s")
+
     async def _query_jeu_infos(
         self,
         systemeid: int,
@@ -364,6 +384,23 @@ class ScreenScraperClient:
 
         # Acquire concurrency semaphore to limit concurrent API requests
         async with self.throttle_manager.concurrency_semaphore:
+            # Emit APIActivityEvent when request starts
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight requests (max - available slots)
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=in_flight,
+                            metadata_total=0,  # Not tracked at API level
+                            search_in_flight=0,  # Would need separate tracking
+                            search_total=0  # Not tracked at API level
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
+
             start_time = time.time()
             try:
                 # Create the HTTP request task that can be cancelled
@@ -494,6 +531,23 @@ class ScreenScraperClient:
                 self.cache.put(crc, game_data, rom_size=romtaille)
                 logger.debug(f"Cached response for {romnom} (hash={crc}, size={romtaille})")
 
+            # Emit APIActivityEvent when request completes (still inside semaphore)
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight after this completes
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value - 1
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=max(0, in_flight),
+                            metadata_total=1,  # Signal completion
+                            search_in_flight=0,
+                            search_total=0
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
+
             return game_data
 
     async def search_game(
@@ -611,6 +665,23 @@ class ScreenScraperClient:
 
         # Acquire concurrency semaphore to limit concurrent API requests
         async with self.throttle_manager.concurrency_semaphore:
+            # Emit APIActivityEvent when request starts
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight requests (max - available slots)
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=in_flight,
+                            metadata_total=0,  # Not tracked at API level
+                            search_in_flight=0,  # Would need separate tracking
+                            search_total=0  # Not tracked at API level
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
+
             start_time = time.time()
             try:
                 # Create the HTTP request task that can be cancelled
@@ -729,6 +800,23 @@ class ScreenScraperClient:
                 results = parse_search_results(root, self.preferred_language)
             except ResponseError as e:
                 raise SkippableAPIError(str(e))
+
+            # Emit APIActivityEvent when search request completes
+            if self.event_bus:
+                try:
+                    from ..ui.events import APIActivityEvent
+                    # Calculate in-flight after this completes
+                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value - 1
+                    await self.event_bus.publish(
+                        APIActivityEvent(
+                            metadata_in_flight=0,
+                            metadata_total=0,
+                            search_in_flight=max(0, in_flight),
+                            search_total=1  # Signal completion
+                        )
+                    )
+                except Exception:
+                    pass  # Don't let event emission break the API call
 
             return results
 

@@ -13,13 +13,13 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Callable, Any, TYPE_CHECKING
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime
 import time
 
 if TYPE_CHECKING:
     from ..workflow.thread_pool import ThreadPoolManager
     from ..workflow.performance import PerformanceMonitor
-    from ..ui.console_ui import ConsoleUI
+    from ..ui.headless_logger import HeadlessLogger
     from ..api.throttle import ThrottleManager
 
 from ..config.es_systems import SystemDefinition
@@ -31,7 +31,6 @@ from ..api.cache import MetadataCache
 from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
 from ..api.match_scorer import calculate_match_confidence
 from ..ui.prompts import prompt_for_search_match
-from ..ui.console_ui import Operations
 from ..media.media_downloader import MediaDownloader
 from ..media.media_types import to_singular
 from ..gamelist.generator import GamelistGenerator
@@ -102,9 +101,10 @@ class WorkflowOrchestrator:
         preferred_regions: Optional[List[str]] = None,
         thread_manager: Optional['ThreadPoolManager'] = None,
         performance_monitor: Optional['PerformanceMonitor'] = None,
-        console_ui: Optional['ConsoleUI'] = None,
         throttle_manager: Optional['ThrottleManager'] = None,
-        clear_cache: bool = False
+        clear_cache: bool = False,
+        event_bus: Optional[Any] = None,
+        textual_ui: Optional[Any] = None
     ):
         """
         Initialize workflow orchestrator.
@@ -124,9 +124,10 @@ class WorkflowOrchestrator:
             preferred_regions: Region preference list for scoring
             thread_manager: Optional ThreadPoolManager for parallel operations
             performance_monitor: Optional PerformanceMonitor for metrics tracking
-            console_ui: Optional ConsoleUI for rich display
             throttle_manager: Optional ThrottleManager for quota tracking
             clear_cache: Whether to clear metadata cache before scraping
+            event_bus: Optional EventBus for UI event emissions
+            textual_ui: Optional Textual UI instance for flag polling
         """
         self.api_client = api_client
         self.rom_directory = rom_directory
@@ -145,8 +146,13 @@ class WorkflowOrchestrator:
         # Phase D components (optional)
         self.thread_manager = thread_manager
         self.performance_monitor = performance_monitor
-        self.console_ui = console_ui
         self.throttle_manager = throttle_manager
+        self.event_bus = event_bus
+        self.textual_ui = textual_ui
+
+        # Search response handling for interactive search
+        self.search_response_queues: Dict[str, asyncio.Queue] = {}  # request_id -> response queue
+        self.search_response_lock = asyncio.Lock()
 
         # Initialize workflow evaluator with cache for media hash lookups
         self.evaluator = WorkflowEvaluator(self.config, cache=self.api_client.cache if self.api_client else None)
@@ -176,12 +182,61 @@ class WorkflowOrchestrator:
         # Track unmatched ROMs per system
         self.unmatched_roms: Dict[str, List[str]] = {}
 
+        # Session statistics for aggregate tracking (never decrement, only increment)
+        self.session_stats = {
+            'api_successful': 0,
+            'api_failed': 0,
+            'api_queued': 0,
+            'search_fallback': 0,
+            'unmatched': 0,
+            'media_by_type': {},  # {'box-2D': {'successful': N, 'failed': M, 'validated': X, 'skipped': Y}, ...}
+            'media_validated': 0,
+            'media_skipped': 0,
+            'media_failed': 0,
+            'cache_existing': 0,
+            'cache_added': 0,
+            'gamelist_existing': 0,
+            'gamelist_added': 0,
+            'gamelist_updated': 0
+        }
+
+        # Active request tracking for Details tab
+        # request_id -> {'rom_name': str, 'stage': str, 'start_time': float, 'retry_count': int, 'last_failure': str}
+        self.active_requests: Dict[str, Dict[str, Any]] = {}
+
+    def update_search_config(
+        self,
+        enable_fallback: bool = None,
+        confidence_threshold: float = None,
+        max_results: int = None
+    ) -> None:
+        """Update search configuration at runtime.
+
+        Args:
+            enable_fallback: Enable/disable search fallback (None to skip)
+            confidence_threshold: New confidence threshold 0.0-1.0 (None to skip)
+            max_results: New max search results (None to skip)
+        """
+        if enable_fallback is not None:
+            self.enable_search_fallback = enable_fallback
+            logger.info(f"Set search fallback to {enable_fallback}")
+
+        if confidence_threshold is not None:
+            self.search_confidence_threshold = confidence_threshold
+            logger.info(f"Updated search confidence threshold to {confidence_threshold:.0%}")
+
+        if max_results is not None:
+            self.search_max_results = max_results
+            logger.info(f"Updated search max results to {max_results}")
+
     async def scrape_system(
         self,
         system: SystemDefinition,
         media_types: List[str] = None,
         preferred_regions: List[str] = None,
-        progress_tracker = None
+        progress_tracker = None,
+        current_system_index: int = 0,
+        total_systems: int = 1
     ) -> SystemResult:
         """
         Scrape a single system.
@@ -191,6 +246,8 @@ class WorkflowOrchestrator:
             media_types: Media types to download (default: ['box-2D', 'ss'])
             preferred_regions: Region priority list (default: ['us', 'wor', 'eu'])
             progress_tracker: Optional progress tracker to update with ROM count
+            current_system_index: Index of this system in the system list (0-based)
+            total_systems: Total number of systems being scraped
 
         Returns:
             SystemResult with scraping statistics
@@ -202,13 +259,10 @@ class WorkflowOrchestrator:
             preferred_regions = ['us', 'wor', 'eu']
 
         # Step 0: System start logging
+        system_start_time = time.time()
         logger.info(f"=== Begin work for system: {system.name} ===")
         logger.info(f"Platform: {system.platform}")
         logger.info(f"Path: {system.path}")
-
-        # Reset pipeline stages UI for new system
-        if self.console_ui:
-            self.console_ui.reset_pipeline_stages()
 
         gamelist_dir = self.paths['gamelists'] / system.name
 
@@ -261,6 +315,9 @@ class WorkflowOrchestrator:
         # Update API client with cache for this system
         self.api_client.cache = cache
 
+        # Track cache existing count for this system
+        self.session_stats['cache_existing'] = cache_stats.get('valid_entries', 0)
+
         # Step 1: Scan ROMs
         logger.info("Scanning ROMs...")
         crc_size_limit = self.config.get('runtime', {}).get('crc_size_limit', 1073741824)
@@ -290,13 +347,29 @@ class WorkflowOrchestrator:
                 not_found_items=[]
             )
 
-        # Update UI with scanner count
-        if self.console_ui:
-            self.console_ui.update_scanner(len(rom_entries))
-
         # Notify progress tracker with actual ROM count
         if progress_tracker:
             progress_tracker.start_system(system.fullname, len(rom_entries))
+
+        # Emit SystemStartedEvent and LogEntryEvent for UI
+        if self.event_bus:
+            from ..ui.events import SystemStartedEvent, LogEntryEvent
+            await self.event_bus.publish(
+                SystemStartedEvent(
+                    system_name=system.name,
+                    system_fullname=system.fullname,
+                    total_roms=len(rom_entries),
+                    current_index=current_system_index,
+                    total_systems=total_systems
+                )
+            )
+            await self.event_bus.publish(
+                LogEntryEvent(
+                    level=logging.INFO,
+                    message=f"Started processing {system.fullname} ({len(rom_entries)} ROMs)",
+                    timestamp=datetime.now()
+                )
+            )
 
         # Step 2: Parse and validate existing gamelist
         gamelist_path = self.paths['gamelists'] / system.name / 'gamelist.xml'
@@ -308,20 +381,15 @@ class WorkflowOrchestrator:
             try:
                 existing_entries = parser.parse_gamelist(gamelist_path)
                 logger.info(f"Parsed {len(existing_entries)} entries from existing gamelist")
-
-                # Update UI: Set system info (gamelist exists, number of entries)
-                if self.console_ui:
-                    self.console_ui.set_system_info(gamelist_exists=True, existing_entries=len(existing_entries))
+                
+                # Track existing gamelist count
+                self.session_stats['gamelist_existing'] = len(existing_entries)
 
                 # Validate gamelist integrity
                 rom_paths = [rom_info.path for rom_info in rom_entries]
                 validation_result = self.integrity_validator.validate(existing_entries, rom_paths)
 
                 logger.info(f"Gamelist validation: {validation_result.match_ratio:.1%} match ratio")
-
-                # Update UI: Set integrity score
-                if self.console_ui:
-                    self.console_ui.set_integrity_score(validation_result.match_ratio)
 
                 if not validation_result.is_valid:
                     logger.warning(
@@ -350,9 +418,6 @@ class WorkflowOrchestrator:
                 existing_entries = []
         else:
             logger.info("Gamelist validation: not applicable (no existing gamelist)")
-            # Update UI: Set system info (no gamelist)
-            if self.console_ui:
-                self.console_ui.set_system_info(gamelist_exists=False, existing_entries=0)
 
         # Backup existing gamelist before processing begins
         if gamelist_path.exists() and not self.dry_run:
@@ -392,37 +457,14 @@ class WorkflowOrchestrator:
         # Write gamelist if there are new entries OR existing entries to maintain
         if not self.dry_run and (scraped_count > 0 or existing_entries):
             try:
-                # Display system-level operation in UI
-                if self.console_ui:
-                    self.console_ui.display_system_operation(
-                        system_name=system.name,
-                        operation=Operations.WRITING_GAMELIST,
-                        details=f"Generating gamelist.xml ({scraped_count} entries)..."
-                    )
-
                 logger.info(f"Committing gamelist: {scraped_count} entries")
                 logger.debug(f"About to call _generate_gamelist with {len(results)} results")
                 integrity_result = self._generate_gamelist(system, results)
                 logger.debug(f"_generate_gamelist returned: {integrity_result}")
 
-                # Show validation result
-                if self.console_ui and integrity_result:
-                    validation_status = "passed" if integrity_result.get('valid', False) else "failed"
-                    integrity_pct = int(integrity_result.get('integrity_score', 0) * 100)
-                    self.console_ui.set_system_operation(
-                        "Gamelist validation",
-                        f"{validation_status} ({integrity_pct}% integrity)"
-                    )
-                    # Brief pause to show result
-                    import asyncio
-                    await asyncio.sleep(1)
-
-                # Clear system operation from UI
-                if self.console_ui:
-                    self.console_ui.clear_system_operation()
+                # Brief pause to show result
+                await asyncio.sleep(1)
             except Exception as e:
-                if self.console_ui:
-                    self.console_ui.clear_system_operation()
                 logger.error(f"Failed to generate gamelist: {e}", exc_info=True)
                 print(f"Warning: Failed to generate gamelist: {e}")
 
@@ -454,6 +496,37 @@ class WorkflowOrchestrator:
             f"{scraped_count} successful, {skipped_count} skipped, {failed_count} failed"
         )
         logger.info(f"=== End work for system: {system.name} ===")
+
+        # Emit SystemCompletedEvent and GamelistUpdateEvent for UI
+        if self.event_bus:
+            from ..ui.events import SystemCompletedEvent, LogEntryEvent, GamelistUpdateEvent
+            system_duration = time.time() - system_start_time
+            await self.event_bus.publish(
+                SystemCompletedEvent(
+                    system_name=system.name,
+                    total_roms=scraped_count + failed_count + skipped_count,
+                    successful=scraped_count,
+                    failed=failed_count,
+                    skipped=skipped_count,
+                    elapsed_time=system_duration
+                )
+            )
+            # Emit gamelist update stats
+            await self.event_bus.publish(
+                GamelistUpdateEvent(
+                    system=system.name,
+                    existing=self.session_stats['gamelist_existing'],
+                    added=self.session_stats['gamelist_added'],
+                    updated=self.session_stats['gamelist_updated']
+                )
+            )
+            await self.event_bus.publish(
+                LogEntryEvent(
+                    level=logging.INFO,
+                    message=f"Completed {system.name}: {scraped_count} successful, {failed_count} failed, {skipped_count} skipped in {system_duration:.1f}s",
+                    timestamp=datetime.now()
+                )
+            )
 
         return SystemResult(
             system_name=system.fullname,
@@ -554,9 +627,17 @@ class WorkflowOrchestrator:
             if decision.skip_reason:
                 logger.info(f"[{rom_info.filename}] Skipping: {decision.skip_reason}")
 
-                # Update UI: ROM skipped
-                if self.console_ui:
-                    self.console_ui.increment_completed(skipped=True)
+                # Emit ROMProgressEvent for skipped ROM
+                if self.event_bus:
+                    from ..ui.events import ROMProgressEvent
+                    await self.event_bus.publish(
+                        ROMProgressEvent(
+                            rom_name=rom_info.filename,
+                            system=system.name,
+                            status="skipped",
+                            detail=decision.skip_reason
+                        )
+                    )
 
                 # Preserve existing gamelist entry for skipped ROMs
                 return ScrapingResult(
@@ -579,10 +660,6 @@ class WorkflowOrchestrator:
             game_info = None
 
             if decision.fetch_metadata:
-                # Update UI: Start API fetch for this ROM
-                if self.console_ui:
-                    self.console_ui.update_api_fetch_stage(rom_info.filename, 'start')
-
                 # Check if we have cached data
                 from_cache = False
                 if self.api_client.cache:
@@ -602,9 +679,53 @@ class WorkflowOrchestrator:
 
                 api_start = time.time()
 
+                # Emit ActiveRequestEvent - API fetch started (only if not from cache)
+                if self.event_bus and not from_cache:
+                    from ..ui.events import ActiveRequestEvent
+                    await self.event_bus.publish(
+                        ActiveRequestEvent(
+                            request_id=f"{rom_info.filename}-api",
+                            rom_name=rom_info.filename,
+                            stage="API Fetch",
+                            status="started",
+                            duration=0.0
+                        )
+                    )
+
                 try:
                     game_info = await self.api_client.query_game(rom_info, shutdown_event=shutdown_event)
                     api_duration = time.time() - api_start
+                    
+                    # Ensure 'desc' field is extracted from 'descriptions' if missing (for old cache entries)
+                    if game_info and 'descriptions' in game_info and 'desc' not in game_info:
+                        descriptions = game_info['descriptions']
+                        preferred_lang = self.config.get('scraping', {}).get('preferred_language', 'en')
+                        
+                        # Extract description using same logic as response_parser
+                        if preferred_lang in descriptions:
+                            game_info['desc'] = descriptions[preferred_lang]
+                        elif 'en' in descriptions:
+                            game_info['desc'] = descriptions['en']
+                        elif descriptions:
+                            game_info['desc'] = list(descriptions.values())[0]
+
+                    # Emit ActiveRequestEvent - API fetch completed (only if not from cache)
+                    if self.event_bus and not from_cache:
+                        from ..ui.events import ActiveRequestEvent
+                        await self.event_bus.publish(
+                            ActiveRequestEvent(
+                                request_id=f"{rom_info.filename}-api",
+                                rom_name=rom_info.filename,
+                                stage="API Fetch",
+                                status="completed",
+                                duration=api_duration
+                            )
+                        )
+
+                    # Track cache additions (new API calls that get cached)
+                    if game_info and not from_cache:
+                        self.session_stats['cache_added'] += 1
+                        self.session_stats['api_successful'] += 1
 
                     # Record API timing only if it was NOT a cache hit
                     if hasattr(self, 'performance_monitor') and self.performance_monitor and not from_cache:
@@ -626,20 +747,54 @@ class WorkflowOrchestrator:
                             f"desc={game_info.get('desc', 'N/A')[:50]}..."
                         )
 
+                        # Emit GameCompletedEvent
+                        if self.event_bus:
+                            from ..ui.events import GameCompletedEvent
+                            
+                            # Extract year from release_dates (prefer us, wor, eu)
+                            release_dates = game_info.get('release_dates', {})
+                            release_date_str = release_dates.get('us') or release_dates.get('wor') or release_dates.get('eu') or None
+                            year = release_date_str[:4] if release_date_str and len(release_date_str) >= 4 else 'Unknown'
+                            
+                            # Extract single genre from genres list
+                            genres = game_info.get('genres', [])
+                            genre = ', '.join(genres[:2]) if genres else 'Unknown'  # Limit to 2 genres for display
+                            
+                            await self.event_bus.publish(
+                                GameCompletedEvent(
+                                    game_id=game_info.get('id', ''),
+                                    title=game_info.get('name', 'Unknown'),
+                                    year=year,
+                                    genre=genre,
+                                    developer=game_info.get('developer', 'Unknown'),
+                                    publisher=game_info.get('publisher', 'Unknown'),
+                                    players=game_info.get('players', 'Unknown'),
+                                    rating=game_info.get('rating'),
+                                    description=game_info.get('desc', '')[:300]  # Truncate for performance
+                                )
+                            )
+                            await asyncio.sleep(0)  # Yield to event processor
+
                     logger.debug(f"[{rom_info.filename}] Hash lookup successful")
                     # Increment task counter but don't emit completion status
                     completed_tasks += 1
 
-                    # Update UI: Complete API fetch (report if it was a cache hit)
-                    if self.console_ui:
-                        self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete', cache_hit=from_cache)
+                    # Emit ROMProgressEvent
+                    if self.event_bus and game_info:
+                        from ..ui.events import ROMProgressEvent
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=rom_info.filename,
+                                system=system.name,
+                                status="querying",
+                                detail=f"Fetched metadata for {game_info.get('name', 'Unknown')}"
+                            )
+                        )
+                        await asyncio.sleep(0)  # Yield to event processor
 
                 except asyncio.CancelledError:
                     # Shutdown requested during API call
                     logger.info(f"[{rom_info.filename}] API request cancelled (shutdown)")
-                    # Update UI: Complete API fetch (cancelled)
-                    if self.console_ui:
-                        self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
                     return ScrapingResult(
                         rom_path=rom_info.path,
                         success=False,
@@ -648,17 +803,63 @@ class WorkflowOrchestrator:
                 except SkippableAPIError as e:
                     logger.debug(f"[{rom_info.filename}] Hash lookup failed: {e}")
 
+                    # Emit ActiveRequestEvent - API fetch failed
+                    if self.event_bus and not from_cache:
+                        from ..ui.events import ActiveRequestEvent
+                        await self.event_bus.publish(
+                            ActiveRequestEvent(
+                                request_id=f"{rom_info.filename}-api",
+                                rom_name=rom_info.filename,
+                                stage="API Fetch",
+                                status="failed",
+                                duration=time.time() - api_start,
+                                last_failure=str(e)
+                            )
+                        )
+
                     # Try search fallback if enabled
                     if self.enable_search_fallback:
                         logger.info(f"[{rom_info.filename}] Attempting search fallback")
+                        
+                        # Emit ActiveRequestEvent - Search started
+                        if self.event_bus:
+                            from ..ui.events import ActiveRequestEvent
+                            await self.event_bus.publish(
+                                ActiveRequestEvent(
+                                    request_id=f"{rom_info.filename}-search",
+                                    rom_name=rom_info.filename,
+                                    stage="Search",
+                                    status="started",
+                                    duration=0.0
+                                )
+                            )
+                        
+                        # Track search fallback attempt
+                        self.session_stats['search_fallback'] += 1
+                        
+                        search_start = time.time()
                         game_info = await self._search_fallback(
                             rom_info,
                             preferred_regions,
                             shutdown_event=shutdown_event
                         )
+                        search_duration = time.time() - search_start
 
                         if game_info:
                             api_duration = time.time() - api_start
+
+                            # Emit ActiveRequestEvent - Search completed
+                            if self.event_bus:
+                                from ..ui.events import ActiveRequestEvent
+                                await self.event_bus.publish(
+                                    ActiveRequestEvent(
+                                        request_id=f"{rom_info.filename}-search",
+                                        rom_name=rom_info.filename,
+                                        stage="Search",
+                                        status="completed",
+                                        duration=search_duration
+                                    )
+                                )
 
                             # Record API timing
                             if hasattr(self, 'performance_monitor') and self.performance_monitor:
@@ -666,41 +867,46 @@ class WorkflowOrchestrator:
 
                             logger.info(f"[{rom_info.filename}] Search fallback successful")
 
-                            # Update UI: Search fallback used
-                            if self.console_ui:
-                                self.console_ui.increment_search_fallback()
-
                             # Increment task counter but don't emit completion status
                             completed_tasks += 1
-
-                            # Update UI: Complete API fetch (via fallback)
-                            if self.console_ui:
-                                self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete', cache_hit=False)
                         else:
+                            # Emit ActiveRequestEvent - Search failed
+                            if self.event_bus:
+                                from ..ui.events import ActiveRequestEvent
+                                await self.event_bus.publish(
+                                    ActiveRequestEvent(
+                                        request_id=f"{rom_info.filename}-search",
+                                        rom_name=rom_info.filename,
+                                        stage="Search",
+                                        status="failed",
+                                        duration=search_duration,
+                                        last_failure="No matches found"
+                                    )
+                                )
+                            
                             logger.info(f"[{rom_info.filename}] Search fallback: no matches found")
-                            # Update UI: Complete API fetch (fallback failed)
-                            if self.console_ui:
-                                self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
                     else:
-                        # Update UI: Complete API fetch (error, no fallback)
-                        if self.console_ui:
-                            self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
                         raise
 
             if not game_info and decision.fetch_metadata:
-                # Update UI: Complete API fetch (failed)
-                if self.console_ui:
-                    self.console_ui.update_api_fetch_stage(rom_info.filename, 'complete')
-
                 # Track as unmatched
                 system_name = system.name
                 if system_name not in self.unmatched_roms:
                     self.unmatched_roms[system_name] = []
                 self.unmatched_roms[system_name].append(rom_info.filename)
-
-                # Update UI: Unmatched ROM count
-                if self.console_ui:
-                    self.console_ui.increment_unmatched()
+                
+                # Increment unmatched counter
+                self.session_stats['unmatched'] += 1
+                
+                # Emit search activity event
+                if self.event_bus:
+                    from ..ui.events import SearchActivityEvent
+                    await self.event_bus.publish(
+                        SearchActivityEvent(
+                            fallback_count=self.session_stats['search_fallback'],
+                            unmatched_count=self.session_stats['unmatched']
+                        )
+                    )
 
                 return ScrapingResult(
                     rom_path=rom_info.path,
@@ -733,7 +939,8 @@ class WorkflowOrchestrator:
                     validation_mode=validation_mode,
                     min_width=image_min_dimension,
                     min_height=image_min_dimension,
-                    download_semaphore=media_semaphore
+                    download_semaphore=media_semaphore,
+                    event_bus=self.event_bus
                 )
 
                 # Get media list from game_info
@@ -902,8 +1109,13 @@ class WorkflowOrchestrator:
                                 media_paths[media_type_singular] = str(media_path)
                                 validated_media.append(media_type_singular)
                                 
-                                if self.console_ui:
-                                    self.console_ui.increment_media_validated(media_type_singular)
+                                # Track validated media stats
+                                if media_type_singular not in self.session_stats['media_by_type']:
+                                    self.session_stats['media_by_type'][media_type_singular] = {
+                                        'successful': 0, 'failed': 0, 'validated': 0, 'skipped': 0
+                                    }
+                                self.session_stats['media_by_type'][media_type_singular]['validated'] += 1
+                                self.session_stats['media_validated'] += 1
                     
                     # Log validation summary if we validated anything
                     if validated_media:
@@ -985,13 +1197,7 @@ class WorkflowOrchestrator:
 
                             # Create progress callback to update UI during download
                             def media_progress_callback(media_type: str, current_idx: int, total_count: int):
-                                # Update pipeline UI
-                                if self.console_ui:
-                                    self.console_ui.update_media_download_stage(
-                                        rom_info.filename,
-                                        media_type,
-                                        'start'
-                                    )
+                                pass
 
                             # Download all media concurrently
                             download_results, _ = await media_downloader.download_media_for_game(
@@ -1013,19 +1219,18 @@ class WorkflowOrchestrator:
                                     plural_dir = get_directory_for_media_type(result.media_type)
                                     media_type_singular = to_singular(plural_dir)
 
-                                    # Update UI: Media download complete
-                                    if self.console_ui:
-                                        self.console_ui.update_media_download_stage(
-                                            rom_info.filename,
-                                            result.media_type,
-                                            'complete'
-                                        )
-
                                     # Track using singular ES-DE type
                                     media_paths[media_type_singular] = result.file_path
                                     media_count += 1
                                     completed_tasks += 1
                                     successful_downloads.append(media_type_singular)
+                                    
+                                    # Track media stats by type
+                                    if media_type_singular not in self.session_stats['media_by_type']:
+                                        self.session_stats['media_by_type'][media_type_singular] = {
+                                            'successful': 0, 'failed': 0, 'validated': 0, 'skipped': 0
+                                        }
+                                    self.session_stats['media_by_type'][media_type_singular]['successful'] += 1
 
                                     # Store hash from download result (already calculated by media_downloader)
                                     if result.hash_value:
@@ -1045,6 +1250,14 @@ class WorkflowOrchestrator:
                                     plural_dir = get_directory_for_media_type(result.media_type)
                                     media_type_singular = to_singular(plural_dir)
                                     failed_downloads.append((media_type_singular, result.error))
+                                    
+                                    # Track media failure stats
+                                    if media_type_singular not in self.session_stats['media_by_type']:
+                                        self.session_stats['media_by_type'][media_type_singular] = {
+                                            'successful': 0, 'failed': 0, 'validated': 0, 'skipped': 0
+                                        }
+                                    self.session_stats['media_by_type'][media_type_singular]['failed'] += 1
+                                    self.session_stats['media_failed'] += 1
                             
                             # Log consolidated download summary
                             if successful_downloads or failed_downloads:
@@ -1116,8 +1329,6 @@ class WorkflowOrchestrator:
                                     # Normal mode: accept existing file without hash
                                     validated_trusted.append(media_type_singular)
                                     media_paths[media_type_singular] = str(media_path)
-                                    if self.console_ui:
-                                        self.console_ui.increment_media_validated(media_type_singular)
                                 continue
 
                             # Validate based on mode
@@ -1139,18 +1350,11 @@ class WorkflowOrchestrator:
                                     validated_passed.append(media_type_singular)
                                     media_paths[media_type_singular] = str(media_path)
                                     media_hashes[media_type_singular] = current_hash
-
-                                    if self.console_ui:
-                                        self.console_ui.increment_media_validated(media_type_singular)
                                 else:
                                     # Hash mismatch - re-download
                                     validated_failed.append((media_type_singular, expected_hash, current_hash))
                                     if media_type_singular not in decision.media_to_download:
                                         decision.media_to_download.append(media_type_singular)
-
-                                    # Track validation failure in UI
-                                    if self.console_ui:
-                                        self.console_ui.increment_media_validation_failed(media_type_singular)
                             else:
                                 # Normal mode: dimension and integrity check (images only), trust files otherwise
                                 logger.debug(
@@ -1177,8 +1381,6 @@ class WorkflowOrchestrator:
                                         validated_trusted.append(media_type_singular)
                                         media_paths[media_type_singular] = str(media_path)
                                         media_hashes[media_type_singular] = expected_hash
-                                        if self.console_ui:
-                                            self.console_ui.increment_media_validated(media_type_singular)
                                     else:
                                         # Validation failed - re-download
                                         logger.debug(
@@ -1194,16 +1396,11 @@ class WorkflowOrchestrator:
                                         ))
                                         if media_type_singular not in decision.media_to_download:
                                             decision.media_to_download.append(media_type_singular)
-                                        
-                                        if self.console_ui:
-                                            self.console_ui.increment_media_validation_failed(media_type_singular)
                                 else:
                                     # Non-image types (manual, video) - trust they exist in normal mode
                                     validated_trusted.append(media_type_singular)
                                     media_paths[media_type_singular] = str(media_path)
                                     media_hashes[media_type_singular] = expected_hash
-                                    if self.console_ui:
-                                        self.console_ui.increment_media_validated(media_type_singular)
 
                         # Log consolidated validation summary
                         if validated_passed or validated_failed or validated_missing or validated_no_hash:
@@ -1270,12 +1467,7 @@ class WorkflowOrchestrator:
                                 )
 
                             def media_redownload_callback(media_type: str, current_idx: int, total_count: int):
-                                if self.console_ui:
-                                    self.console_ui.update_media_download_stage(
-                                        rom_info.filename,
-                                        media_type,
-                                        'start'
-                                    )
+                                pass
 
                             download_results, _ = await media_downloader.download_media_for_game(
                                 media_list=redownload_media_list,
@@ -1307,13 +1499,6 @@ class WorkflowOrchestrator:
 
                                     if result.hash_value:
                                         media_hashes[media_type_singular] = result.hash_value
-
-                                    if self.console_ui:
-                                        self.console_ui.update_media_download_stage(
-                                            rom_info.filename,
-                                            media_type_singular,
-                                            'complete'
-                                        )
 
             # Clean disabled media types if configured
             if decision.clean_disabled_media:
@@ -1369,10 +1554,10 @@ class WorkflowOrchestrator:
                         f"Metadata merged: {len(merge_result.preserved_fields)} preserved, "
                         f"{len(merge_result.updated_fields)} updated"
                     )
-
-                    # Track updated entry in UI
-                    if self.console_ui and len(merge_result.updated_fields) > 0:
-                        self.console_ui.increment_gamelist_updated()
+                    
+                    # Track gamelist update if fields were changed
+                    if len(merge_result.updated_fields) > 0:
+                        self.session_stats['gamelist_updated'] += 1
                 else:
                     # New entry - apply auto-favorite if enabled (no merge strategy check for new entries)
                     if self.metadata_merger.auto_favorite_enabled:
@@ -1380,23 +1565,15 @@ class WorkflowOrchestrator:
                                 game_entry.rating >= self.metadata_merger.auto_favorite_threshold):
                             game_entry.favorite = True
                             logger.debug(f"Auto-favoriting new entry: {game_entry.name} (rating={game_entry.rating})")
-
-                    # Track new entry added to gamelist
-                    if self.console_ui and game_entry:
-                        self.console_ui.increment_gamelist_added()
+                    
+                    # Track new gamelist entry
+                    if game_entry and decision.update_metadata:
+                        self.session_stats['gamelist_added'] += 1
 
                 # Update cache with media hashes (if cache enabled and we have hashes)
                 if self.api_client.cache and rom_hash and media_hashes:
                     self.api_client.cache.update_media_hashes(rom_hash, media_hashes)
                     logger.debug(f"Updated cache with {len(media_hashes)} media hashes for {rom_info.filename}")
-
-                # Add completed game to spotlight (quality validation inside)
-                if self.console_ui and game_info:
-                    self.console_ui.add_completed_game(game_info)
-
-                # Update UI: ROM complete
-                if self.console_ui:
-                    self.console_ui.increment_completed()
 
                 return ScrapingResult(
                     rom_path=rom_info.path,
@@ -1409,14 +1586,6 @@ class WorkflowOrchestrator:
                 )
 
             # Return success even if no updates made
-            # Add completed game to spotlight (quality validation inside)
-            if self.console_ui and game_info:
-                self.console_ui.add_completed_game(game_info)
-
-            # Update UI: ROM complete
-            if self.console_ui:
-                self.console_ui.increment_completed()
-
             return ScrapingResult(
                 rom_path=rom_info.path,
                 success=True,
@@ -1429,10 +1598,6 @@ class WorkflowOrchestrator:
 
         except Exception as e:
             logger.error(f"[{rom_info.filename}] Error scraping: {e}")
-
-            # Update UI: ROM completed with failure
-            if self.console_ui:
-                self.console_ui.increment_completed(success=False)
 
             return ScrapingResult(
                 rom_path=rom_info.path,
@@ -1541,10 +1706,6 @@ class WorkflowOrchestrator:
         last_log_time = time.time()
         log_interval = 10.0  # Log every 10 seconds minimum
 
-        # Update UI: Start hashing stage
-        if self.console_ui:
-            self.console_ui.update_hashing_progress(0, total, 'Starting...')
-
         logger.info(f"Starting ROM hash calculation: {total} ROMs in batches of {batch_size}")
 
         for i in range(0, total, batch_size):
@@ -1639,19 +1800,30 @@ class WorkflowOrchestrator:
                 )
                 last_log_time = current_time
 
-            # Update UI with current progress (always update UI)
-            if self.console_ui:
-                batch_num = (i // batch_size) + 1
-                total_batches = (total + batch_size - 1) // batch_size
-                self.console_ui.update_hashing_progress(
-                    current_count,
-                    total,
-                    f'batch {batch_num}/{total_batches}'
+            # Emit HashingProgressEvent
+            if self.event_bus:
+                from ..ui.events import HashingProgressEvent
+                await self.event_bus.publish(
+                    HashingProgressEvent(
+                        completed=current_count,
+                        total=total,
+                        skipped=current_count - hashed_count,
+                        in_progress=(current_count < total)
+                    )
                 )
+                await asyncio.sleep(0)  # Yield to event processor
 
-        # Mark hashing complete
-        if self.console_ui:
-            self.console_ui.update_hashing_progress(total, total, 'Complete')
+        # Emit final HashingProgressEvent
+        if self.event_bus:
+            from ..ui.events import HashingProgressEvent
+            await self.event_bus.publish(
+                HashingProgressEvent(
+                    completed=total,
+                    total=total,
+                    skipped=total - hashed_count,
+                    in_progress=False
+                )
+            )
 
         return rom_entries
 
@@ -1764,33 +1936,68 @@ class WorkflowOrchestrator:
             # Clear any previous results
             self.thread_manager.clear_results()
 
+            # Create result callback for real-time UI updates
+            async def on_rom_complete(rom_info, result):
+                """Called immediately when each ROM completes processing"""
+                # Emit real-time progress event
+                if self.event_bus:
+                    from ..ui.events import ROMProgressEvent
+                    if result.success:
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=result.rom_path.name,
+                                system=system.name,
+                                status="complete",
+                                detail=f"Successfully processed"
+                            )
+                        )
+                    elif result.error:
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=result.rom_path.name,
+                                system=system.name,
+                                status="failed",
+                                detail=result.error
+                            )
+                        )
+                    else:
+                        # Skipped
+                        await self.event_bus.publish(
+                            ROMProgressEvent(
+                                rom_name=result.rom_path.name,
+                                system=system.name,
+                                status="skipped",
+                                detail="ROM skipped"
+                            )
+                        )
+
             # Spawn concurrent tasks that will continuously process from queue
             await self.thread_manager.spawn_workers(
                 work_queue=self.work_queue,
                 rom_processor=rom_processor,
                 operation_callback=None,
+                result_callback=on_rom_complete,
                 count=self.thread_manager.max_concurrent
             )
 
             logger.info(f"Pipeline tasks spawned. Waiting for completion...")
 
-            # Start background task for periodic UI updates (Work Queue + Statistics)
+            # Start periodic UI updates in background
             ui_update_task = None
-            if self.console_ui:
+            if self.event_bus:
                 ui_update_task = asyncio.create_task(
                     self._periodic_ui_update(not_found_items, len(rom_entries))
                 )
 
             # Wait for all work to complete and collect results
             task_results = await self.thread_manager.wait_for_completion()
-
+            
             # Stop periodic UI updates
             if ui_update_task:
                 ui_update_task.cancel()
                 try:
                     await ui_update_task
                 except asyncio.CancelledError:
-                    # Expected when cancelling periodic task
                     pass
 
             logger.info(f"All pipeline tasks completed ({len(task_results)} results)")
@@ -1815,16 +2022,6 @@ class WorkflowOrchestrator:
                         'path': str(result.rom_path)
                     })
 
-            # Final UI update after all results collected
-            if self.console_ui:
-                await self._update_ui_progress(
-                    rom_info_dict={'filename': 'Complete'},
-                    rom_count=rom_count,
-                    total_roms=len(rom_entries),
-                    results=results,
-                    not_found_items=not_found_items
-                )
-
             # Mark system complete and stop pipeline tasks
             self.work_queue.mark_system_complete()
             await self.thread_manager.stop_workers()
@@ -1836,14 +2033,17 @@ class WorkflowOrchestrator:
 
             # Sequential processing using _scrape_rom
             for rom_info in rom_entries:
-                rom_count += 1
+                # Check for quit request from Textual UI
+                if self.textual_ui and self.textual_ui.should_quit:
+                    logger.info("Quit requested from Textual UI during sequential processing")
+                    break
 
-                # Update UI
-                if self.console_ui:
-                    await self._update_ui_progress(
-                        {'filename': rom_info.filename}, rom_count, len(rom_entries),
-                        results, not_found_items
-                    )
+                # Check for skip system request from Textual UI
+                if self.textual_ui and self.textual_ui.should_skip_system:
+                    logger.info("Skip system requested from Textual UI during sequential processing")
+                    break
+
+                rom_count += 1
 
                 # Process ROM using unified method
                 try:
@@ -1855,6 +2055,41 @@ class WorkflowOrchestrator:
                         existing_entries=existing_entries
                     )
                     results.append(result)
+
+                    # Emit real-time progress event for this ROM
+                    if self.event_bus:
+                        from ..ui.events import ROMProgressEvent
+                        if result.success:
+                            await self.event_bus.publish(
+                                ROMProgressEvent(
+                                    rom_name=result.rom_path.name,
+                                    system=system.name,
+                                    status="complete",
+                                    detail=f"Successfully processed"
+                                )
+                            )
+                        elif result.error:
+                            await self.event_bus.publish(
+                                ROMProgressEvent(
+                                    rom_name=result.rom_path.name,
+                                    system=system.name,
+                                    status="failed",
+                                    detail=result.error
+                                )
+                            )
+                        else:
+                            # Skipped
+                            await self.event_bus.publish(
+                                ROMProgressEvent(
+                                    rom_name=result.rom_path.name,
+                                    system=system.name,
+                                    status="skipped",
+                                    detail="ROM skipped"
+                                )
+                            )
+                        
+                        # Yield to event loop to allow events to be processed
+                        await asyncio.sleep(0)
 
                     # Track not found items
                     if not result.success and result.error == "No game info found from API":
@@ -1934,13 +2169,35 @@ class WorkflowOrchestrator:
                 game_name = game.get('names', {}).get('en', 'Unknown')
                 logger.debug(f"  {i}. {game_name} - {score:.1%}")
 
-            # Interactive mode: prompt user
+            # Interactive mode: wait for user selection via UI or console prompt
             if self.interactive_search:
-                return prompt_for_search_match(
-                    rom_info.filename,
-                    scored_candidates,
-                    self.search_confidence_threshold
-                )
+                if self.textual_ui:
+                    # Textual UI: use async event-driven flow
+                    import uuid
+                    request_id = str(uuid.uuid4())
+
+                    selected_game = await self._wait_for_search_response(
+                        request_id,
+                        rom_info,
+                        scored_candidates
+                    )
+
+                    if selected_game:
+                        game_name = selected_game.get('names', {}).get('en', 'Unknown')
+                        logger.info(
+                            f"[{rom_info.filename}] User selected: {game_name}"
+                        )
+                        return selected_game
+                    else:
+                        logger.info(f"[{rom_info.filename}] User skipped/cancelled search")
+                        return None
+                else:
+                    # Console UI: use blocking prompt
+                    return prompt_for_search_match(
+                        rom_info.filename,
+                        scored_candidates,
+                        self.search_confidence_threshold
+                    )
 
             # Automatic mode: take best if above threshold
             best_game, best_score = scored_candidates[0]
@@ -1965,6 +2222,84 @@ class WorkflowOrchestrator:
         except Exception as e:
             logger.error(f"[{rom_info.filename}] Unexpected error in search fallback: {e}")
             return None
+
+    async def _wait_for_search_response(
+        self,
+        request_id: str,
+        rom_info: ROMInfo,
+        scored_candidates: list
+    ) -> Optional[Dict]:
+        """Wait for user response to search prompt.
+
+        Creates response queue, emits SearchRequestEvent, waits for response.
+        No timeout - waits indefinitely while other work continues.
+
+        Args:
+            request_id: Unique request identifier
+            rom_info: ROM information
+            scored_candidates: List of (game_data, confidence) tuples
+
+        Returns:
+            Selected game data or None if skipped/cancelled
+        """
+        # Create response queue for this request
+        response_queue = asyncio.Queue()
+        async with self.search_response_lock:
+            self.search_response_queues[request_id] = response_queue
+
+        # Prepare search results for event
+        search_results = [
+            {
+                "game_data": game_data,
+                "confidence": confidence
+            }
+            for game_data, confidence in scored_candidates
+        ]
+
+        # Emit event to UI
+        if self.event_bus:
+            from ..ui.events import SearchRequestEvent
+            await self.event_bus.publish(
+                SearchRequestEvent(
+                    request_id=request_id,
+                    rom_name=rom_info.filename,
+                    rom_path=str(rom_info.path),
+                    system=rom_info.system,
+                    search_results=search_results
+                )
+            )
+            logger.debug(f"[{rom_info.filename}] Emitted SearchRequestEvent, waiting for user response...")
+
+        # Wait for response (no timeout)
+        try:
+            response = await response_queue.get()
+            logger.info(f"[{rom_info.filename}] User response: {response.action}")
+
+            if response.action == 'selected' and response.selected_game:
+                return response.selected_game
+            else:
+                return None
+
+        finally:
+            # Clean up queue
+            async with self.search_response_lock:
+                self.search_response_queues.pop(request_id, None)
+
+    async def handle_search_response(self, response) -> None:
+        """Handle search response from UI.
+
+        Called by event bus when user makes selection.
+        Puts response into the appropriate queue.
+
+        Args:
+            response: SearchResponseEvent from UI
+        """
+        async with self.search_response_lock:
+            if response.request_id in self.search_response_queues:
+                await self.search_response_queues[response.request_id].put(response)
+                logger.debug(f"Search response delivered for request {response.request_id}")
+            else:
+                logger.warning(f"Received response for unknown request_id: {response.request_id}")
 
     def _generate_gamelist(
         self,
@@ -2124,51 +2459,10 @@ class WorkflowOrchestrator:
             while True:
                 await asyncio.sleep(0.5)  # Update every 500ms
 
-                # Check for quit request from keyboard controls
-                if self.console_ui and self.console_ui.quit_requested and not quit_prompted:
-                    quit_prompted = True
-                    if await self.console_ui.prompt_confirm("Quit after current ROMs complete?", default='y'):
-                        logger.info("Graceful shutdown initiated - completing in-flight ROMs")
-                        # Update header to show shutdown status
-                        self.console_ui.set_shutting_down()
-                        # Stop workers gracefully by setting shutdown event
-                        if self.thread_manager:
-                            logger.debug("Calling stop_workers()...")
-                            await self.thread_manager.stop_workers()
-                            logger.debug("stop_workers() returned")
-                        # Exit the update loop
-                        logger.debug("Exiting periodic UI update loop")
-                        return
-                    else:
-                        # User declined quit
-                        self.console_ui.clear_quit_request()
-                        quit_prompted = False
-
                 # Check for skip system request from keyboard controls
-                if self.console_ui and self.console_ui.skip_requested and not skip_prompted:
-                    skip_prompted = True
-                    current_system = self.console_ui.current_system if self.console_ui else "current system"
-                    if await self.console_ui.prompt_confirm(f"Skip system {current_system}?", default='n'):
-                        logger.info(f"Skipping system: {current_system} - completing in-flight ROMs")
-                        # Stop workers gracefully and exit update loop
-                        if self.thread_manager:
-                            await self.thread_manager.stop_workers()
-                        self.console_ui.clear_skip_request()
-                        # Exit the update loop to finish system processing
-                        return
-                    else:
-                        # User declined skip
-                        self.console_ui.clear_skip_request()
-                        skip_prompted = False
 
                 # Check for pause state from keyboard controls
-                if self.console_ui and self.console_ui.is_paused:
-                    if not paused_logged:
-                        logger.info("Processing paused - waiting for resume (press P to resume)")
-                        paused_logged = True
-                    # Continue loop but skip work processing
-                    continue
-                elif paused_logged:
+                if paused_logged:
                     # Transitioned from paused to resumed
                     logger.info("Processing resumed")
                     paused_logged = False
@@ -2200,65 +2494,108 @@ class WorkflowOrchestrator:
         results: list,
         not_found_items: list
     ) -> None:
-        """Update UI with current progress"""
-        if not self.console_ui:
+        """Update UI with current progress via event emissions"""
+        if not self.event_bus:
             return
 
-        # Get work queue stats for queue pending count
-        queue_stats = self.work_queue.get_stats()
-
-        # Update footer with current stats and performance metrics
-        # Calculate counts matching the logic in scrape_system()
-        successful_count = sum(1 for r in results if r.success)
-        failed_count = sum(1 for r in results if not r.success and r.error)
-        skipped_count = sum(1 for r in results if not r.success and not r.error)
+        # Import event types
+        from ..ui.events import (
+            PerformanceUpdateEvent,
+            CacheMetricsEvent, MediaStatsEvent
+        )
 
         # Get performance metrics if available
-        performance_metrics = None
         if self.performance_monitor:
             metrics = self.performance_monitor.get_metrics()
-            performance_metrics = {
-                'roms_per_hour': metrics.roms_per_hour,
-                'api_calls_per_minute': metrics.api_calls_per_minute,
-                'throughput_history': metrics.throughput_history,
-                'api_rate_history': metrics.api_rate_history,
-                'eta': timedelta(seconds=metrics.eta_seconds) if metrics.eta_seconds > 0 else None,
-                'avg_api_time': metrics.avg_api_time * 1000,  # Convert to milliseconds
-                'avg_rom_time': metrics.avg_rom_time,  # Keep in seconds
-                'eta_seconds': metrics.eta_seconds
-            }
+            
+            # Get thread stats
+            thread_stats = {'active_tasks': 0, 'max_tasks': 1}
+            if self.thread_manager and self.thread_manager.is_initialized():
+                thread_stats = await self.thread_manager.get_stats()
+            
+            # Get API quota
+            api_quota = {'requeststoday': 0, 'maxrequestsperday': 0}
+            if self.throttle_manager:
+                api_quota = self.throttle_manager.get_quota_stats()
+            
+            # Get cache metrics
+            cache_hit_rate = None
+            if self.api_client and self.api_client.cache:
+                cache_data = self.api_client.cache.get_metrics()
+                cache_hit_rate = cache_data.get('hit_rate', 0.0)
+            
+            # Emit consolidated performance update
+            await self.event_bus.publish(
+                PerformanceUpdateEvent(
+                    api_quota_used=api_quota.get('requeststoday', 0),
+                    api_quota_limit=api_quota.get('maxrequestsperday', 0),
+                    threads_in_use=thread_stats.get('active_tasks', 0),
+                    threads_limit=thread_stats.get('max_tasks', 1),
+                    throughput_history=list(metrics.throughput_history),
+                    api_rate_history=list(metrics.api_rate_history),
+                    cache_hit_rate=cache_hit_rate
+                )
+            )
 
-        # Get thread stats if available
-        thread_stats = None
-        if self.thread_manager and self.thread_manager.is_initialized():
-            stats = await self.thread_manager.get_stats()
-            thread_stats = {
-                'active_threads': stats.get('active_tasks', 0),
-                'max_threads': stats.get('max_tasks', 1)
-            }
-
-        # Get API quota from throttle manager
-        api_quota = {}
-        if self.throttle_manager:
-            api_quota = self.throttle_manager.get_quota_stats()
-
-        # Get cache metrics if available
-        cache_metrics = None
+        # Emit cache metrics
         if self.api_client and self.api_client.cache:
-            cache_metrics = self.api_client.cache.get_metrics()
+            cache_data = self.api_client.cache.get_metrics()
+            await self.event_bus.publish(
+                CacheMetricsEvent(
+                    existing=self.session_stats['cache_existing'],
+                    added=self.session_stats['cache_added'],
+                    hits=cache_data.get('hits', 0),
+                    misses=cache_data.get('misses', 0),
+                    hit_rate=cache_data.get('hit_rate', 0.0)
+                )
+            )
 
-        self.console_ui.update_footer(
-            stats={
-                'successful': successful_count,
-                'failed': failed_count,
-                'skipped': skipped_count
-            },
-            api_quota=api_quota,
-            thread_stats=thread_stats,
-            performance_metrics=performance_metrics,
-            queue_pending=queue_stats['pending'],
-            cache_metrics=cache_metrics
+        # Emit gamelist stats
+        from ..ui.events import GamelistUpdateEvent
+        await self.event_bus.publish(
+            GamelistUpdateEvent(
+                system='current',  # Generic system identifier during processing
+                existing=self.session_stats['gamelist_existing'],
+                added=self.session_stats['gamelist_added'],
+                updated=self.session_stats['gamelist_updated']
+            )
         )
+
+        # Emit media stats
+        await self.event_bus.publish(
+            MediaStatsEvent(
+                by_type=self.session_stats['media_by_type'],
+                total_validated=self.session_stats['media_validated'],
+                total_skipped=self.session_stats['media_skipped'],
+                total_failed=self.session_stats['media_failed']
+            )
+        )
+
+        # Emit processing summary (categorized results mirroring summary log format)
+        if results:
+            successful = []
+            skipped = []
+            failed = []
+            
+            for result in results:
+                rom_name = result.rom_path.name
+                if result.success and not result.error:
+                    successful.append(rom_name)
+                elif hasattr(result, 'skipped') and result.skipped:
+                    skip_reason = getattr(result, 'skip_reason', 'Unknown reason')
+                    skipped.append((rom_name, skip_reason))
+                elif not result.success:
+                    error_msg = result.error or 'Unknown error'
+                    failed.append((rom_name, error_msg))
+            
+            from ..ui.events import ProcessingSummaryEvent
+            await self.event_bus.publish(
+                ProcessingSummaryEvent(
+                    successful=sorted(successful, key=str.lower),
+                    skipped=sorted(skipped, key=lambda x: x[0].lower()),
+                    failed=sorted(failed, key=lambda x: x[0].lower())
+                )
+            )
 
     def _prompt_gamelist_validation_failure(
         self,
