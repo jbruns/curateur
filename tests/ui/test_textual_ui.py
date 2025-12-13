@@ -1,6 +1,5 @@
 """Unit tests for the Textual UI shell."""
 
-from datetime import datetime
 import pytest
 
 from curateur.ui.textual_ui import CurateurUI
