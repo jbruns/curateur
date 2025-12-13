@@ -8,7 +8,7 @@ thread-safe event delivery and error isolation.
 import asyncio
 import inspect
 import logging
-from typing import Callable, Any, Optional
+from typing import Callable, Any
 from collections import defaultdict
 
 
