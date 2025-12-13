@@ -2076,34 +2076,6 @@ class CurateurUI(App):
         except Exception as e:
             logger.debug(f"Failed to update current system: {e}")
 
-    async def on_active_request(self, event: ActiveRequestEvent) -> None:
-        """Handle active request event."""
-        logger.debug(
-            f"Active request: {event.rom_name} - {event.stage} - {event.status}"
-        )
-
-        # Update Details tab active requests table
-        try:
-            active_requests = self.query_one("#active-requests", ActiveRequestsTable)
-
-            # Skip media download events - those are handled by MediaDownloadEvent
-            if event.stage == "Media DL":
-                return
-
-            if event.status in ["started", "in_progress", "retry"]:
-                # Add or update the request (duration will be calculated by the table)
-                active_requests.update_request(
-                    event.rom_name,
-                    event.stage,
-                    event.status
-                )
-            elif event.status in ["completed", "failed", "cancelled"]:
-                # Remove the request
-                active_requests.remove_request(event.rom_name)
-
-        except Exception as e:
-            logger.debug(f"Failed to update active requests table: {e}")
-
     async def on_media_download(self, event: MediaDownloadEvent) -> None:
         """Handle media download event."""
         logger.debug(
@@ -2216,6 +2188,10 @@ class CurateurUI(App):
         # Update Details tab active requests table
         try:
             active_requests = self.query_one("#active-requests", ActiveRequestsTable)
+
+            # Skip media download events - those are handled by MediaDownloadEvent
+            if event.stage == "Media DL":
+                return
 
             if event.status in ["started", "in_progress", "retry"]:
                 # Add or update the request (duration will be calculated by the table)
