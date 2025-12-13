@@ -6,9 +6,6 @@ from curateur.ui.textual_ui import CurateurUI
 from curateur.ui.event_bus import EventBus
 from curateur.ui.events import (
     SystemStartedEvent,
-    SystemCompletedEvent,
-    ROMProgressEvent,
-    LogEntryEvent,
 )
 
 
