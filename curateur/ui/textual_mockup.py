@@ -15,7 +15,7 @@ from typing import List
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll, ScrollableContainer
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Header,
     Footer,
