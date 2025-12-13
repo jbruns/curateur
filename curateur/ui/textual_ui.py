@@ -7,7 +7,7 @@ scraping progress across three tabs: Overview, Details, and Systems.
 
 import logging
 from datetime import datetime
-from typing import Optional, List
+from typing import List
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
