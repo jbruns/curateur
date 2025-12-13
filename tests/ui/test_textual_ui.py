@@ -1,6 +1,5 @@
 """Unit tests for the Textual UI shell."""
 
-import logging
 from datetime import datetime
 import pytest
 
