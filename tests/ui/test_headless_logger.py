@@ -1,5 +1,4 @@
 """Tests for HeadlessLogger"""
-import logging
 import pytest
 
 from curateur.ui.headless_logger import HeadlessLogger
