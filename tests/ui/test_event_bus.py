@@ -152,8 +152,7 @@ class TestEventBus:
         test_event = GameCompletedEvent(
             game_id="12345",
             title="Test Game",
-            year="2024",
-            confidence=1.0
+            year="2024"
         )
         await event_bus.publish(test_event)
 

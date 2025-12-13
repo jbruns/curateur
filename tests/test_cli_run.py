@@ -25,10 +25,20 @@ class DummyHTTPClient:
         self.closed = True
 
 
+class DummyThrottleManager:
+    """Dummy throttle manager for testing."""
+    async def update_quota(self, user_limits):
+        pass
+
+    def update_concurrency_limit(self, limit):
+        pass
+
+
 class DummyAPIClient:
     def __init__(self, *args, **kwargs):
         self.cache = None
         self.client = None
+        self.throttle_manager = DummyThrottleManager()
 
     async def get_user_info(self):
         return {"maxthreads": 1, "maxrequestspermin": 60, "requeststoday": 0, "maxrequestsperday": 10}
