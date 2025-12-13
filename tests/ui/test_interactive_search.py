@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from datetime import datetime
 import pytest
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
+from unittest.mock import Mock
 
 from curateur.ui.event_bus import EventBus
 from curateur.ui.events import SearchRequestEvent, SearchResponseEvent
