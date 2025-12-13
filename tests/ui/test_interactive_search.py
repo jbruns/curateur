@@ -2,7 +2,6 @@
 
 import asyncio
 import uuid
-from datetime import datetime
 import pytest
 from unittest.mock import Mock
 
