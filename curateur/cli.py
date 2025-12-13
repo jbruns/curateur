@@ -334,7 +334,6 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
 
     # Phase D: Initialize UI based on mode
     from curateur.ui.headless_logger import HeadlessLogger
-    console_ui = None  # Not used (kept for variable name consistency)
     textual_ui = None
     textual_ui_task = None
     headless_logger = None
