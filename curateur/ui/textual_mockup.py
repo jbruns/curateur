@@ -11,7 +11,7 @@ import logging
 import random
 import re
 from collections import deque
-from typing import List, Tuple
+from typing import List
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
