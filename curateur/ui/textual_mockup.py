@@ -600,8 +600,6 @@ class CurrentSystemOperations(Container):
     def update_display(self) -> None:
         """Render current system operations"""
         sys = CURRENT_SYSTEM
-        account = ACCOUNT_INFO
-
         # Hashing section
         hash_data = sys["hashing"]
         hash_pct = (hash_data["completed"] / hash_data["total"] * 100) if hash_data["total"] > 0 else 0
