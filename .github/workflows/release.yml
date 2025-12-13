@@ -42,7 +42,7 @@ jobs:
           dist\curateur.exe --help
 
       - name: Upload Windows executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: curateur-windows-x64
           path: dist/curateur.exe
@@ -94,7 +94,7 @@ jobs:
           fi
 
       - name: Upload macOS executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: curateur-macos-x64
           path: |
@@ -129,7 +129,7 @@ jobs:
           dist/curateur --help
 
       - name: Upload Linux executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: curateur-linux-x64
           path: dist/curateur
@@ -183,7 +183,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts/
 
