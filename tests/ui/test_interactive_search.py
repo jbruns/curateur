@@ -10,7 +10,7 @@ from curateur.ui.event_bus import EventBus
 from curateur.ui.events import SearchRequestEvent, SearchResponseEvent
 from curateur.ui.textual_ui import CurateurUI
 from curateur.workflow.orchestrator import WorkflowOrchestrator
-from curateur.scanner.rom_types import ROMInfo, ROMType
+from curateur.scanner.rom_types import ROMType
 from pathlib import Path
 
 
