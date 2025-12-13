@@ -1619,15 +1619,15 @@ class SearchResultDialog(ModalScreen):
     }
     """
 
-    def __init__(self, rom_filename: str, search_results: List[dict]):
+    def __init__(self, rom_name: str, search_results: List[dict]):
         """Initialize search result dialog.
 
         Args:
-            rom_filename: Name of the ROM file being searched
+            rom_name: Name of the ROM file being searched
             search_results: List of search result dictionaries
         """
         super().__init__()
-        self.rom_filename = rom_filename
+        self.rom_name = rom_name
         self.search_results = search_results
         self.selected_index = 0
 
@@ -1635,7 +1635,7 @@ class SearchResultDialog(ModalScreen):
         """Compose the dialog layout."""
         with Container(id="search-dialog"):
             yield Static("[bold]Interactive Search - Match Required[/bold]", id="search-header")
-            yield Static(f"[bold]ROM File:[/bold] [cyan]{self.rom_filename}[/cyan]", id="rom-info")
+            yield Static(f"[bold]ROM File:[/bold] [cyan]{self.rom_name}[/cyan]", id="rom-info")
 
             with Horizontal(id="results-container"):
                 with Container(id="search-results"):
