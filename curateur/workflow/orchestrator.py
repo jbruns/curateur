@@ -463,7 +463,6 @@ class WorkflowOrchestrator:
                 logger.debug(f"_generate_gamelist returned: {integrity_result}")
 
                 # Brief pause to show result
-                import asyncio
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Failed to generate gamelist: {e}", exc_info=True)
