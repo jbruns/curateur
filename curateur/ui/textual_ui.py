@@ -1945,12 +1945,6 @@ class CurateurUI(App):
         # Update overall progress widget - system completed
         # (successful/failed/skipped are already updated per-ROM in on_rom_progress)
         # Note: current_system_index is already set when system starts
-        try:
-            overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
-            # No need to update anything here - index already shows current system
-            pass
-        except Exception as e:
-            logger.debug(f"Failed to update overall progress: {e}")
 
         # Update Systems tab
         try:
