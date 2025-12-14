@@ -5,5 +5,5 @@ A Python-based tool to scan ROM directories, query ScreenScraper API
 for game metadata and media, and generate ES-DE compatible gamelist.xml files.
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __author__ = "jbruns"
