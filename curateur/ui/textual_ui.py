@@ -31,6 +31,7 @@ from textual.widgets import (
 from textual.reactive import reactive
 from rich.text import Text
 
+from curateur import __version__
 from curateur.ui.event_bus import EventBus
 from curateur.ui.events import (
     SystemStartedEvent,
@@ -1189,6 +1190,7 @@ class ConfigTab(Container):
                             value="INFO",
                             id="log-level-select",
                             allow_blank=False,
+                            compact=True
                         )
 
                 # Search Settings
@@ -1204,6 +1206,7 @@ class ConfigTab(Container):
                             value=70,
                             id="confidence-threshold",
                             allow_blank=False,
+                            compact=True
                         )
 
                     with Horizontal(classes="config-row"):
@@ -1213,6 +1216,7 @@ class ConfigTab(Container):
                             value=5,
                             id="max-results",
                             allow_blank=False,
+                            compact=True
                         )
 
     def on_mount(self) -> None:
@@ -1765,6 +1769,7 @@ class CurateurUI(App):
     """
 
     CSS_PATH = "textual_theme.tcss"
+    TITLE = f"curateur {__version__}"
 
     # Track current active tab
     current_tab = reactive("overview")
@@ -1900,13 +1905,41 @@ class CurateurUI(App):
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
 
-        # Update current system widget
+        # Update current system widget - reset all stats for new system
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             current_system.system_name = event.system_fullname
+            
+            # Reset hashing stats
             current_system.hash_total = event.total_roms
             current_system.hash_completed = 0
             current_system.hash_skipped = 0
+            current_system.hash_in_progress = False
+            
+            # Reset API stats
+            current_system.metadata_in_flight = 0
+            current_system.metadata_total = 0
+            current_system.search_in_flight = 0
+            current_system.search_total = 0
+            current_system.search_fallback_count = 0
+            current_system.search_unmatched_count = 0
+            
+            # Reset cache stats
+            current_system.cache_hit_rate = 0.0
+            current_system.cache_existing = 0
+            current_system.cache_new = 0
+            
+            # Reset gamelist stats
+            current_system.gamelist_existing = 0
+            current_system.gamelist_added = 0
+            current_system.gamelist_updated = 0
+            
+            # Reset media stats
+            current_system.media_in_flight = 0
+            current_system.media_downloaded = 0
+            current_system.media_validated = 0
+            current_system.media_skipped = 0
+            current_system.media_failed = 0
         except Exception as e:
             logger.debug(f"Failed to update current system: {e}")
 
@@ -1963,16 +1996,20 @@ class CurateurUI(App):
             # Update detail panel stats
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
             
-            # Build summary with optional duration
-            if event.elapsed_time:
-                summary = f"Completed in {event.elapsed_time:.1f}s\n"
-            else:
-                summary = "Completed\n"
-            summary += (f"  ✓ {event.successful} successful\n"
-                       f"  ✗ {event.failed} failed\n"
-                       f"  ⊝ {event.skipped} skipped")
+            # Preserve existing stats if they exist (including detailed summary data)
+            existing_stats = detail_panel.system_stats.get(event.system_name, {})
             
-            detail_panel.update_system_stats(event.system_name, {
+            # Build basic summary with optional duration
+            if event.elapsed_time:
+                basic_summary = f"Completed in {event.elapsed_time:.1f}s\n"
+            else:
+                basic_summary = "Completed\n"
+            basic_summary += (f"  ✓ {event.successful} successful\n"
+                             f"  ✗ {event.failed} failed\n"
+                             f"  ⊝ {event.skipped} skipped")
+            
+            # Build updated stats, preserving all detailed data from events
+            updated_stats = {
                 "fullname": event.system_name,
                 "total_roms": total_roms,
                 "successful": event.successful,
@@ -1980,8 +2017,15 @@ class CurateurUI(App):
                 "skipped": event.skipped,
                 "status": "complete",
                 "elapsed_time": event.elapsed_time,
-                "summary": summary
-            })
+                # Preserve detailed summary from ProcessingSummaryEvent if available
+                "summary": existing_stats.get('summary', basic_summary),
+                # Preserve summary_data (detailed per-ROM breakdown) for completed systems
+                "summary_data": existing_stats.get('summary_data'),
+                # Preserve media_by_type (per-media-type statistics) for completed systems
+                "media_by_type": existing_stats.get('media_by_type')
+            }
+            
+            detail_panel.update_system_stats(event.system_name, updated_stats)
         except Exception as e:
             logger.debug(f"Failed to update Systems tab: {e}")
 
@@ -2482,11 +2526,18 @@ class CurateurUI(App):
                         summary_lines.append(f"    ({error_short})")
                 
                 # Update stats with summary and counts
+                # Store the detailed event data for persistence after system completes
                 current_stats = dict(detail_panel.system_stats[system_name])
                 current_stats['summary'] = "\n".join(summary_lines)
                 current_stats['successful'] = len(event.successful)
                 current_stats['failed'] = len(event.failed)
                 current_stats['skipped'] = len(event.skipped)
+                # Store raw event data for completed systems (detailed per-ROM breakdown)
+                current_stats['summary_data'] = {
+                    'successful': event.successful,
+                    'skipped': event.skipped,
+                    'failed': event.failed
+                }
                 detail_panel.update_system_stats(system_name, current_stats)
         except Exception as e:
             logger.debug(f"Failed to update processing summary: {e}")
