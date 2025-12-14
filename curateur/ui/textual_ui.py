@@ -71,7 +71,6 @@ class OverallProgressWidget(Container):
     # Reactive properties updated by events
     current_system_index = reactive(0)  # 1-based index of current system being processed
     systems_total = reactive(0)
-    total_roms = reactive(0)
     successful = reactive(0)
     skipped = reactive(0)
     failed = reactive(0)
@@ -97,10 +96,6 @@ class OverallProgressWidget(Container):
         """Update display when skipped count changes."""
         self.update_display()
 
-    def watch_total_roms(self, old_value: int, new_value: int) -> None:
-        """Update display when total_roms count changes."""
-        self.update_display()
-
     def watch_current_system_index(self, old_value: int, new_value: int) -> None:
         """Update display when current system index changes."""
         self.update_display()
@@ -109,14 +104,11 @@ class OverallProgressWidget(Container):
         """Render overall progress."""
         # Calculate processed as aggregate of successful + failed + skipped
         processed = self.successful + self.failed + self.skipped
-        progress_pct = (processed / self.total_roms * 100) if self.total_roms > 0 else 0
 
         # Header text
         header = Text()
         header.append(f"Systems: {self.current_system_index}/{self.systems_total}\n", style="white")
-        header.append(f"ROMs: {processed}/{self.total_roms} ", style="cyan")
-        header.append(f"({progress_pct:.1f}%)", style="bright_green")
-        header.append("\n")
+        header.append(f"ROMs: {processed}", style="cyan")
 
         # Status counts with glyphs
         header.append(f"✓ {self.successful} ", style="bright_green")
@@ -124,11 +116,6 @@ class OverallProgressWidget(Container):
         header.append(f"✗ {self.failed}", style="red")
 
         self.query_one("#overall-progress-header", Static).update(header)
-
-        # Update progress bar
-        progress_bar = self.query_one("#overall-progress-bar", ProgressBar)
-        progress_bar.update(total=self.total_roms if self.total_roms > 0 else 100, progress=processed)
-
 
 class CurrentSystemOperations(Container):
     """Displays detailed progress for the current system."""
@@ -1896,15 +1883,6 @@ class CurateurUI(App):
             overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
             overall_progress.systems_total = event.total_systems
             overall_progress.current_system_index = event.current_index + 1  # Convert to 1-based
-            # Add ROM count to cumulative total (only after scanning is complete)
-            if event.total_roms > 0:
-                overall_progress.total_roms += event.total_roms
-                logger.debug(
-                    f"Updated overall progress: total_roms={overall_progress.total_roms} "
-                    f"(added {event.total_roms} from {event.system_fullname})"
-                )
-            else:
-                logger.debug(f"System {event.system_fullname} has 0 ROMs, not updating total_roms")
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
 
