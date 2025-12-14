@@ -190,6 +190,10 @@ class CurrentSystemOperations(Container):
         """Update display when hashing progress changes."""
         self.update_hashing()
 
+    def watch_hash_in_progress(self, old_value: bool, new_value: bool) -> None:
+        """Update display when hashing status changes."""
+        self.update_hashing()
+
     def watch_metadata_in_flight(self, old_value: int, new_value: int) -> None:
         """Update display when API activity changes."""
         self.update_api()
