@@ -769,12 +769,13 @@ class ActiveRequestsTable(Container):
             else:
                 request_key = rom_name
             
+            # Ensure we have a start time for this request
+            if request_key not in self.request_start_times:
+                self.request_start_times[request_key] = time.time()
+            
             # Calculate duration if not provided
             if duration is None:
-                if request_key in self.request_start_times:
-                    duration = time.time() - self.request_start_times[request_key]
-                else:
-                    duration = 0.0
+                duration = time.time() - self.request_start_times[request_key]
 
             # Format media type display
             media_display = media_type if media_type else "-"
@@ -801,8 +802,6 @@ class ActiveRequestsTable(Container):
                     status
                 )
                 self.active_requests = {**self.active_requests, request_key: row_key}
-                # Track start time for this request
-                self.request_start_times[request_key] = time.time()
 
             # Update border title with count
             count = len(self.active_requests)
