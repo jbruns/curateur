@@ -2182,11 +2182,6 @@ class CurateurUI(App):
 
     async def on_performance_update(self, event: PerformanceUpdateEvent) -> None:
         """Handle performance update event."""
-        logger.debug(
-            f"Performance: quota {event.api_quota_used}/{event.api_quota_limit}, "
-            f"threads {event.threads_in_use}/{event.threads_limit}"
-        )
-
         # Update performance panel
         try:
             performance = self.query_one("#performance", PerformancePanel)
@@ -2393,11 +2388,6 @@ class CurateurUI(App):
         if not isinstance(event, CacheMetricsEvent):
             return
         
-        logger.debug(
-            f"Cache metrics: existing={event.existing}, added={event.added}, "
-            f"hits={event.hits}, misses={event.misses}, hit_rate={event.hit_rate:.1f}%"
-        )
-        
         # Update current system operations widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
@@ -2412,11 +2402,6 @@ class CurateurUI(App):
         from ..ui.events import GamelistUpdateEvent
         if not isinstance(event, GamelistUpdateEvent):
             return
-        
-        logger.debug(
-            f"Gamelist update [{event.system}]: existing={event.existing}, "
-            f"added={event.added}, updated={event.updated}"
-        )
         
         # Update current system operations widget
         try:
@@ -2468,11 +2453,6 @@ class CurateurUI(App):
         from ..ui.events import ProcessingSummaryEvent
         if not isinstance(event, ProcessingSummaryEvent):
             return
-        
-        logger.debug(
-            f"Processing summary: {len(event.successful)} successful, "
-            f"{len(event.skipped)} skipped, {len(event.failed)} failed"
-        )
         
         # Update Systems tab detail panel with summary
         try:
@@ -2569,11 +2549,6 @@ class CurateurUI(App):
         from ..ui.events import MediaStatsEvent
         if not isinstance(event, MediaStatsEvent):
             return
-        
-        logger.debug(
-            f"Media stats: validated={event.total_validated}, "
-            f"skipped={event.total_skipped}, failed={event.total_failed}"
-        )
         
         # Update current system operations widget
         try:
