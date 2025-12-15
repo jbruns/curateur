@@ -60,6 +60,7 @@ dev = [
     "pytest-asyncio>=1.2.0,<2.0.0",
     "pytest-mock>=3.15.1,<4.0.0",
     "respx>=0.22.0,<0.23",  # HTTP mocking for httpx
+    "black>=25.12.0,<26.0.0",
 ]
 
 [tool.setuptools]
