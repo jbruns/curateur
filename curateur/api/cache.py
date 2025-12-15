@@ -42,10 +42,7 @@ class MetadataCache:
     """
 
     def __init__(
-        self,
-        gamelist_directory: Path,
-        ttl_days: int = 7,
-        enabled: bool = True
+        self, gamelist_directory: Path, ttl_days: int = 7, enabled: bool = True
     ):
         """
         Initialize metadata cache.
@@ -98,7 +95,7 @@ class MetadataCache:
             return
 
         try:
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
+            with open(self.cache_file, "r", encoding="utf-8") as f:
                 self._memory_cache = json.load(f)
 
             logger.info(
@@ -120,8 +117,8 @@ class MetadataCache:
             self._ensure_cache_directory()
 
             # Write to temporary file first
-            temp_file = self.cache_file.with_suffix('.tmp')
-            with open(temp_file, 'w', encoding='utf-8') as f:
+            temp_file = self.cache_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(self._memory_cache, f, indent=2, ensure_ascii=False)
 
             # Atomic rename
@@ -132,7 +129,9 @@ class MetadataCache:
         except (IOError, OSError) as e:
             logger.error(f"Failed to save cache: {e}")
 
-    def get(self, rom_hash: str, rom_size: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def get(
+        self, rom_hash: str, rom_size: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Get cached entry for ROM hash with optional size validation.
 
@@ -167,8 +166,8 @@ class MetadataCache:
             return None
 
         # Validate ROM size if provided (quick validation without rehashing)
-        if rom_size is not None and 'rom_size' in entry:
-            if entry['rom_size'] != rom_size:
+        if rom_size is not None and "rom_size" in entry:
+            if entry["rom_size"] != rom_size:
                 logger.warning(
                     f"Cache entry size mismatch for {rom_hash}: "
                     f"cached={entry['rom_size']}, actual={rom_size}. "
@@ -188,7 +187,7 @@ class MetadataCache:
         rom_hash: str,
         response: Dict[str, Any],
         rom_size: Optional[int] = None,
-        media_hashes: Optional[Dict[str, str]] = None
+        media_hashes: Optional[Dict[str, str]] = None,
     ) -> None:
         """
         Store API response in cache with ROM and media hashes.
@@ -207,25 +206,25 @@ class MetadataCache:
 
         # Create cache entry
         entry = {
-            'response': response,
-            'rom_hash': rom_hash,
-            'timestamp': datetime.now().isoformat(),
-            'ttl_days': self.ttl_days
+            "response": response,
+            "rom_hash": rom_hash,
+            "timestamp": datetime.now().isoformat(),
+            "ttl_days": self.ttl_days,
         }
 
         # Add optional fields
         if rom_size is not None:
-            entry['rom_size'] = rom_size
+            entry["rom_size"] = rom_size
 
         if media_hashes:
-            entry['media_hashes'] = media_hashes
+            entry["media_hashes"] = media_hashes
 
         self._memory_cache[rom_hash] = entry
         logger.debug(
             "Cached response: %s (rom_size=%s, media_count=%s)",
             rom_hash,
             rom_size,
-            len(media_hashes) if media_hashes else 0
+            len(media_hashes) if media_hashes else 0,
         )
 
         # Save to disk
@@ -242,8 +241,8 @@ class MetadataCache:
             True if expired, False otherwise
         """
         try:
-            timestamp = datetime.fromisoformat(entry['timestamp'])
-            ttl_days = entry.get('ttl_days', self.ttl_days)
+            timestamp = datetime.fromisoformat(entry["timestamp"])
+            ttl_days = entry.get("ttl_days", self.ttl_days)
             expiry = timestamp + timedelta(days=ttl_days)
 
             return datetime.now() > expiry
@@ -333,7 +332,7 @@ class MetadataCache:
             return None
 
         entry = self._memory_cache[rom_hash]
-        media_hashes = entry.get('media_hashes', {})
+        media_hashes = entry.get("media_hashes", {})
 
         return media_hashes.get(media_type)
 
@@ -352,18 +351,22 @@ class MetadataCache:
         self._load_cache()
 
         if rom_hash not in self._memory_cache:
-            logger.warning(f"Cannot update media hashes: cache entry not found for {rom_hash}")
+            logger.warning(
+                f"Cannot update media hashes: cache entry not found for {rom_hash}"
+            )
             return
 
         entry = self._memory_cache[rom_hash]
 
         # Merge media hashes
-        if 'media_hashes' not in entry:
-            entry['media_hashes'] = {}
+        if "media_hashes" not in entry:
+            entry["media_hashes"] = {}
 
-        entry['media_hashes'].update(media_hashes)
+        entry["media_hashes"].update(media_hashes)
 
-        logger.debug(f"Updated media hashes for {rom_hash}: {list(media_hashes.keys())}")
+        logger.debug(
+            f"Updated media hashes for {rom_hash}: {list(media_hashes.keys())}"
+        )
 
         # Save to disk
         self._save_cache()
@@ -374,11 +377,11 @@ class MetadataCache:
         total_requests = self._hits + self._misses
         hit_rate = (self._hits / total_requests * 100) if total_requests > 0 else 0.0
         return {
-            'hits': self._hits,
-            'misses': self._misses,
-            'total_entries': len(self._memory_cache),
-            'hit_rate': hit_rate,
-            'enabled': self.enabled
+            "hits": self._hits,
+            "misses": self._misses,
+            "total_entries": len(self._memory_cache),
+            "hit_rate": hit_rate,
+            "enabled": self.enabled,
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -390,10 +393,10 @@ class MetadataCache:
         """
         if not self.enabled:
             return {
-                'enabled': False,
-                'total_entries': 0,
-                'expired_entries': 0,
-                'entries_with_media': 0
+                "enabled": False,
+                "total_entries": 0,
+                "expired_entries": 0,
+                "entries_with_media": 0,
             }
 
         # Ensure cache is loaded
@@ -401,20 +404,18 @@ class MetadataCache:
 
         total_entries = len(self._memory_cache)
         expired_entries = sum(
-            1 for entry in self._memory_cache.values()
-            if self._is_expired(entry)
+            1 for entry in self._memory_cache.values() if self._is_expired(entry)
         )
 
         entries_with_media = sum(
-            1 for entry in self._memory_cache.values()
-            if entry.get('media_hashes')
+            1 for entry in self._memory_cache.values() if entry.get("media_hashes")
         )
 
         oldest_timestamp = None
         if self._memory_cache:
             try:
                 timestamps = [
-                    datetime.fromisoformat(entry['timestamp'])
+                    datetime.fromisoformat(entry["timestamp"])
                     for entry in self._memory_cache.values()
                 ]
                 oldest_timestamp = min(timestamps).isoformat()
@@ -422,12 +423,12 @@ class MetadataCache:
                 pass
 
         return {
-            'enabled': True,
-            'cache_file': str(self.cache_file),
-            'total_entries': total_entries,
-            'expired_entries': expired_entries,
-            'valid_entries': total_entries - expired_entries,
-            'entries_with_media': entries_with_media,
-            'oldest_entry': oldest_timestamp,
-            'ttl_days': self.ttl_days
+            "enabled": True,
+            "cache_file": str(self.cache_file),
+            "total_entries": total_entries,
+            "expired_entries": expired_entries,
+            "valid_entries": total_entries - expired_entries,
+            "entries_with_media": entries_with_media,
+            "oldest_entry": oldest_timestamp,
+            "ttl_days": self.ttl_days,
         }

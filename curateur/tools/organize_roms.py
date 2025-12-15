@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from curateur.config.es_systems import SystemDefinition, parse_es_systems
-from curateur.scanner.disc_handler import is_disc_subdirectory, validate_disc_subdirectory
+from curateur.scanner.disc_handler import (
+    is_disc_subdirectory,
+    validate_disc_subdirectory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +42,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Organize ROMs for ES-DE/curateur expectations (disc layouts, .m3u playlists).",
     )
-    parser.add_argument("source", type=Path, help="Directory containing ROM files/archives to organize")
+    parser.add_argument(
+        "source", type=Path, help="Directory containing ROM files/archives to organize"
+    )
     parser.add_argument("system", help="ES-DE system short name (from es_systems.xml)")
     parser.add_argument(
         "rom_root",
@@ -207,7 +212,11 @@ def group_multi_disc(candidates: List[RomCandidate]) -> Dict[str, List[RomCandid
             continue
         groups.setdefault(cand.base_name.lower(), []).append(cand)
 
-    return {base: sorted(cands, key=lambda c: c.disc_number or 0) for base, cands in groups.items() if len(cands) > 1}
+    return {
+        base: sorted(cands, key=lambda c: c.disc_number or 0)
+        for base, cands in groups.items()
+        if len(cands) > 1
+    }
 
 
 def cue_dependencies(cue_file: Path) -> List[Path]:
@@ -258,7 +267,9 @@ def copy_with_companions(
     if dest_main.exists() and not overwrite:
         print(f"Skip (exists): {dest_main}")
     else:
-        _copy_or_move(candidate.source_path, dest_main, move and candidate.source_path.exists())
+        _copy_or_move(
+            candidate.source_path, dest_main, move and candidate.source_path.exists()
+        )
         written.append(dest_main)
         copied_sources.append(candidate.source_path)
 
@@ -339,7 +350,9 @@ def organize(
                 for cand in group:
                     if should_use_disc_subdir(cand.extension):
                         disc_dir = multi_disc_dir / cand.source_path.name
-                        written, sources = copy_with_companions(cand, disc_dir, overwrite, move)
+                        written, sources = copy_with_companions(
+                            cand, disc_dir, overwrite, move
+                        )
                         handled_sources.update(sources)
                         if written:
                             main_file = disc_dir / cand.source_path.name
@@ -360,7 +373,9 @@ def organize(
                 write_m3u(m3u_path, disc_rel_paths, overwrite)
         else:
             if multi_groups:
-                print(f"Note: {system.name} does not list .m3u support; multi-disc playlists were skipped.")
+                print(
+                    f"Note: {system.name} does not list .m3u support; multi-disc playlists were skipped."
+                )
 
         for cand in candidates:
             if cand.source_path in handled_sources:
@@ -381,7 +396,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         system = load_system(args.es_systems.expanduser(), args.system)
         if not is_disc_based_system(system):
-            print(f"System '{system.name}' does not appear disc-based; disc layout features may be skipped.")
+            print(
+                f"System '{system.name}' does not appear disc-based; disc layout features may be skipped."
+            )
 
         organize(
             source_dir=args.source.expanduser(),

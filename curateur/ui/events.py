@@ -21,6 +21,7 @@ class SystemStartedEvent:
         current_index: Index of this system (0-based)
         total_systems: Total number of systems being scraped
     """
+
     system_name: str
     system_fullname: str
     total_roms: int
@@ -39,9 +40,18 @@ class ROMProgressEvent:
         detail: Optional detail message (e.g., error description)
         progress: Optional progress percentage (0.0-1.0)
     """
+
     rom_name: str
     system: str
-    status: Literal['scanning', 'hashing', 'querying', 'downloading', 'complete', 'failed', 'skipped']
+    status: Literal[
+        "scanning",
+        "hashing",
+        "querying",
+        "downloading",
+        "complete",
+        "failed",
+        "skipped",
+    ]
     detail: Optional[str] = None
     progress: Optional[float] = None
 
@@ -56,6 +66,7 @@ class HashingProgressEvent:
         in_progress: Whether hashing is currently active
         skipped: Number of ROMs skipped (e.g., too large)
     """
+
     completed: int
     total: int
     in_progress: bool
@@ -72,6 +83,7 @@ class APIActivityEvent:
         search_in_flight: Number of active search queries
         search_total: Total search queries completed
     """
+
     metadata_in_flight: int
     metadata_total: int
     search_in_flight: int
@@ -88,9 +100,10 @@ class MediaDownloadEvent:
         status: Download status
         progress: Optional download progress (0.0-1.0)
     """
+
     media_type: str
     rom_name: str
-    status: Literal['downloading', 'complete', 'failed']
+    status: Literal["downloading", "complete", "failed"]
     progress: Optional[float] = None
 
 
@@ -103,6 +116,7 @@ class LogEntryEvent:
         message: Formatted log message
         timestamp: When the log was generated
     """
+
     level: int
     message: str
     timestamp: datetime
@@ -121,6 +135,7 @@ class PerformanceUpdateEvent:
         api_rate_history: Recent API rate samples (calls/minute)
         cache_hit_rate: Optional cache hit rate percentage (0.0-1.0)
     """
+
     api_quota_used: int
     api_quota_limit: int
     threads_in_use: int
@@ -133,6 +148,7 @@ class PerformanceUpdateEvent:
 @dataclass(frozen=True)
 class GameCompletedEvent:
     """Event emitted when a game is successfully scraped and added to gamelist."""
+
     game_id: str
     title: str
     year: Optional[str] = None
@@ -156,6 +172,7 @@ class SystemCompletedEvent:
         skipped: Number of ROMs skipped
         elapsed_time: Optional processing time in seconds
     """
+
     system_name: str
     total_roms: int
     successful: int
@@ -177,10 +194,11 @@ class ActiveRequestEvent:
         retry_count: Number of retry attempts
         last_failure: Last failure reason (if any)
     """
+
     request_id: str
     rom_name: str
-    stage: Literal['API Fetch', 'Search', 'Media DL', 'Hashing']
-    status: Literal['Active', 'Retrying', 'Complete', 'Failed']
+    stage: Literal["API Fetch", "Search", "Media DL", "Hashing"]
+    status: Literal["Active", "Retrying", "Complete", "Failed"]
     duration: float
     retry_count: int = 0
     last_failure: Optional[str] = None
@@ -198,6 +216,7 @@ class SearchRequestEvent:
         search_results: List of scored candidates from search
             Each candidate is dict with: {"game_data": {...}, "confidence": 0.XX}
     """
+
     request_id: str
     rom_name: str
     rom_path: str
@@ -214,8 +233,9 @@ class SearchResponseEvent:
         action: User's choice ('selected', 'skip', 'cancel')
         selected_game: Game data if action='selected', None otherwise
     """
+
     request_id: str
-    action: Literal['selected', 'skip', 'cancel']
+    action: Literal["selected", "skip", "cancel"]
     selected_game: Optional[dict] = None
 
 
@@ -230,6 +250,7 @@ class CacheMetricsEvent:
         misses: Total cache misses
         hit_rate: Cache hit rate percentage (0.0-100.0)
     """
+
     existing: int
     added: int
     hits: int
@@ -247,6 +268,7 @@ class GamelistUpdateEvent:
         added: New entries added this session
         updated: Existing entries updated this session
     """
+
     system: str
     existing: int
     added: int
@@ -261,7 +283,8 @@ class AuthenticationEvent:
         status: Authentication status
         username: Logged in username (None if authenticating/failed)
     """
-    status: Literal['authenticating', 'authenticated', 'failed']
+
+    status: Literal["authenticating", "authenticated", "failed"]
     username: Optional[str] = None
 
 
@@ -273,6 +296,7 @@ class SearchActivityEvent:
         fallback_count: Number of times search fallback was used
         unmatched_count: Number of ROMs that could not be matched
     """
+
     fallback_count: int
     unmatched_count: int
 
@@ -287,6 +311,7 @@ class MediaStatsEvent:
         total_skipped: Total media downloads skipped
         total_failed: Total media downloads failed
     """
+
     by_type: dict
     total_validated: int
     total_skipped: int
@@ -305,6 +330,7 @@ class ProcessingSummaryEvent:
         skipped: List of tuples (filename, skip_reason)
         failed: List of tuples (filename, error_message)
     """
+
     successful: list[str]
     skipped: list[tuple[str, str]]
     failed: list[tuple[str, str]]

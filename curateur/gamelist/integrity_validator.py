@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ValidationResult:
     """Result of gamelist integrity validation"""
+
     is_valid: bool
     match_ratio: float
     missing_roms: List[str]  # String paths, not Path objects
@@ -46,9 +47,7 @@ class IntegrityValidator:
         logger.info(f"Integrity Validator initialized (threshold={self.threshold:.1%})")
 
     def validate(
-        self,
-        entries: List[GameEntry],
-        rom_files: List[Path]
+        self, entries: List[GameEntry], rom_files: List[Path]
     ) -> ValidationResult:
         """
         Validate gamelist entries against ROM files on disk.
@@ -63,10 +62,7 @@ class IntegrityValidator:
         if not entries:
             logger.info("No gamelist entries to validate")
             return ValidationResult(
-                is_valid=True,
-                match_ratio=1.0,
-                missing_roms=[],
-                orphaned_entries=[]
+                is_valid=True, match_ratio=1.0, missing_roms=[], orphaned_entries=[]
             )
 
         # Create set of ROM basenames for fast lookup
@@ -80,7 +76,7 @@ class IntegrityValidator:
             # Extract basename from path
             path = entry.path
             # Remove leading ./
-            if path.startswith('./'):
+            if path.startswith("./"):
                 path_clean = path[2:]
             else:
                 path_clean = path
@@ -93,8 +89,7 @@ class IntegrityValidator:
 
         # Calculate match ratio
         match_ratio = self._calculate_match_ratio(
-            total=len(entries),
-            matches=len(entries) - len(missing_roms)
+            total=len(entries), matches=len(entries) - len(missing_roms)
         )
 
         # Check if valid
@@ -112,7 +107,7 @@ class IntegrityValidator:
             is_valid=is_valid,
             match_ratio=match_ratio,
             missing_roms=missing_roms,
-            orphaned_entries=orphaned_entries
+            orphaned_entries=orphaned_entries,
         )
 
     def _calculate_match_ratio(self, total: int, matches: int) -> float:

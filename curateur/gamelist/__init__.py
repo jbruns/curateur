@@ -13,12 +13,12 @@ from .generator import GamelistGenerator
 from .backup import GamelistBackup
 
 __all__ = [
-    'GameEntry',
-    'GamelistMetadata',
-    'GamelistWriter',
-    'GamelistParser',
-    'MetadataMerger',
-    'PathHandler',
-    'GamelistGenerator',
-    'GamelistBackup',
+    "GameEntry",
+    "GamelistMetadata",
+    "GamelistWriter",
+    "GamelistParser",
+    "MetadataMerger",
+    "PathHandler",
+    "GamelistGenerator",
+    "GamelistBackup",
 ]

@@ -69,7 +69,9 @@ class OverallProgressWidget(Container):
     """Displays overall run progress with progress bar."""
 
     # Reactive properties updated by events
-    current_system_index = reactive(0)  # 1-based index of current system being processed
+    current_system_index = reactive(
+        0
+    )  # 1-based index of current system being processed
     systems_total = reactive(0)
     successful = reactive(0)
     skipped = reactive(0)
@@ -107,7 +109,10 @@ class OverallProgressWidget(Container):
 
         # Header text
         header = Text()
-        header.append(f"Systems: {self.current_system_index}/{self.systems_total}\n", style="white")
+        header.append(
+            f"Systems: {self.current_system_index}/{self.systems_total}\n",
+            style="white",
+        )
         header.append(f"ROMs: {processed}", style="cyan")
 
         # Status counts with glyphs
@@ -116,6 +121,7 @@ class OverallProgressWidget(Container):
         header.append(f"✗ {self.failed}", style="red")
 
         self.query_one("#overall-progress-header", Static).update(header)
+
 
 class CurrentSystemOperations(Container):
     """Displays detailed progress for the current system."""
@@ -137,17 +143,17 @@ class CurrentSystemOperations(Container):
     media_validated = reactive(0)
     media_skipped = reactive(0)
     media_failed = reactive(0)
-    
+
     # Cache statistics
     cache_hit_rate = reactive(0.0)
     cache_existing = reactive(0)
     cache_new = reactive(0)
-    
+
     # Gamelist statistics
     gamelist_existing = reactive(0)
     gamelist_added = reactive(0)
     gamelist_updated = reactive(0)
-    
+
     # Spinner animation frame counter
     spinner_frame = 0
 
@@ -239,14 +245,20 @@ class CurrentSystemOperations(Container):
 
     def _update_spinner(self) -> None:
         """Update spinner frame for animation."""
-        if self.hash_in_progress or self.metadata_in_flight > 0 or self.search_in_flight > 0:
+        if (
+            self.hash_in_progress
+            or self.metadata_in_flight > 0
+            or self.search_in_flight > 0
+        ):
             self.spinner_frame = (self.spinner_frame + 1) % 10
             self.update_hashing()
             self.update_api()
-    
+
     def update_hashing(self) -> None:
         """Update hashing section."""
-        hash_pct = (self.hash_completed / self.hash_total * 100) if self.hash_total > 0 else 0
+        hash_pct = (
+            (self.hash_completed / self.hash_total * 100) if self.hash_total > 0 else 0
+        )
         hash_content = Text()
         hash_content.append("Hashing", style="bold cyan")
 
@@ -255,24 +267,28 @@ class CurrentSystemOperations(Container):
             spinner = spinner_chars[self.spinner_frame]
             hash_content.append(f" {spinner}", style="bright_magenta")
 
-        hash_content.append(f"\n{self.hash_completed}/{self.hash_total} ", style="white")
+        hash_content.append(
+            f"\n{self.hash_completed}/{self.hash_total} ", style="white"
+        )
         hash_content.append(f"({hash_pct:.1f}%)", style="bright_green")
 
         if self.hash_skipped > 0:
             hash_content.append(f" ⊝ {self.hash_skipped}", style="dim yellow")
 
         self.query_one("#hashing-content", Static).update(hash_content)
-    
+
     def update_cache(self) -> None:
         """Update cache section."""
         cache_content = Text()
         cache_content.append("Cache\n", style="bold cyan")
-        cache_content.append(f"{self.cache_hit_rate:.1%} Hit Rate", style="bright_magenta")
+        cache_content.append(
+            f"{self.cache_hit_rate:.1%} Hit Rate", style="bright_magenta"
+        )
         cache_content.append(f"\n✓ {self.cache_existing} ", style="white")
         cache_content.append(f"+ {self.cache_new}", style="bright_green")
-        
+
         self.query_one("#cache-content", Static).update(cache_content)
-    
+
     def update_gamelist(self) -> None:
         """Update gamelist section."""
         gamelist_content = Text()
@@ -280,7 +296,7 @@ class CurrentSystemOperations(Container):
         gamelist_content.append(f"✓ {self.gamelist_existing} ", style="white")
         gamelist_content.append(f"+ {self.gamelist_added} ", style="bright_green")
         gamelist_content.append(f"↻ {self.gamelist_updated}", style="yellow")
-        
+
         self.query_one("#gamelist-content", Static).update(gamelist_content)
 
     def update_api(self) -> None:
@@ -293,7 +309,9 @@ class CurrentSystemOperations(Container):
         metadata_spinner = spinner_chars[self.spinner_frame]
         api_content.append("Metadata: ", style="dim")
         if self.metadata_in_flight > 0:
-            api_content.append(f"{metadata_spinner} {self.metadata_in_flight} ", style="yellow")
+            api_content.append(
+                f"{metadata_spinner} {self.metadata_in_flight} ", style="yellow"
+            )
         else:
             api_content.append("Idle ", style="dim")
         api_content.append(f"✓ {self.metadata_total}\n", style="bright_green")
@@ -302,18 +320,24 @@ class CurrentSystemOperations(Container):
         search_spinner = spinner_chars[self.spinner_frame]
         api_content.append("Search: ", style="dim")
         if self.search_in_flight > 0:
-            api_content.append(f"{search_spinner} {self.search_in_flight} ", style="yellow")
+            api_content.append(
+                f"{search_spinner} {self.search_in_flight} ", style="yellow"
+            )
         else:
             api_content.append("Idle ", style="dim")
         api_content.append(f"✓ {self.search_total}", style="bright_green")
-        
+
         # Search fallback and unmatched stats
         if self.search_fallback_count > 0 or self.search_unmatched_count > 0:
             api_content.append("\n", style="dim")
             if self.search_fallback_count > 0:
-                api_content.append(f"↻ {self.search_fallback_count} fallback ", style="yellow")
+                api_content.append(
+                    f"↻ {self.search_fallback_count} fallback ", style="yellow"
+                )
             if self.search_unmatched_count > 0:
-                api_content.append(f"✗ {self.search_unmatched_count} unmatched", style="red")
+                api_content.append(
+                    f"✗ {self.search_unmatched_count} unmatched", style="red"
+                )
 
         self.query_one("#api-content", Static).update(api_content)
 
@@ -389,13 +413,15 @@ class GameSpotlightWidget(Static):
         """Start or restart the auto-cycle timer."""
         if self.auto_cycle_interval is not None:
             self.auto_cycle_interval.stop()
-        self.auto_cycle_interval = self.set_interval(interval, self._auto_advance, pause=False)
+        self.auto_cycle_interval = self.set_interval(
+            interval, self._auto_advance, pause=False
+        )
 
     def _auto_advance(self) -> None:
         """Automatically advance to next game."""
         if len(self.games) > 1:
             self.index = (self.index + 1) % len(self.games)
-        
+
         # If this was the delayed cycle after user navigation, reset to 10 second interval
         if self.user_navigated:
             self.user_navigated = False
@@ -412,19 +438,19 @@ class GameSpotlightWidget(Static):
             content.append("No games completed yet", style="dim italic")
         else:
             game = self.games[self.index]
-            title = game.get('title', 'Unknown')
-            year = game.get('year', 'N/A')
-            genre = game.get('genre', 'N/A')
-            developer = game.get('developer', 'N/A')
-            publisher = game.get('publisher', 'N/A')
-            players = game.get('players', 'N/A')
-            rating = game.get('rating')
-            description = game.get('description', 'No description available')
+            title = game.get("title", "Unknown")
+            year = game.get("year", "N/A")
+            genre = game.get("genre", "N/A")
+            developer = game.get("developer", "N/A")
+            publisher = game.get("publisher", "N/A")
+            players = game.get("players", "N/A")
+            rating = game.get("rating")
+            description = game.get("description", "No description available")
 
             # Line 1: Title and year
             content.append("Now Scraping: ", style="bold cyan")
             content.append(f"{title}", style="bright_magenta")
-            if year and year != 'N/A':
+            if year and year != "N/A":
                 content.append(f" ({year})", style="white")
             content.append("\n")
 
@@ -599,8 +625,12 @@ class PerformancePanel(Container):
 
     def update_quota(self) -> None:
         """Update quota line."""
-        quota_pct = (self.quota_used / self.quota_limit * 100) if self.quota_limit > 0 else 0
-        quota_bar = self.create_inline_progress_bar(self.quota_used, self.quota_limit, 30)
+        quota_pct = (
+            (self.quota_used / self.quota_limit * 100) if self.quota_limit > 0 else 0
+        )
+        quota_bar = self.create_inline_progress_bar(
+            self.quota_used, self.quota_limit, 30
+        )
         self.query_one("#api-quota", Static).update(
             f"[bold]API Quota:[/bold] {self.quota_used}/{self.quota_limit} "
             f"({quota_pct:.1f}%) [yellow]{quota_bar}[/yellow]"
@@ -638,6 +668,7 @@ class FilterableLogWidget(Container):
 
     def compose(self) -> ComposeResult:
         from textual.widgets import Input, RichLog
+
         yield Input(placeholder="Filter logs (regex)...", id="log-filter")
         yield RichLog(id="logs", highlight=True, wrap=True, markup=True)
 
@@ -651,6 +682,7 @@ class FilterableLogWidget(Container):
         if self.filter_text:
             try:
                 import re
+
                 if not re.search(self.filter_text, message, re.IGNORECASE):
                     return
             except Exception:
@@ -661,6 +693,7 @@ class FilterableLogWidget(Container):
             return
 
         from textual.widgets import RichLog
+
         try:
             log_widget = self.query_one("#logs", RichLog)
 
@@ -680,6 +713,7 @@ class FilterableLogWidget(Container):
                 time_str = timestamp.strftime("%H:%M:%S")
             else:
                 from datetime import datetime
+
                 time_str = datetime.now().strftime("%H:%M:%S")
 
             text = Text()
@@ -694,6 +728,7 @@ class FilterableLogWidget(Container):
     def on_input_changed(self, event) -> None:
         """Handle filter text changes."""
         from textual.widgets import Input
+
         if isinstance(event.input, Input) and event.input.id == "log-filter":
             self.filter_text = event.value
             # Note: We don't reload logs, just filter new ones as they come
@@ -707,6 +742,7 @@ class FilterableLogWidget(Container):
     def clear_logs(self) -> None:
         """Clear all logs."""
         from textual.widgets import RichLog
+
         try:
             log_widget = self.query_one("#logs", RichLog)
             log_widget.clear()
@@ -723,11 +759,13 @@ class ActiveRequestsTable(Container):
 
     def compose(self) -> ComposeResult:
         from textual.widgets import DataTable
+
         yield DataTable(id="active-requests-table")
 
     def on_mount(self) -> None:
         """Initialize table."""
         from textual.widgets import DataTable
+
         self.border_title = "Active Requests (0 concurrent)"
         self.active_requests = {}
         self.request_start_times = {}
@@ -735,13 +773,17 @@ class ActiveRequestsTable(Container):
         table = self.query_one("#active-requests-table", DataTable)
         table.add_columns("ROM", "Stage", "Media Type", "Duration", "Status")
         table.cursor_type = "row"
-        
+
         # Start timer to update durations every 0.5 seconds
         self.set_interval(0.5, self._update_durations)
 
     def update_request(
-        self, rom_name: str, stage: str, status: str,
-        media_type: str = None, duration: float = None
+        self,
+        rom_name: str,
+        stage: str,
+        status: str,
+        media_type: str = None,
+        duration: float = None,
     ) -> None:
         """Add or update an active request."""
         from textual.widgets import DataTable
@@ -749,17 +791,17 @@ class ActiveRequestsTable(Container):
 
         try:
             table = self.query_one("#active-requests-table", DataTable)
-            
+
             # Create unique key
             if media_type:
                 request_key = f"{rom_name}:{media_type}"
             else:
                 request_key = rom_name
-            
+
             # Ensure we have a start time
             if request_key not in self.request_start_times:
                 self.request_start_times[request_key] = time.time()
-            
+
             # Calculate duration
             if duration is None:
                 duration = time.time() - self.request_start_times[request_key]
@@ -779,13 +821,11 @@ class ActiveRequestsTable(Container):
             else:
                 # Add new row - DIRECTLY MODIFY dict instead of reassigning
                 row_key = table.add_row(
-                    rom_display,
-                    stage,
-                    media_display,
-                    f"{duration:.1f}s",
-                    status
+                    rom_display, stage, media_display, f"{duration:.1f}s", status
                 )
-                self.active_requests[request_key] = row_key  # Direct assignment, not dict recreation
+                self.active_requests[request_key] = (
+                    row_key  # Direct assignment, not dict recreation
+                )
 
             # Update border title
             self._update_border_title()
@@ -802,7 +842,7 @@ class ActiveRequestsTable(Container):
                 request_key = f"{rom_name}:{media_type}"
             else:
                 request_key = rom_name
-            
+
             if request_key in self.active_requests:
                 table = self.query_one("#active-requests-table", DataTable)
                 row_key = self.active_requests[request_key]
@@ -810,7 +850,7 @@ class ActiveRequestsTable(Container):
 
                 # DIRECTLY DELETE instead of recreating dict
                 del self.active_requests[request_key]
-                
+
                 if request_key in self.request_start_times:
                     del self.request_start_times[request_key]
 
@@ -839,7 +879,7 @@ class ActiveRequestsTable(Container):
         for request_key, row_key in list(self.active_requests.items()):
             if request_key not in self.request_start_times:
                 continue
-                
+
             elapsed = current_time - self.request_start_times[request_key]
             try:
                 table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
@@ -882,6 +922,7 @@ class SystemDetailPanel(Container):
 
     def compose(self) -> ComposeResult:
         from textual.containers import VerticalScroll
+
         with VerticalScroll():
             yield Static(id="system-detail-content")
 
@@ -917,7 +958,9 @@ class SystemDetailPanel(Container):
             content.append("No system selected", style="dim")
             self.border_title = "System Details"
         elif self.selected_system not in self.system_stats:
-            content.append(f"Waiting for {self.selected_system} to start...", style="dim")
+            content.append(
+                f"Waiting for {self.selected_system} to start...", style="dim"
+            )
             self.border_title = self.selected_system
         else:
             stats = self.system_stats[self.selected_system]
@@ -925,26 +968,34 @@ class SystemDetailPanel(Container):
 
             # ROM Statistics
             content.append("● ROM STATISTICS\n", style="bold cyan")
-            content.append(f"  Total:      {stats.get('total_roms', 0):>4}\n", style="white")
-            content.append(f"  Successful: {stats.get('successful', 0):>4}\n", style="bright_green")
+            content.append(
+                f"  Total:      {stats.get('total_roms', 0):>4}\n", style="white"
+            )
+            content.append(
+                f"  Successful: {stats.get('successful', 0):>4}\n", style="bright_green"
+            )
             content.append(f"  Failed:     {stats.get('failed', 0):>4}\n", style="red")
-            content.append(f"  Skipped:    {stats.get('skipped', 0):>4}\n\n", style="yellow")
+            content.append(
+                f"  Skipped:    {stats.get('skipped', 0):>4}\n\n", style="yellow"
+            )
 
             # Media Statistics (per-type breakdown)
-            media_by_type = stats.get('media_by_type', {})
+            media_by_type = stats.get("media_by_type", {})
             if media_by_type:
                 content.append("● MEDIA STATISTICS\n", style="bold cyan")
                 # Sort media types alphabetically for consistent display
                 for media_type in sorted(media_by_type.keys()):
                     type_stats = media_by_type[media_type]
-                    successful = type_stats.get('successful', 0)
-                    validated = type_stats.get('validated', 0)
-                    failed = type_stats.get('failed', 0)
-                    
+                    successful = type_stats.get("successful", 0)
+                    validated = type_stats.get("validated", 0)
+                    failed = type_stats.get("failed", 0)
+
                     # Format media type name (capitalize and replace hyphens)
-                    display_name = media_type.replace('-', ' ').replace('_', ' ').title()
+                    display_name = (
+                        media_type.replace("-", " ").replace("_", " ").title()
+                    )
                     content.append(f"  {display_name:<15}", style="white")
-                    
+
                     if successful > 0:
                         content.append(f"✓ {successful:>3} ", style="bright_green")
                     if validated > 0:
@@ -955,7 +1006,7 @@ class SystemDetailPanel(Container):
                 content.append("\n")
 
             # Processing Status
-            status = stats.get('status', 'pending')
+            status = stats.get("status", "pending")
             content.append("● STATUS\n", style="bold cyan")
             if status == "complete":
                 content.append(f"  ✓ Complete", style="bright_green")
@@ -964,14 +1015,14 @@ class SystemDetailPanel(Container):
             else:
                 content.append(f"  ⏸ Pending", style="dim")
 
-            if stats.get('duration'):
+            if stats.get("duration"):
                 content.append(f" ({stats['duration']:.1f}s)", style="dim")
             content.append("\n\n")
 
             # Summary
-            if stats.get('summary'):
+            if stats.get("summary"):
                 content.append("● SUMMARY\n", style="bold cyan")
-                content.append(stats['summary'], style="dim white")
+                content.append(stats["summary"], style="dim white")
 
         try:
             self.query_one("#system-detail-content", Static).update(content)
@@ -1013,6 +1064,7 @@ class SystemsTab(Container):
 
     def compose(self) -> ComposeResult:
         from textual.widgets import Tree
+
         with Horizontal():
             # Left side: Tree view of systems (30% width)
             tree = Tree("Systems", id="systems-tree")
@@ -1026,12 +1078,13 @@ class SystemsTab(Container):
     def on_mount(self) -> None:
         """Initialize systems tree."""
         from textual.widgets import Tree
+
         tree = self.query_one("#systems-tree", Tree)
         tree.border_title = "System Queue"
 
         # Initialize with systems from config
         try:
-            systems = self.app.config.get('scraping', {}).get('systems', [])
+            systems = self.app.config.get("scraping", {}).get("systems", [])
             if systems:
                 for system_name in systems:
                     # Add placeholder nodes for configured systems
@@ -1043,14 +1096,20 @@ class SystemsTab(Container):
                 # Select first system by default
                 if tree.root.children:
                     tree.select_node(tree.root.children[0])
-                    detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
+                    detail_panel = self.query_one(
+                        "#system-detail-panel", SystemDetailPanel
+                    )
                     detail_panel.selected_system = systems[0]
         except Exception as e:
             logger.debug(f"Failed to initialize systems tree: {e}")
 
     def update_system_node(
-        self, system_name: str, fullname: str, successful: int, total: int,
-        status: str = "in_progress"
+        self,
+        system_name: str,
+        fullname: str,
+        successful: int,
+        total: int,
+        status: str = "in_progress",
     ) -> None:
         """Update a system node in the tree."""
         from textual.widgets import Tree
@@ -1089,7 +1148,7 @@ class SystemsTab(Container):
         from textual.widgets import Tree
 
         try:
-            if hasattr(event, 'node') and event.node.data:
+            if hasattr(event, "node") and event.node.data:
                 detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
                 detail_panel.selected_system = event.node.data
         except Exception as e:
@@ -1111,7 +1170,7 @@ class ConfigTab(Container):
             "⚠️  Settings changes are temporary and will revert on restart. "
             "Edit config.yaml for permanent changes.",
             id="config-warning",
-            classes="config-warning"
+            classes="config-warning",
         )
 
         # Two-column layout
@@ -1123,11 +1182,18 @@ class ConfigTab(Container):
                     with Horizontal(classes="config-row"):
                         yield Label("Max Retries:", classes="config-label")
                         yield Select(
-                            [("0", 0), ("1", 1), ("2", 2), ("3", 3), ("4", 4), ("5", 5)],
+                            [
+                                ("0", 0),
+                                ("1", 1),
+                                ("2", 2),
+                                ("3", 3),
+                                ("4", 4),
+                                ("5", 5),
+                            ],
                             value=3,
                             id="max-retries",
                             allow_blank=False,
-                            compact=True
+                            compact=True,
                         )
 
                     with Horizontal(classes="config-row"):
@@ -1137,7 +1203,7 @@ class ConfigTab(Container):
                             value=5,
                             id="retry-backoff",
                             allow_blank=False,
-                            compact=True
+                            compact=True,
                         )
 
                 # Runtime Settings
@@ -1154,7 +1220,7 @@ class ConfigTab(Container):
                             id="max-workers-select",
                             disabled=True,
                             allow_blank=False,
-                            compact=True
+                            compact=True,
                         )
 
             # Right Column: Logging and Search Settings
@@ -1164,11 +1230,16 @@ class ConfigTab(Container):
                     with Horizontal(classes="config-row"):
                         yield Label("Log Level:", classes="config-label")
                         yield Select(
-                            [("DEBUG", "DEBUG"), ("INFO", "INFO"), ("WARNING", "WARNING"), ("ERROR", "ERROR")],
+                            [
+                                ("DEBUG", "DEBUG"),
+                                ("INFO", "INFO"),
+                                ("WARNING", "WARNING"),
+                                ("ERROR", "ERROR"),
+                            ],
                             value="INFO",
                             id="log-level-select",
                             allow_blank=False,
-                            compact=True
+                            compact=True,
                         )
 
                 # Search Settings
@@ -1180,11 +1251,17 @@ class ConfigTab(Container):
                     with Horizontal(classes="config-row"):
                         yield Label("Confidence:", classes="config-label")
                         yield Select(
-                            [("50%", 50), ("60%", 60), ("70%", 70), ("80%", 80), ("90%", 90)],
+                            [
+                                ("50%", 50),
+                                ("60%", 60),
+                                ("70%", 70),
+                                ("80%", 80),
+                                ("90%", 90),
+                            ],
                             value=70,
                             id="confidence-threshold",
                             allow_blank=False,
-                            compact=True
+                            compact=True,
                         )
 
                     with Horizontal(classes="config-row"):
@@ -1194,37 +1271,49 @@ class ConfigTab(Container):
                             value=5,
                             id="max-results",
                             allow_blank=False,
-                            compact=True
+                            compact=True,
                         )
 
     def on_mount(self) -> None:
         """Set border titles and initialize widget values from config."""
         # Set border titles
         self.query_one("#api-settings-section", Container).border_title = "API Settings"
-        self.query_one("#runtime-settings-section", Container).border_title = "Runtime Settings"
-        self.query_one("#logging-settings-section", Container).border_title = "Logging Settings"
-        self.query_one("#search-settings-section", Container).border_title = "Search Settings"
+        self.query_one("#runtime-settings-section", Container).border_title = (
+            "Runtime Settings"
+        )
+        self.query_one("#logging-settings-section", Container).border_title = (
+            "Logging Settings"
+        )
+        self.query_one("#search-settings-section", Container).border_title = (
+            "Search Settings"
+        )
 
         # Initialize widget values from app config
         config = self.app.config
 
         # API Settings
         try:
-            max_retries = config.get('api', {}).get('max_retries', 3)
+            max_retries = config.get("api", {}).get("max_retries", 3)
             self.query_one("#max-retries", Select).value = max_retries
 
-            retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
+            retry_backoff = config.get("api", {}).get("retry_backoff_seconds", 5)
             self.query_one("#retry-backoff", Select).value = retry_backoff
         except Exception as e:
             logger.debug(f"Failed to initialize API settings: {e}")
 
         # Runtime Settings
         try:
-            override = config.get('runtime', {}).get('rate_limit_override_enabled', False)
+            override = config.get("runtime", {}).get(
+                "rate_limit_override_enabled", False
+            )
             self.query_one("#override-limits-switch", Switch).value = override
 
             if override:
-                max_workers = config.get('runtime', {}).get('rate_limit_override', {}).get('max_workers', 1)
+                max_workers = (
+                    config.get("runtime", {})
+                    .get("rate_limit_override", {})
+                    .get("max_workers", 1)
+                )
                 self.query_one("#max-workers-select", Select).value = max_workers
                 self.query_one("#max-workers-select", Select).disabled = False
         except Exception as e:
@@ -1232,20 +1321,24 @@ class ConfigTab(Container):
 
         # Logging Settings
         try:
-            log_level = config.get('logging', {}).get('level', 'INFO')
+            log_level = config.get("logging", {}).get("level", "INFO")
             self.query_one("#log-level-select", Select).value = log_level
         except Exception as e:
             logger.debug(f"Failed to initialize logging settings: {e}")
 
         # Search Settings
         try:
-            search_fallback = config.get('search', {}).get('enable_search_fallback', False)
+            search_fallback = config.get("search", {}).get(
+                "enable_search_fallback", False
+            )
             self.query_one("#search-fallback-switch", Switch).value = search_fallback
 
-            confidence = int(config.get('search', {}).get('confidence_threshold', 0.7) * 100)
+            confidence = int(
+                config.get("search", {}).get("confidence_threshold", 0.7) * 100
+            )
             self.query_one("#confidence-threshold", Select).value = confidence
 
-            max_results = config.get('search', {}).get('max_results', 5)
+            max_results = config.get("search", {}).get("max_results", 5)
             self.query_one("#max-results", Select).value = max_results
         except Exception as e:
             logger.debug(f"Failed to initialize search settings: {e}")
@@ -1266,8 +1359,10 @@ class ConfigTab(Container):
         elif switch_id == "search-fallback-switch":
             # Update orchestrator
             try:
-                if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
-                    self.app.orchestrator.update_search_config(enable_fallback=new_value)
+                if hasattr(self.app, "orchestrator") and self.app.orchestrator:
+                    self.app.orchestrator.update_search_config(
+                        enable_fallback=new_value
+                    )
             except Exception as e:
                 logger.error(f"Failed to update search fallback: {e}")
 
@@ -1279,7 +1374,9 @@ class ConfigTab(Container):
         # Log Level (already implemented, keep existing logic)
         if select_id == "log-level-select":
             try:
-                filterable_logs = self.app.query_one("#filterable-logs", FilterableLogWidget)
+                filterable_logs = self.app.query_one(
+                    "#filterable-logs", FilterableLogWidget
+                )
                 level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
                 filterable_logs.set_log_level(level_map.get(new_value, 20))
             except Exception as e:
@@ -1288,43 +1385,63 @@ class ConfigTab(Container):
         # API Settings
         elif select_id == "max-retries":
             try:
-                if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.api_client:
-                    self.app.orchestrator.api_client.update_runtime_config(max_retries=new_value)
+                if (
+                    hasattr(self.app, "orchestrator")
+                    and self.app.orchestrator
+                    and self.app.orchestrator.api_client
+                ):
+                    self.app.orchestrator.api_client.update_runtime_config(
+                        max_retries=new_value
+                    )
             except Exception as e:
                 logger.error(f"Failed to update max retries: {e}")
 
         elif select_id == "retry-backoff":
             try:
-                if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.api_client:
-                    self.app.orchestrator.api_client.update_runtime_config(retry_backoff=new_value)
+                if (
+                    hasattr(self.app, "orchestrator")
+                    and self.app.orchestrator
+                    and self.app.orchestrator.api_client
+                ):
+                    self.app.orchestrator.api_client.update_runtime_config(
+                        retry_backoff=new_value
+                    )
             except Exception as e:
                 logger.error(f"Failed to update retry backoff: {e}")
 
         # Runtime Settings
         elif select_id == "max-workers-select":
             try:
-                if (hasattr(self.app, 'orchestrator') and self.app.orchestrator and
-                        self.app.orchestrator.throttle_manager):
-                    self.app.orchestrator.throttle_manager.update_concurrency_limit(new_value)
+                if (
+                    hasattr(self.app, "orchestrator")
+                    and self.app.orchestrator
+                    and self.app.orchestrator.throttle_manager
+                ):
+                    self.app.orchestrator.throttle_manager.update_concurrency_limit(
+                        new_value
+                    )
             except Exception as e:
                 logger.error(f"Failed to update max workers: {e}")
 
         # Search Settings
         elif select_id == "confidence-threshold":
             try:
-                if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
+                if hasattr(self.app, "orchestrator") and self.app.orchestrator:
                     # Convert percentage to float (70 -> 0.7)
                     threshold = new_value / 100.0
-                    self.app.orchestrator.update_search_config(confidence_threshold=threshold)
+                    self.app.orchestrator.update_search_config(
+                        confidence_threshold=threshold
+                    )
             except Exception as e:
                 logger.error(f"Failed to update confidence threshold: {e}")
 
         elif select_id == "max-results":
             try:
-                if hasattr(self.app, 'orchestrator') and self.app.orchestrator:
+                if hasattr(self.app, "orchestrator") and self.app.orchestrator:
                     self.app.orchestrator.update_search_config(max_results=new_value)
             except Exception as e:
                 logger.error(f"Failed to update max results: {e}")
+
 
 # ============================================================================
 # Confirmation Dialogs
@@ -1501,12 +1618,14 @@ class QuitConfirmDialog(ModalScreen):
                     "[bold]Are you sure you want to quit?[/bold]\n\n"
                     "• Unsaved progress will be lost\n"
                     "• The current scraping session will be interrupted",
-                    id="quit-warning"
+                    id="quit-warning",
                 )
 
             with Horizontal(id="quit-buttons"):
                 yield Button("Quit [Y]", variant="error", id="quit-yes-btn")
-                yield Button("Continue Scraping [N]", variant="success", id="quit-no-btn")
+                yield Button(
+                    "Continue Scraping [N]", variant="success", id="quit-no-btn"
+                )
 
     def on_mount(self) -> None:
         """Focus the No button by default (safer)."""
@@ -1617,8 +1736,12 @@ class SearchResultDialog(ModalScreen):
     def compose(self) -> ComposeResult:
         """Compose the dialog layout."""
         with Container(id="search-dialog"):
-            yield Static("[bold]Interactive Search - Match Required[/bold]", id="search-header")
-            yield Static(f"[bold]ROM File:[/bold] [cyan]{self.rom_name}[/cyan]", id="rom-info")
+            yield Static(
+                "[bold]Interactive Search - Match Required[/bold]", id="search-header"
+            )
+            yield Static(
+                f"[bold]ROM File:[/bold] [cyan]{self.rom_name}[/cyan]", id="rom-info"
+            )
 
             with Horizontal(id="results-container"):
                 with Container(id="search-results"):
@@ -1831,12 +1954,17 @@ class CurateurUI(App):
         self.event_bus.subscribe(MediaStatsEvent, self.on_media_stats_event)
         self.event_bus.subscribe(SearchActivityEvent, self.on_search_activity_event)
         self.event_bus.subscribe(AuthenticationEvent, self.on_authentication_event)
-        self.event_bus.subscribe(ProcessingSummaryEvent, self.on_processing_summary_event)
+        self.event_bus.subscribe(
+            ProcessingSummaryEvent, self.on_processing_summary_event
+        )
 
         # Subscribe orchestrator to search responses (set by CLI after initialization)
-        if hasattr(self, 'orchestrator') and self.orchestrator is not None:
+        if hasattr(self, "orchestrator") and self.orchestrator is not None:
             from ..ui.events import SearchResponseEvent
-            self.event_bus.subscribe(SearchResponseEvent, self.orchestrator.handle_search_response)
+
+            self.event_bus.subscribe(
+                SearchResponseEvent, self.orchestrator.handle_search_response
+            )
 
         # Start event processing in background
         self.run_worker(self.event_bus.process_events(), name="event_processor")
@@ -1844,11 +1972,13 @@ class CurateurUI(App):
         logger.info("Event subscriptions complete, UI ready")
         logger.debug(f"UI fully initialized - is_running: {self.is_running}")
 
-    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+    def on_tabbed_content_tab_activated(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
         """Track which tab is currently active."""
         # event.tab is the TabPane widget, get its ID from the pane itself
         tab_pane = event.tab
-        if hasattr(tab_pane, 'id') and tab_pane.id:
+        if hasattr(tab_pane, "id") and tab_pane.id:
             self.current_tab = str(tab_pane.id)
             logger.debug(f"Tab activated: {self.current_tab}")
         else:
@@ -1868,9 +1998,13 @@ class CurateurUI(App):
 
         # Update overall progress widget
         try:
-            overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
+            overall_progress = self.query_one(
+                "#overall-progress", OverallProgressWidget
+            )
             overall_progress.systems_total = event.total_systems
-            overall_progress.current_system_index = event.current_index + 1  # Convert to 1-based
+            overall_progress.current_system_index = (
+                event.current_index + 1
+            )  # Convert to 1-based
         except Exception as e:
             logger.debug(f"Failed to update overall progress: {e}")
 
@@ -1878,13 +2012,13 @@ class CurateurUI(App):
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             current_system.system_name = event.system_fullname
-            
+
             # Reset hashing stats
             current_system.hash_total = event.total_roms
             current_system.hash_completed = 0
             current_system.hash_skipped = 0
             current_system.hash_in_progress = False
-            
+
             # Reset API stats
             current_system.metadata_in_flight = 0
             current_system.metadata_total = 0
@@ -1892,17 +2026,17 @@ class CurateurUI(App):
             current_system.search_total = 0
             current_system.search_fallback_count = 0
             current_system.search_unmatched_count = 0
-            
+
             # Reset cache stats
             current_system.cache_hit_rate = 0.0
             current_system.cache_existing = 0
             current_system.cache_new = 0
-            
+
             # Reset gamelist stats
             current_system.gamelist_existing = 0
             current_system.gamelist_added = 0
             current_system.gamelist_updated = 0
-            
+
             # Reset media stats
             current_system.media_in_flight = 0
             current_system.media_downloaded = 0
@@ -1920,20 +2054,23 @@ class CurateurUI(App):
                 event.system_fullname,
                 0,
                 event.total_roms,
-                "in_progress"
+                "in_progress",
             )
 
             # Initialize system stats in detail panel
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
-            detail_panel.update_system_stats(event.system_name, {
-                "fullname": event.system_fullname,
-                "total_roms": event.total_roms,
-                "successful": 0,
-                "failed": 0,
-                "skipped": 0,
-                "status": "in_progress",
-                "summary": f"Started processing {event.total_roms} ROMs..."
-            })
+            detail_panel.update_system_stats(
+                event.system_name,
+                {
+                    "fullname": event.system_fullname,
+                    "total_roms": event.total_roms,
+                    "successful": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "status": "in_progress",
+                    "summary": f"Started processing {event.total_roms} ROMs...",
+                },
+            )
         except Exception as e:
             logger.debug(f"Failed to update Systems tab: {e}")
 
@@ -1959,24 +2096,26 @@ class CurateurUI(App):
                 event.system_name,  # Use system_name as we don't have fullname
                 event.successful,
                 total_roms,
-                "complete"
+                "complete",
             )
 
             # Update detail panel stats
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
-            
+
             # Preserve existing stats if they exist (including detailed summary data)
             existing_stats = detail_panel.system_stats.get(event.system_name, {})
-            
+
             # Build basic summary with optional duration
             if event.elapsed_time:
                 basic_summary = f"Completed in {event.elapsed_time:.1f}s\n"
             else:
                 basic_summary = "Completed\n"
-            basic_summary += (f"  ✓ {event.successful} successful\n"
-                             f"  ✗ {event.failed} failed\n"
-                             f"  ⊝ {event.skipped} skipped")
-            
+            basic_summary += (
+                f"  ✓ {event.successful} successful\n"
+                f"  ✗ {event.failed} failed\n"
+                f"  ⊝ {event.skipped} skipped"
+            )
+
             # Build updated stats, preserving all detailed data from events
             updated_stats = {
                 "fullname": event.system_name,
@@ -1987,13 +2126,13 @@ class CurateurUI(App):
                 "status": "complete",
                 "elapsed_time": event.elapsed_time,
                 # Preserve detailed summary from ProcessingSummaryEvent if available
-                "summary": existing_stats.get('summary', basic_summary),
+                "summary": existing_stats.get("summary", basic_summary),
                 # Preserve summary_data (detailed per-ROM breakdown) for completed systems
-                "summary_data": existing_stats.get('summary_data'),
+                "summary_data": existing_stats.get("summary_data"),
                 # Preserve media_by_type (per-media-type statistics) for completed systems
-                "media_by_type": existing_stats.get('media_by_type')
+                "media_by_type": existing_stats.get("media_by_type"),
             }
-            
+
             detail_panel.update_system_stats(event.system_name, updated_stats)
         except Exception as e:
             logger.debug(f"Failed to update Systems tab: {e}")
@@ -2005,8 +2144,10 @@ class CurateurUI(App):
         # Update overall progress when a ROM is complete/failed/skipped
         if event.status in ["complete", "failed", "skipped"]:
             try:
-                overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
-                
+                overall_progress = self.query_one(
+                    "#overall-progress", OverallProgressWidget
+                )
+
                 # Update overall success/failed/skipped counters
                 # processed is calculated as successful + failed + skipped in update_display()
                 if event.status == "complete":
@@ -2017,27 +2158,32 @@ class CurateurUI(App):
                     overall_progress.skipped += 1
             except Exception as e:
                 logger.debug(f"Failed to update overall progress: {e}")
-            
+
             # Update system detail panel with real-time stats
             try:
                 detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
-                if self.current_system and event.system == self.current_system.system_name:
+                if (
+                    self.current_system
+                    and event.system == self.current_system.system_name
+                ):
                     # Get current stats or initialize
                     current_stats = detail_panel.system_stats.get(event.system, {})
-                    
+
                     # Increment appropriate counter
                     if event.status == "complete":
-                        current_stats["successful"] = current_stats.get("successful", 0) + 1
+                        current_stats["successful"] = (
+                            current_stats.get("successful", 0) + 1
+                        )
                     elif event.status == "failed":
                         current_stats["failed"] = current_stats.get("failed", 0) + 1
                     elif event.status == "skipped":
                         current_stats["skipped"] = current_stats.get("skipped", 0) + 1
-                    
+
                     # Update summary with current progress
                     total = (
-                        current_stats.get("successful", 0) +
-                        current_stats.get("failed", 0) +
-                        current_stats.get("skipped", 0)
+                        current_stats.get("successful", 0)
+                        + current_stats.get("failed", 0)
+                        + current_stats.get("skipped", 0)
                     )
                     total_roms = current_stats.get("total_roms", 0)
                     current_stats["summary"] = (
@@ -2046,7 +2192,7 @@ class CurateurUI(App):
                         f"  ✗ {current_stats.get('failed', 0)} failed\n"
                         f"  ⊝ {current_stats.get('skipped', 0)} skipped"
                     )
-                    
+
                     # Update the stats (preserves other fields like fullname, total_roms, status)
                     detail_panel.update_system_stats(event.system, current_stats)
             except Exception as e:
@@ -2055,8 +2201,7 @@ class CurateurUI(App):
     async def on_hashing_progress(self, event: HashingProgressEvent) -> None:
         """Handle hashing progress event."""
         logger.debug(
-            f"Hashing: {event.completed}/{event.total} "
-            f"(skipped: {event.skipped})"
+            f"Hashing: {event.completed}/{event.total} " f"(skipped: {event.skipped})"
         )
 
         # Update current system widget
@@ -2087,7 +2232,9 @@ class CurateurUI(App):
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             current_system.metadata_in_flight = event.metadata_in_flight
-            current_system.metadata_total = self.cumulative_metadata_calls  # Use cumulative count
+            current_system.metadata_total = (
+                self.cumulative_metadata_calls
+            )  # Use cumulative count
             current_system.search_in_flight = event.search_in_flight
             current_system.search_total = event.search_total
         except Exception as e:
@@ -2095,25 +2242,25 @@ class CurateurUI(App):
 
     async def on_media_download(self, event: MediaDownloadEvent) -> None:
         """Handle media download event."""
-        logger.debug(
-            f"Media: {event.media_type} for {event.rom_name} - {event.status}"
-        )
+        logger.debug(f"Media: {event.media_type} for {event.rom_name} - {event.status}")
 
         # Update Details tab active requests table for media downloads
         try:
             active_requests = self.query_one("#active-requests", ActiveRequestsTable)
-            
+
             if event.status == "downloading":
                 # Add media download as an active request
                 active_requests.update_request(
                     event.rom_name,
                     "Media DL",
                     "in_progress",
-                    media_type=event.media_type
+                    media_type=event.media_type,
                 )
             elif event.status in ["complete", "failed"]:
                 # Remove the specific media download request
-                active_requests.remove_request(event.rom_name, media_type=event.media_type)
+                active_requests.remove_request(
+                    event.rom_name, media_type=event.media_type
+                )
         except Exception as e:
             logger.debug(f"Failed to update active requests for media: {e}")
 
@@ -2125,14 +2272,16 @@ class CurateurUI(App):
             elif event.status in ["complete", "failed"]:
                 # Only track in-flight count here
                 # Completed/failed counts are managed by MediaStatsEvent to avoid race conditions
-                current_system.media_in_flight = max(0, current_system.media_in_flight - 1)
+                current_system.media_in_flight = max(
+                    0, current_system.media_in_flight - 1
+                )
         except Exception as e:
             logger.debug(f"Failed to update current system: {e}")
 
     async def on_log_entry(self, event: LogEntryEvent) -> None:
         """Handle log entry event."""
         # Don't log here - creates infinite feedback loop
-        
+
         # Add log to Details tab
         try:
             filterable_logs = self.query_one("#filterable-logs", FilterableLogWidget)
@@ -2141,13 +2290,18 @@ class CurateurUI(App):
             pass  # Silently ignore logging errors to prevent feedback loop
 
         # Show notification on Overview tab for WARNING/ERROR
-        if event.level >= logging.WARNING and self.current_tab == "--content-tab-overview":
+        if (
+            event.level >= logging.WARNING
+            and self.current_tab == "--content-tab-overview"
+        ):
             severity = "error" if event.level >= logging.ERROR else "warning"
-            short_msg = event.message[:60] + "..." if len(event.message) > 60 else event.message
+            short_msg = (
+                event.message[:60] + "..." if len(event.message) > 60 else event.message
+            )
             self.notify(
                 f"{logging.getLevelName(event.level)}: {short_msg}",
                 severity=severity,
-                timeout=5
+                timeout=5,
             )
 
     async def on_performance_update(self, event: PerformanceUpdateEvent) -> None:
@@ -2208,9 +2362,7 @@ class CurateurUI(App):
             if event.status in ["started", "in_progress", "retry"]:
                 # Add or update the request (duration will be calculated by the table)
                 active_requests.update_request(
-                    event.rom_name,
-                    event.stage,
-                    event.status
+                    event.rom_name, event.stage, event.status
                 )
             elif event.status in ["completed", "failed", "cancelled"]:
                 # Remove the request
@@ -2233,7 +2385,9 @@ class CurateurUI(App):
         # Start search prompt handler if not already running
         if not self.search_processor_running:
             self.search_processor_running = True
-            self.run_worker(self._process_search_queue(), name="search_prompt_processor")
+            self.run_worker(
+                self._process_search_queue(), name="search_prompt_processor"
+            )
 
     async def _process_search_queue(self) -> None:
         """Process search requests one at a time.
@@ -2246,8 +2400,7 @@ class CurateurUI(App):
                 # Get next search request
                 try:
                     request = await asyncio.wait_for(
-                        self.search_queue.get(),
-                        timeout=1.0
+                        self.search_queue.get(), timeout=1.0
                     )
                 except asyncio.TimeoutError:
                     # Check if we should exit
@@ -2283,26 +2436,32 @@ class CurateurUI(App):
             confidence = result["confidence"]
 
             # Extract display fields
-            names = game_data.get('names', {})
-            title = names.get('en') or names.get('us') or (list(names.values())[0] if names else 'Unknown')
+            names = game_data.get("names", {})
+            title = (
+                names.get("en")
+                or names.get("us")
+                or (list(names.values())[0] if names else "Unknown")
+            )
 
-            dates = game_data.get('dates', {})
-            year = list(dates.values())[0] if dates else 'N/A'
+            dates = game_data.get("dates", {})
+            year = list(dates.values())[0] if dates else "N/A"
 
-            regions = game_data.get('regions', [])
-            region = regions[0] if regions else 'Unknown'
+            regions = game_data.get("regions", [])
+            region = regions[0] if regions else "Unknown"
 
-            dialog_results.append({
-                "id": game_data.get('id', ''),
-                "name": title,
-                "year": year,
-                "region": region,
-                "publisher": game_data.get('publisher', 'Unknown'),
-                "developer": game_data.get('developer', 'Unknown'),
-                "players": game_data.get('players', 'Unknown'),
-                "confidence": confidence,
-                "_full_data": game_data  # Keep original for return
-            })
+            dialog_results.append(
+                {
+                    "id": game_data.get("id", ""),
+                    "name": title,
+                    "year": year,
+                    "region": region,
+                    "publisher": game_data.get("publisher", "Unknown"),
+                    "developer": game_data.get("developer", "Unknown"),
+                    "players": game_data.get("players", "Unknown"),
+                    "confidence": confidence,
+                    "_full_data": game_data,  # Keep original for return
+                }
+            )
 
         # Show dialog
         result = await self.push_screen_wait(
@@ -2317,62 +2476,51 @@ class CurateurUI(App):
             response = SearchResponseEvent(
                 request_id=request.request_id,
                 action="selected",
-                selected_game=selected_game
+                selected_game=selected_game,
             )
             await self.event_bus.publish(response)
 
-            self.notify(
-                f"Selected: {data['name']}",
-                severity="information",
-                timeout=3
-            )
+            self.notify(f"Selected: {data['name']}", severity="information", timeout=3)
         elif action == "skip":
             response = SearchResponseEvent(
-                request_id=request.request_id,
-                action="skip",
-                selected_game=None
+                request_id=request.request_id, action="skip", selected_game=None
             )
             await self.event_bus.publish(response)
 
-            self.notify(
-                f"Skipped: {request.rom_name}",
-                severity="warning",
-                timeout=2
-            )
+            self.notify(f"Skipped: {request.rom_name}", severity="warning", timeout=2)
         else:  # cancel
             response = SearchResponseEvent(
-                request_id=request.request_id,
-                action="cancel",
-                selected_game=None
+                request_id=request.request_id, action="cancel", selected_game=None
             )
             await self.event_bus.publish(response)
 
-            self.notify(
-                "Search cancelled",
-                timeout=2
-            )
+            self.notify("Search cancelled", timeout=2)
 
     async def on_cache_metrics_event(self, event) -> None:
         """Handle cache metrics event."""
         from ..ui.events import CacheMetricsEvent
+
         if not isinstance(event, CacheMetricsEvent):
             return
-        
+
         # Update current system operations widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             current_system.cache_existing = event.existing
             current_system.cache_new = event.added
-            current_system.cache_hit_rate = event.hit_rate / 100.0  # Convert percentage to decimal
+            current_system.cache_hit_rate = (
+                event.hit_rate / 100.0
+            )  # Convert percentage to decimal
         except Exception as e:
             logger.debug(f"Failed to update cache metrics: {e}")
 
     async def on_gamelist_update_event(self, event) -> None:
         """Handle gamelist update event."""
         from ..ui.events import GamelistUpdateEvent
+
         if not isinstance(event, GamelistUpdateEvent):
             return
-        
+
         # Update current system operations widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
@@ -2385,45 +2533,43 @@ class CurateurUI(App):
     async def on_authentication_event(self, event) -> None:
         """Handle authentication event."""
         from ..ui.events import AuthenticationEvent
+
         if not isinstance(event, AuthenticationEvent):
             return
-        
-        logger.debug(f"Authentication: status={event.status}, username={event.username}")
-        
+
+        logger.debug(
+            f"Authentication: status={event.status}, username={event.username}"
+        )
+
         # Update Performance Panel with account name
         try:
             performance = self.query_one("#performance", PerformancePanel)
-            if event.status == 'authenticating':
+            if event.status == "authenticating":
                 performance.account_name = "Authenticating..."
-            elif event.status == 'authenticated' and event.username:
+            elif event.status == "authenticated" and event.username:
                 performance.account_name = event.username
-            elif event.status == 'failed':
+            elif event.status == "failed":
                 performance.account_name = "Authentication failed"
         except Exception as e:
             logger.debug(f"Failed to update account name: {e}")
-        
+
         # Show notifications
-        if event.status == 'authenticating':
+        if event.status == "authenticating":
             self.notify("Authenticating with ScreenScraper...", timeout=4)
-        elif event.status == 'authenticated':
+        elif event.status == "authenticated":
             self.notify(
-                f"Authenticated as {event.username}",
-                severity="information",
-                timeout=3
+                f"Authenticated as {event.username}", severity="information", timeout=3
             )
-        elif event.status == 'failed':
-            self.notify(
-                "Authentication failed",
-                severity="error",
-                timeout=5
-            )
+        elif event.status == "failed":
+            self.notify("Authentication failed", severity="error", timeout=5)
 
     async def on_processing_summary_event(self, event) -> None:
         """Handle processing summary event."""
         from ..ui.events import ProcessingSummaryEvent
+
         if not isinstance(event, ProcessingSummaryEvent):
             return
-        
+
         # Update Systems tab detail panel with summary
         try:
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
@@ -2440,13 +2586,13 @@ class CurateurUI(App):
                             "failed": 0,
                             "skipped": 0,
                             "status": "in_progress",
-                            "summary": "Processing..."
-                        }
+                            "summary": "Processing...",
+                        },
                     }
-                
+
                 # Build detailed summary text matching log format
                 summary_lines = []
-                
+
                 # Overall counts
                 total = len(event.successful) + len(event.skipped) + len(event.failed)
                 summary_lines.append(f"Total: {total}")
@@ -2454,22 +2600,22 @@ class CurateurUI(App):
                 summary_lines.append(f"  ⊝ {len(event.skipped)} skipped")
                 summary_lines.append(f"  ✗ {len(event.failed)} failed")
                 summary_lines.append("")
-                
+
                 # Add all entries from each category (already sorted alphabetically)
-                
+
                 if event.successful:
                     summary_lines.append("Successful:")
                     for filename in event.successful:
                         summary_lines.append(f"  • {filename}")
                     summary_lines.append("")
-                
+
                 if event.skipped:
                     summary_lines.append("Skipped:")
                     for filename, reason in event.skipped:
                         summary_lines.append(f"  • {filename}")
                         summary_lines.append(f"    ({reason})")
                     summary_lines.append("")
-                
+
                 if event.failed:
                     summary_lines.append("Failed:")
                     for filename, error in event.failed:
@@ -2477,19 +2623,19 @@ class CurateurUI(App):
                         error_short = error[:60] + "..." if len(error) > 60 else error
                         summary_lines.append(f"  • {filename}")
                         summary_lines.append(f"    ({error_short})")
-                
+
                 # Update stats with summary and counts
                 # Store the detailed event data for persistence after system completes
                 current_stats = dict(detail_panel.system_stats[system_name])
-                current_stats['summary'] = "\n".join(summary_lines)
-                current_stats['successful'] = len(event.successful)
-                current_stats['failed'] = len(event.failed)
-                current_stats['skipped'] = len(event.skipped)
+                current_stats["summary"] = "\n".join(summary_lines)
+                current_stats["successful"] = len(event.successful)
+                current_stats["failed"] = len(event.failed)
+                current_stats["skipped"] = len(event.skipped)
                 # Store raw event data for completed systems (detailed per-ROM breakdown)
-                current_stats['summary_data'] = {
-                    'successful': event.successful,
-                    'skipped': event.skipped,
-                    'failed': event.failed
+                current_stats["summary_data"] = {
+                    "successful": event.successful,
+                    "skipped": event.skipped,
+                    "failed": event.failed,
                 }
                 detail_panel.update_system_stats(system_name, current_stats)
         except Exception as e:
@@ -2498,14 +2644,15 @@ class CurateurUI(App):
     async def on_search_activity_event(self, event) -> None:
         """Handle search activity event."""
         from ..ui.events import SearchActivityEvent
+
         if not isinstance(event, SearchActivityEvent):
             return
-        
+
         logger.debug(
             f"Search activity: fallback={event.fallback_count}, "
             f"unmatched={event.unmatched_count}"
         )
-        
+
         # Update current system operations widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
@@ -2517,15 +2664,16 @@ class CurateurUI(App):
     async def on_media_stats_event(self, event) -> None:
         """Handle media stats event."""
         from ..ui.events import MediaStatsEvent
+
         if not isinstance(event, MediaStatsEvent):
             return
-        
+
         # Update current system operations widget
         try:
             current_system = self.query_one("#current-system", CurrentSystemOperations)
             # Calculate total downloaded from by_type breakdown
             total_downloaded = sum(
-                stats.get('successful', 0) for stats in event.by_type.values()
+                stats.get("successful", 0) for stats in event.by_type.values()
             )
             current_system.media_downloaded = total_downloaded
             current_system.media_validated = event.total_validated
@@ -2533,7 +2681,7 @@ class CurateurUI(App):
             current_system.media_failed = event.total_failed
         except Exception as e:
             logger.debug(f"Failed to update media stats: {e}")
-        
+
         # Update Systems tab detail panel with media breakdown
         try:
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
@@ -2550,13 +2698,13 @@ class CurateurUI(App):
                             "failed": 0,
                             "skipped": 0,
                             "status": "in_progress",
-                            "summary": "Processing..."
-                        }
+                            "summary": "Processing...",
+                        },
                     }
-                
+
                 # Update with media breakdown
                 current_stats = dict(detail_panel.system_stats[system_name])
-                current_stats['media_by_type'] = event.by_type
+                current_stats["media_by_type"] = event.by_type
                 detail_panel.update_system_stats(system_name, current_stats)
         except Exception as e:
             logger.debug(f"Failed to update system media breakdown: {e}")
@@ -2568,10 +2716,10 @@ class CurateurUI(App):
     def action_quit_app(self) -> None:
         """Quit the application with confirmation dialog."""
         logger.info("Quit requested by user")
-        
+
         # Run the dialog in a worker
         self.run_worker(self._handle_quit_dialog(), exclusive=True)
-    
+
     async def _handle_quit_dialog(self) -> None:
         """Handle quit confirmation dialog in worker context."""
         # Gather current progress info for the dialog
@@ -2582,8 +2730,14 @@ class CurateurUI(App):
             # Get processed count from overall progress widget
             # processed = successful + failed + skipped
             try:
-                overall_progress = self.query_one("#overall-progress", OverallProgressWidget)
-                processed = overall_progress.successful + overall_progress.failed + overall_progress.skipped
+                overall_progress = self.query_one(
+                    "#overall-progress", OverallProgressWidget
+                )
+                processed = (
+                    overall_progress.successful
+                    + overall_progress.failed
+                    + overall_progress.skipped
+                )
             except Exception:
                 processed = 0
         else:
@@ -2612,7 +2766,7 @@ class CurateurUI(App):
             self.notify(
                 f"Skipping {self.current_system.system_fullname}",
                 severity="warning",
-                timeout=3
+                timeout=3,
             )
         else:
             self.notify("No active system to skip", severity="warning", timeout=2)
@@ -2623,7 +2777,7 @@ class CurateurUI(App):
             self.notify(
                 "Game navigation is only available on the Overview tab",
                 severity="warning",
-                timeout=3
+                timeout=3,
             )
             return
 
@@ -2639,7 +2793,7 @@ class CurateurUI(App):
             self.notify(
                 "Game navigation is only available on the Overview tab",
                 severity="warning",
-                timeout=3
+                timeout=3,
             )
             return
 
@@ -2655,7 +2809,7 @@ class CurateurUI(App):
             self.notify(
                 "Log filtering is only available on the Details tab",
                 severity="warning",
-                timeout=3
+                timeout=3,
             )
             return
 

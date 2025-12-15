@@ -55,7 +55,7 @@ class EventLogHandler(logging.Handler):
             event = LogEntryEvent(
                 level=record.levelno,
                 message=message,
-                timestamp=datetime.fromtimestamp(record.created)
+                timestamp=datetime.fromtimestamp(record.created),
             )
 
             # Publish to event bus (thread-safe)
@@ -77,9 +77,7 @@ class EventLogHandler(logging.Handler):
 
 
 def setup_event_logging(
-    event_bus: EventBus,
-    level: int = logging.INFO,
-    format_string: Optional[str] = None
+    event_bus: EventBus, level: int = logging.INFO, format_string: Optional[str] = None
 ) -> EventLogHandler:
     """Setup event-based logging.
 
@@ -103,7 +101,7 @@ def setup_event_logging(
 
     # Set formatter
     if format_string is None:
-        format_string = '%(message)s'
+        format_string = "%(message)s"
 
     formatter = logging.Formatter(format_string)
     handler.setFormatter(formatter)

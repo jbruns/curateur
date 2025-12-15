@@ -13,29 +13,34 @@ logger = logging.getLogger(__name__)
 
 class ErrorCategory(Enum):
     """Categorize errors for selective retry logic."""
-    RETRYABLE = "retryable"        # 429, 5xx, network - should retry
-    NOT_FOUND = "not_found"        # 404 - track separately, don't retry
+
+    RETRYABLE = "retryable"  # 429, 5xx, network - should retry
+    NOT_FOUND = "not_found"  # 404 - track separately, don't retry
     NON_RETRYABLE = "non_retryable"  # 400 - don't retry
-    FATAL = "fatal"                # 403, auth - halt execution
+    FATAL = "fatal"  # 403, auth - halt execution
 
 
 class APIError(Exception):
     """Base exception for API errors."""
+
     pass
 
 
 class FatalAPIError(APIError):
     """Fatal API error requiring immediate stop."""
+
     pass
 
 
 class RetryableAPIError(APIError):
     """Retryable API error (rate limits, transient failures)."""
+
     pass
 
 
 class SkippableAPIError(APIError):
     """Non-fatal error, skip item and continue."""
+
     pass
 
 
@@ -64,10 +69,7 @@ def get_error_message(status_code: int) -> str:
     Returns:
         Error message string
     """
-    return HTTP_STATUS_MESSAGES.get(
-        status_code,
-        f"Unknown error (HTTP {status_code})"
-    )
+    return HTTP_STATUS_MESSAGES.get(status_code, f"Unknown error (HTTP {status_code})")
 
 
 def handle_http_status(
@@ -75,7 +77,7 @@ def handle_http_status(
     context: str = "",
     throttle_manager: Optional[Any] = None,
     endpoint: Optional[str] = None,
-    retry_after: Optional[int] = None
+    retry_after: Optional[int] = None,
 ) -> None:
     """
     Handle HTTP status code and raise appropriate exception.
@@ -137,7 +139,9 @@ def categorize_error(exception: Exception) -> Tuple[Exception, ErrorCategory]:
 
     # Check for 404 (not found) - track separately
     error_str = str(exception).lower()
-    if isinstance(exception, SkippableAPIError) and ('not found' in error_str or '404' in error_str):
+    if isinstance(exception, SkippableAPIError) and (
+        "not found" in error_str or "404" in error_str
+    ):
         return (exception, ErrorCategory.NOT_FOUND)
 
     # Non-retryable skippable errors (e.g., 400 malformed request)
@@ -149,7 +153,14 @@ def categorize_error(exception: Exception) -> Tuple[Exception, ErrorCategory]:
         return (exception, ErrorCategory.RETRYABLE)
 
     # Check for network-related exceptions
-    retryable_keywords = ['timeout', 'connection', 'network', 'temporary', 'unavailable', '5']
+    retryable_keywords = [
+        "timeout",
+        "connection",
+        "network",
+        "temporary",
+        "unavailable",
+        "5",
+    ]
     if any(keyword in error_str for keyword in retryable_keywords):
         return (exception, ErrorCategory.RETRYABLE)
 
@@ -162,7 +173,7 @@ async def retry_with_backoff(
     max_attempts: int = 3,
     initial_delay: float = 5.0,
     backoff_factor: float = 2.0,
-    context: str = ""
+    context: str = "",
 ):
     """
     Retry a function with exponential backoff using selective retry logic.
@@ -214,7 +225,9 @@ async def retry_with_backoff(
             if category == ErrorCategory.RETRYABLE:
                 if attempt < max_attempts:
                     print(f"  ⚠ {context}: {exception}")
-                    print(f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})...")
+                    print(
+                        f"  ⏳ Retrying in {delay:.1f}s (attempt {attempt}/{max_attempts})..."
+                    )
                     # Use async sleep if we're in async context for better UI responsiveness
                     if is_async:
                         await asyncio.sleep(delay)
@@ -252,8 +265,11 @@ def is_retryable_error(error: Exception) -> bool:
     # Check for network-related errors
     error_str = str(error).lower()
     retryable_keywords = [
-        'timeout', 'connection', 'network',
-        'temporary', 'unavailable'
+        "timeout",
+        "connection",
+        "network",
+        "temporary",
+        "unavailable",
     ]
 
     return any(keyword in error_str for keyword in retryable_keywords)

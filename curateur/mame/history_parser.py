@@ -16,7 +16,7 @@ class HistoryParser:
 
     def __init__(self, history_path: Path):
         """Initialize parser with path to history.xml file.
-        
+
         Args:
             history_path: Path to history.xml file
         """
@@ -25,10 +25,10 @@ class HistoryParser:
 
     def parse(self) -> Dict[str, str]:
         """Parse history.xml and return descriptions keyed by shortname.
-        
+
         Returns:
             Dictionary mapping shortname to description text
-            
+
         Raises:
             FileNotFoundError: If history.xml doesn't exist
             etree.XMLSyntaxError: If XML is malformed
@@ -38,7 +38,7 @@ class HistoryParser:
 
         logger.info(f"Parsing history XML: {self.history_path}")
         logger.info("This may take 30-60 seconds for large files (50MB+)...")
-        
+
         file_size_mb = self.history_path.stat().st_size / (1024 * 1024)
         logger.info(f"File size: {file_size_mb:.1f} MB")
 
@@ -48,11 +48,11 @@ class HistoryParser:
 
         # Find all entry elements
         entry_elements = root.findall(".//entry")
-        
+
         if not entry_elements:
             # Maybe entries are direct children
             entry_elements = list(root)
-        
+
         logger.debug(f"Found {len(entry_elements)} entry elements to process")
 
         parsed_count = 0
@@ -61,11 +61,11 @@ class HistoryParser:
             text_elem = entry_elem.find("text")
             if text_elem is None:
                 continue
-            
+
             text = self._get_element_text(text_elem)
             if not text:
                 continue
-            
+
             # Look for <systems> child element containing <system> elements
             systems_elem = entry_elem.find("systems")
             if systems_elem is not None:
@@ -83,37 +83,37 @@ class HistoryParser:
 
     def _get_element_text(self, element) -> str:
         """Extract all text content from an element and its children.
-        
+
         Args:
             element: XML element
-            
+
         Returns:
             Concatenated text content
         """
         # Get direct text
         text_parts = []
-        
+
         if element.text:
             text_parts.append(element.text)
-        
+
         # Get text from child elements
         for child in element:
             child_text = self._get_element_text(child)
             if child_text:
                 text_parts.append(child_text)
-            
+
             # Include tail text after child element
             if child.tail:
                 text_parts.append(child.tail)
-        
-        return ''.join(text_parts)
+
+        return "".join(text_parts)
 
     def get_description(self, shortname: str) -> Optional[str]:
         """Get history description for a game.
-        
+
         Args:
             shortname: Game shortname
-            
+
         Returns:
             Description text or None if not found
         """
@@ -121,10 +121,10 @@ class HistoryParser:
 
     def has_description(self, shortname: str) -> bool:
         """Check if a description exists for a game.
-        
+
         Args:
             shortname: Game shortname
-            
+
         Returns:
             True if description exists, False otherwise
         """

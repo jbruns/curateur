@@ -74,7 +74,9 @@ class ThreadPoolManager:
         self._results: list = []
         self._results_lock = asyncio.Lock()
 
-    def initialize_pools(self, api_provided_limits: Optional[Dict[str, Any]] = None) -> None:
+    def initialize_pools(
+        self, api_provided_limits: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Initialize task pool based on API limits
 
@@ -112,15 +114,18 @@ class ThreadPoolManager:
         """
         # Get API-provided limit (authoritative upper bound)
         api_maxthreads = None
-        if api_limits and 'maxthreads' in api_limits:
-            api_maxthreads = int(api_limits['maxthreads'])
+        if api_limits and "maxthreads" in api_limits:
+            api_maxthreads = int(api_limits["maxthreads"])
 
         # Check if rate limit override is enabled
-        rate_limit_override_enabled = self.config.get('runtime', {}).get('rate_limit_override_enabled', False)
+        rate_limit_override_enabled = self.config.get("runtime", {}).get(
+            "rate_limit_override_enabled", False
+        )
 
         if rate_limit_override_enabled:
             # User has override enabled - use RateLimitOverride to get effective limits
             from curateur.api.rate_override import RateLimitOverride
+
             override = RateLimitOverride(self.config)
             limits = override.get_effective_limits(api_limits)
             concurrency = limits.max_threads
@@ -141,8 +146,11 @@ class ThreadPoolManager:
         rom_processor: Callable[[Any, Optional[Callable]], Awaitable[Any]],
         rom_batch: list,
         operation_callback: Optional[
-            Callable[[str, str, str, str, Optional[float], Optional[int], Optional[int]], None]
-        ] = None
+            Callable[
+                [str, str, str, str, Optional[float], Optional[int], Optional[int]],
+                None,
+            ]
+        ] = None,
     ) -> AsyncIterator[Tuple[Any, Any]]:
         """
         DEPRECATED: Legacy batch processing method (kept for compatibility)
@@ -162,7 +170,9 @@ class ThreadPoolManager:
         Yields:
             Tuple of (rom, result) as they complete
         """
-        logger.warning("submit_rom_batch() is deprecated, use await spawn_workers() + await wait_for_completion()")
+        logger.warning(
+            "submit_rom_batch() is deprecated, use await spawn_workers() + await wait_for_completion()"
+        )
 
         if not self._initialized:
             self.initialize_pools()
@@ -176,7 +186,7 @@ class ThreadPoolManager:
                     yield (rom, result)
                 except Exception as e:
                     logger.error(f"ROM processing failed for {rom}: {e}")
-                    yield (rom, {'error': str(e)})
+                    yield (rom, {"error": str(e)})
             return
 
         # Create async wrapper that respects semaphore
@@ -189,7 +199,7 @@ class ThreadPoolManager:
                     return (rom, result)
             except Exception as e:
                 logger.error(f"ROM processing failed for {rom}: {e}")
-                return (rom, {'error': str(e)})
+                return (rom, {"error": str(e)})
             finally:
                 async with self._lock:
                     self._active_work_count = max(0, self._active_work_count - 1)
@@ -203,7 +213,7 @@ class ThreadPoolManager:
                 yield (rom, result)
             except Exception as e:
                 logger.error(f"Task failed: {e}")
-                yield (None, {'error': str(e)})
+                yield (None, {"error": str(e)})
 
     async def spawn_workers(
         self,
@@ -212,7 +222,7 @@ class ThreadPoolManager:
         operation_callback: Optional[Callable] = None,
         result_callback: Optional[Callable] = None,
         count: int = 1,
-        stagger_delay: float = 0.0  # Deprecated - kept for backwards compatibility
+        stagger_delay: float = 0.0,  # Deprecated - kept for backwards compatibility
     ) -> None:
         """
         Spawn concurrent worker tasks to process work queue
@@ -267,20 +277,26 @@ class ThreadPoolManager:
 
             # Check for quit request from Textual UI
             if self.textual_ui and self.textual_ui.should_quit:
-                logger.info(f"Task {task_id} - quit requested from Textual UI, setting shutdown event")
+                logger.info(
+                    f"Task {task_id} - quit requested from Textual UI, setting shutdown event"
+                )
                 self._shutdown_event.set()
                 break
 
             # Check for skip system request from Textual UI
             if self.textual_ui and self.textual_ui.should_skip_system:
-                logger.info(f"Task {task_id} - skip system requested from Textual UI, marking system complete")
+                logger.info(
+                    f"Task {task_id} - skip system requested from Textual UI, marking system complete"
+                )
                 self._work_queue.mark_system_complete()
                 # Don't reset the flag here - let the orchestrator handle it
                 # The workers will finish current ROMs and exit cleanly
 
             # Check if work queue is done
             if self._work_queue.is_system_complete() and self._work_queue.is_empty():
-                logger.debug(f"Task {task_id} exiting - system complete and queue empty")
+                logger.debug(
+                    f"Task {task_id} exiting - system complete and queue empty"
+                )
                 break
 
             # Check for shutdown before getting new work
@@ -292,7 +308,7 @@ class ThreadPoolManager:
             try:
                 work_item = await asyncio.wait_for(
                     self._work_queue.get_work_async(),
-                    timeout=1.0  # Check shutdown event periodically
+                    timeout=1.0,  # Check shutdown event periodically
                 )
             except asyncio.TimeoutError:
                 # No work available, check again
@@ -311,7 +327,7 @@ class ThreadPoolManager:
                 logger.info(
                     "Task %s not starting %s - shutdown requested",
                     task_id,
-                    work_item.rom_info.get('filename', 'unknown')
+                    work_item.rom_info.get("filename", "unknown"),
                 )
                 # Put work back in queue for graceful handling
                 self._work_queue.queue.put_nowait((work_item.priority, work_item))
@@ -320,31 +336,38 @@ class ThreadPoolManager:
             # Reconstruct ROMInfo from work item
             from ..scanner.rom_types import ROMType
             from pathlib import Path
+
             rom_info_dict = work_item.rom_info
 
             try:
-                rom_info = type('ROMInfo', (), {
-                    'path': Path(rom_info_dict['path']),
-                    'filename': rom_info_dict['filename'],
-                    'basename': rom_info_dict['basename'],
-                    'rom_type': ROMType(rom_info_dict['rom_type']),
-                    'system': rom_info_dict['system'],
-                    'query_filename': rom_info_dict['query_filename'],
-                    'file_size': rom_info_dict['file_size'],
-                    'hash_type': rom_info_dict.get('hash_type', 'crc32'),
-                    'hash_value': rom_info_dict.get('hash_value'),
-                    'crc_size_limit': rom_info_dict.get('crc_size_limit', 1073741824),
-                    'disc_files': (
-                        [Path(f) for f in rom_info_dict['disc_files']]
-                        if rom_info_dict.get('disc_files')
-                        else None
-                    ),
-                    'contained_file': (
-                        Path(rom_info_dict['contained_file'])
-                        if rom_info_dict.get('contained_file')
-                        else None
-                    )
-                })()
+                rom_info = type(
+                    "ROMInfo",
+                    (),
+                    {
+                        "path": Path(rom_info_dict["path"]),
+                        "filename": rom_info_dict["filename"],
+                        "basename": rom_info_dict["basename"],
+                        "rom_type": ROMType(rom_info_dict["rom_type"]),
+                        "system": rom_info_dict["system"],
+                        "query_filename": rom_info_dict["query_filename"],
+                        "file_size": rom_info_dict["file_size"],
+                        "hash_type": rom_info_dict.get("hash_type", "crc32"),
+                        "hash_value": rom_info_dict.get("hash_value"),
+                        "crc_size_limit": rom_info_dict.get(
+                            "crc_size_limit", 1073741824
+                        ),
+                        "disc_files": (
+                            [Path(f) for f in rom_info_dict["disc_files"]]
+                            if rom_info_dict.get("disc_files")
+                            else None
+                        ),
+                        "contained_file": (
+                            Path(rom_info_dict["contained_file"])
+                            if rom_info_dict.get("contained_file")
+                            else None
+                        ),
+                    },
+                )()
             except Exception as e:
                 logger.error(f"Task {task_id} failed to reconstruct ROMInfo: {e}")
                 await self._work_queue.mark_processed(work_item)
@@ -361,7 +384,9 @@ class ThreadPoolManager:
                 # Process ROM directly - no semaphore needed at worker level
                 # API calls self-regulate via throttle_manager.concurrency_semaphore
                 # Media downloads use separate throttle_manager.media_download_semaphore
-                result = await self._rom_processor(rom_info, self._operation_callback, self._shutdown_event)
+                result = await self._rom_processor(
+                    rom_info, self._operation_callback, self._shutdown_event
+                )
 
                 logger.debug(f"Task {task_id} completed {rom_info.filename}")
 
@@ -374,15 +399,24 @@ class ThreadPoolManager:
                     try:
                         await self._result_callback(rom_info, result)
                     except Exception as e:
-                        logger.error(f"Result callback failed for {rom_info.filename}: {e}")
+                        logger.error(
+                            f"Result callback failed for {rom_info.filename}: {e}"
+                        )
 
                 # Mark as processed
                 await self._work_queue.mark_processed(work_item)
 
                 # Handle failures (retry if needed) - but not during shutdown
-                if not self._shutdown_event.is_set() and not result.success and result.error:
+                if (
+                    not self._shutdown_event.is_set()
+                    and not result.success
+                    and result.error
+                ):
                     # Check if retryable
-                    if 'timeout' in result.error.lower() or 'network' in result.error.lower():
+                    if (
+                        "timeout" in result.error.lower()
+                        or "network" in result.error.lower()
+                    ):
                         self._work_queue.retry_failed(work_item, result.error)
 
             except asyncio.CancelledError:
@@ -390,7 +424,9 @@ class ThreadPoolManager:
                 logger.debug(f"Task {task_id} cancelled {rom_info.filename} (shutdown)")
                 await self._work_queue.mark_processed(work_item)
             except Exception as e:
-                logger.error(f"Task {task_id} failed processing {rom_info.filename}: {e}")
+                logger.error(
+                    f"Task {task_id} failed processing {rom_info.filename}: {e}"
+                )
                 await self._work_queue.mark_processed(work_item)
             finally:
                 async with self._lock:
@@ -417,15 +453,19 @@ class ThreadPoolManager:
             while not self._work_queue.queue.empty() and not self._workers_stopped:
                 # Check for quit request from Textual UI
                 if self.textual_ui and self.textual_ui.should_quit:
-                    logger.info("Quit requested during wait_for_completion - stopping workers")
+                    logger.info(
+                        "Quit requested during wait_for_completion - stopping workers"
+                    )
                     await self.stop_workers()
                     break
-                    
+
                 try:
                     # Wait up to 1 second at a time, allows checking _workers_stopped and quit
                     # Note: drain() will log a warning if timeout is hit, but this is
                     # expected during periodic checks - we catch TimeoutError to continue
-                    await asyncio.wait_for(self._work_queue.drain(timeout=1.0), timeout=1.0)
+                    await asyncio.wait_for(
+                        self._work_queue.drain(timeout=1.0), timeout=1.0
+                    )
                 except asyncio.TimeoutError:
                     # Timeout checking if queue empty, loop will check _workers_stopped
                     # This is expected behavior during periodic polling
@@ -473,7 +513,9 @@ class ThreadPoolManager:
         active_count = self._active_work_count
         total_tasks = len(self._worker_tasks)
 
-        logger.info(f"Stopping {total_tasks} pipeline task(s) - {active_count} currently active...")
+        logger.info(
+            f"Stopping {total_tasks} pipeline task(s) - {active_count} currently active..."
+        )
 
         # Set shutdown event to stop tasks from starting new work
         self._shutdown_event.set()
@@ -489,7 +531,7 @@ class ThreadPoolManager:
         try:
             await asyncio.wait_for(
                 asyncio.gather(*self._worker_tasks, return_exceptions=True),
-                timeout=timeout
+                timeout=timeout,
             )
             logger.info(f"All {total_tasks} tasks stopped gracefully")
         except asyncio.TimeoutError:
@@ -499,7 +541,7 @@ class ThreadPoolManager:
                 logger.warning(
                     "Tasks did not complete in-flight work within %ss, cancelling %s task(s)...",
                     timeout,
-                    incomplete_count
+                    incomplete_count,
                 )
 
                 for task in self._worker_tasks:
@@ -511,7 +553,9 @@ class ThreadPoolManager:
                 logger.info("Tasks cancelled")
             else:
                 # All tasks are done but gather timed out - likely a race condition
-                logger.debug(f"All tasks completed but gather timed out after {timeout}s")
+                logger.debug(
+                    f"All tasks completed but gather timed out after {timeout}s"
+                )
 
         # Report queue status
         if self._work_queue:
@@ -555,10 +599,10 @@ class ThreadPoolManager:
         """
         async with self._lock:
             return {
-                'active_tasks': self._active_work_count,
-                'total_tasks': len(self._worker_tasks),
-                'max_tasks': self.max_concurrent,
-                'initialized': self._initialized
+                "active_tasks": self._active_work_count,
+                "total_tasks": len(self._worker_tasks),
+                "max_tasks": self.max_concurrent,
+                "initialized": self._initialized,
             }
 
     def is_initialized(self) -> bool:

@@ -15,7 +15,7 @@ from curateur.api.error_handler import (
     handle_http_status,
     retry_with_backoff,
     FatalAPIError,
-    SkippableAPIError
+    SkippableAPIError,
 )
 from curateur.api.throttle import ThrottleManager
 from curateur.api.response_parser import (
@@ -24,7 +24,7 @@ from curateur.api.response_parser import (
     parse_search_results,
     parse_user_info,
     extract_error_message,
-    ResponseError
+    ResponseError,
 )
 from curateur.api.name_verifier import verify_name_match, format_verification_result
 
@@ -33,9 +33,10 @@ logger = logging.getLogger(__name__)
 
 class APIEndpoint(Enum):
     """ScreenScraper API endpoints."""
-    JEU_INFOS = 'jeuInfos.php'
-    JEU_RECHERCHE = 'jeuRecherche.php'
-    MEDIA_JEU = 'mediaJeu.php'
+
+    JEU_INFOS = "jeuInfos.php"
+    JEU_RECHERCHE = "jeuRecherche.php"
+    MEDIA_JEU = "mediaJeu.php"
 
 
 class ScreenScraperClient:
@@ -54,7 +55,7 @@ class ScreenScraperClient:
         client: Optional[httpx.AsyncClient] = None,
         cache: Optional[MetadataCache] = None,
         connection_pool_manager: Optional[Any] = None,
-        event_bus: Optional[Any] = None
+        event_bus: Optional[Any] = None,
     ):
         """
         Initialize API client.
@@ -68,28 +69,31 @@ class ScreenScraperClient:
             event_bus: Optional EventBus for UI event emissions
         """
         # Authentication
-        self.devid = config['screenscraper']['devid']
-        self.devpassword = config['screenscraper']['devpassword']
-        self.softname = config['screenscraper']['softname']
-        self.ssid = config['screenscraper']['user_id']
-        self.sspassword = config['screenscraper']['user_password']
+        self.devid = config["screenscraper"]["devid"]
+        self.devpassword = config["screenscraper"]["devpassword"]
+        self.softname = config["screenscraper"]["softname"]
+        self.ssid = config["screenscraper"]["user_id"]
+        self.sspassword = config["screenscraper"]["user_password"]
 
         # Configuration
-        self.request_timeout = config.get('api', {}).get('request_timeout', 30)
-        self.max_retries = config.get('api', {}).get('max_retries', 3)
-        self.retry_backoff = config.get('api', {}).get('retry_backoff_seconds', 5)
-        self.name_verification = config.get('scraping', {}).get('name_verification', 'normal')
-        self.preferred_language = config.get('scraping', {}).get('preferred_language', 'en')
-        self._quota_warning_threshold = config.get('api', {}).get('quota_warning_threshold', 0.95)
+        self.request_timeout = config.get("api", {}).get("request_timeout", 30)
+        self.max_retries = config.get("api", {}).get("max_retries", 3)
+        self.retry_backoff = config.get("api", {}).get("retry_backoff_seconds", 5)
+        self.name_verification = config.get("scraping", {}).get(
+            "name_verification", "normal"
+        )
+        self.preferred_language = config.get("scraping", {}).get(
+            "preferred_language", "en"
+        )
+        self._quota_warning_threshold = config.get("api", {}).get(
+            "quota_warning_threshold", 0.95
+        )
         self._timeout = httpx.Timeout(
-            connect=5.0,
-            read=self.request_timeout,
-            write=5.0,
-            pool=5.0
+            connect=5.0, read=self.request_timeout, write=5.0, pool=5.0
         )
 
         # Scrape mode for cache behavior
-        self.scrape_mode = config.get('scraping', {}).get('scrape_mode', 'changed')
+        self.scrape_mode = config.get("scraping", {}).get("scrape_mode", "changed")
 
         # HTTP client (use provided or None - caller must provide)
         self.client = client
@@ -99,7 +103,7 @@ class ScreenScraperClient:
 
         # Metadata cache (optional)
         self.cache = cache
-        
+
         # Connection pool manager for health tracking (optional)
         self.connection_pool_manager = connection_pool_manager
 
@@ -116,15 +120,13 @@ class ScreenScraperClient:
     def _build_redacted_url(self, url: str, params: Dict[str, Any]) -> str:
         """Build URL with credentials redacted for logging."""
         redacted_params = params.copy()
-        redacted_params['devpassword'] = 'redacted'
-        redacted_params['sspassword'] = 'redacted'
+        redacted_params["devpassword"] = "redacted"
+        redacted_params["sspassword"] = "redacted"
         query_string = urlencode(redacted_params)
         return f"{url}?{query_string}"
 
     async def query_game(
-        self,
-        rom_info: ROMInfo,
-        shutdown_event: Optional[asyncio.Event] = None
+        self, rom_info: ROMInfo, shutdown_event: Optional[asyncio.Event] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Query ScreenScraper for game information.
@@ -158,7 +160,7 @@ class ScreenScraperClient:
                 romnom=rom_info.query_filename,
                 romtaille=rom_info.file_size,
                 crc=rom_info.hash_value,
-                shutdown_event=shutdown_event
+                shutdown_event=shutdown_event,
             )
 
         # Execute with retry
@@ -170,7 +172,7 @@ class ScreenScraperClient:
                 max_attempts=self.max_retries,
                 initial_delay=self.retry_backoff,
                 backoff_factor=2.0,
-                context=context
+                context=context,
             )
         except (FatalAPIError, SkippableAPIError):
             raise
@@ -179,24 +181,28 @@ class ScreenScraperClient:
             raise SkippableAPIError(f"API error: {e}")
 
         # Verify game name matches ROM
-        if game_data and 'name' in game_data:
+        if game_data and "name" in game_data:
             is_match, similarity, reason = verify_name_match(
                 rom_info.filename,
-                game_data['name'],
-                threshold_mode=self.name_verification
+                game_data["name"],
+                threshold_mode=self.name_verification,
             )
 
             if not is_match:
                 # Log verification failure with formatted details
-                print(format_verification_result(
-                    rom_info.filename,
-                    game_data['name'],
-                    is_match,
-                    similarity,
-                    reason
-                ))
+                print(
+                    format_verification_result(
+                        rom_info.filename,
+                        game_data["name"],
+                        is_match,
+                        similarity,
+                        reason,
+                    )
+                )
                 # Include API name in error message for logging
-                raise SkippableAPIError(f"Name verification failed (API returned: '{game_data['name']}')")
+                raise SkippableAPIError(
+                    f"Name verification failed (API returned: '{game_data['name']}')"
+                )
 
         return game_data
 
@@ -216,16 +222,16 @@ class ScreenScraperClient:
             SystemExit: If authentication fails or user level insufficient
         """
         # Wait for rate limit (though this is typically the first call)
-        await self.throttle_manager.wait_if_needed('ssuserInfos.php')
+        await self.throttle_manager.wait_if_needed("ssuserInfos.php")
 
         # Build parameters
         params = {
-            'devid': self.devid,
-            'devpassword': self.devpassword,
-            'softname': self.softname,
-            'ssid': self.ssid,
-            'sspassword': self.sspassword,
-            'output': 'xml'
+            "devid": self.devid,
+            "devpassword": self.devpassword,
+            "softname": self.softname,
+            "ssid": self.ssid,
+            "sspassword": self.sspassword,
+            "output": "xml",
         }
 
         # Make request
@@ -237,19 +243,21 @@ class ScreenScraperClient:
             logger.debug(f"API Request (authentication): {redacted_url}")
 
         try:
-            response = await self.client.get(
-                url,
-                params=params,
-                timeout=self._timeout
-            )
+            response = await self.client.get(url, params=params, timeout=self._timeout)
         except httpx.TimeoutException:
-            logger.error("Authentication failed: Request timeout - network error, retry possible")
+            logger.error(
+                "Authentication failed: Request timeout - network error, retry possible"
+            )
             if self.connection_pool_manager:
                 if self.connection_pool_manager.record_timeout():
-                    logger.warning("Connection pool health degraded, consider restarting")
+                    logger.warning(
+                        "Connection pool health degraded, consider restarting"
+                    )
             raise SystemExit(1)
         except httpx.ConnectError:
-            logger.error("Authentication failed: Connection error - network error, retry possible")
+            logger.error(
+                "Authentication failed: Connection error - network error, retry possible"
+            )
             raise SystemExit(1)
         except Exception as e:
             logger.error(f"Authentication failed: Network error - {e}")
@@ -257,7 +265,9 @@ class ScreenScraperClient:
 
         # Check HTTP status
         if response.status_code == 401 or response.status_code == 403:
-            logger.error("Authentication failed: Invalid credentials - check config.yaml user_id and user_password")
+            logger.error(
+                "Authentication failed: Invalid credentials - check config.yaml user_id and user_password"
+            )
             raise SystemExit(1)
         elif response.status_code != 200:
             logger.error(f"Authentication failed: HTTP {response.status_code}")
@@ -267,7 +277,7 @@ class ScreenScraperClient:
 
         # Validate and parse response
         try:
-            root = validate_response(response.content, expected_format='xml')
+            root = validate_response(response.content, expected_format="xml")
         except ResponseError as e:
             logger.error(f"Authentication failed: Invalid XML response - {e}")
             if logger.isEnabledFor(logging.DEBUG):
@@ -283,9 +293,11 @@ class ScreenScraperClient:
             raise SystemExit(1)
 
         # Validate user level (niveau == 1 required for API access)
-        niveau = user_info.get('niveau')
+        niveau = user_info.get("niveau")
         if niveau != 1:
-            logger.error(f"Authentication failed: User level {niveau} insufficient (niveau=1 required)")
+            logger.error(
+                f"Authentication failed: User level {niveau} insufficient (niveau=1 required)"
+            )
             raise SystemExit(1)
 
         # Store user limits
@@ -294,15 +306,19 @@ class ScreenScraperClient:
             self._rate_limits_initialized = True
 
         # Log success with username
-        username = user_info.get('id', 'unknown')
+        username = user_info.get("id", "unknown")
         logger.info(f"Authenticated as ScreenScraper user: {username}")
-        logger.info(f"API limits: maxthreads={user_info.get('maxthreads')}, "
-                   f"maxrequestsperday={user_info.get('maxrequestsperday')}, "
-                   f"maxrequestspermin={user_info.get('maxrequestspermin')}")
+        logger.info(
+            f"API limits: maxthreads={user_info.get('maxthreads')}, "
+            f"maxrequestsperday={user_info.get('maxrequestsperday')}, "
+            f"maxrequestspermin={user_info.get('maxrequestspermin')}"
+        )
 
         return user_info
 
-    def update_runtime_config(self, max_retries: int = None, retry_backoff: float = None) -> None:
+    def update_runtime_config(
+        self, max_retries: int = None, retry_backoff: float = None
+    ) -> None:
         """Update API client configuration at runtime.
 
         Args:
@@ -323,7 +339,7 @@ class ScreenScraperClient:
         romnom: str,
         romtaille: int,
         crc: Optional[str] = None,
-        shutdown_event: Optional[asyncio.Event] = None
+        shutdown_event: Optional[asyncio.Event] = None,
     ) -> Dict[str, Any]:
         """
         Query jeuInfos.php endpoint.
@@ -342,33 +358,33 @@ class ScreenScraperClient:
             Various API errors
             asyncio.CancelledError: If shutdown is requested
         """
-                # Check cache first (unless scrape_mode is 'force')
-        use_cache = self.cache and self.scrape_mode != 'force'
+        # Check cache first (unless scrape_mode is 'force')
+        use_cache = self.cache and self.scrape_mode != "force"
         if use_cache and crc:
             cached_entry = self.cache.get(crc, rom_size=romtaille)
             if cached_entry is not None:
                 logger.debug(f"Cache hit for {romnom} (hash={crc})")
-                return cached_entry.get('response')
+                return cached_entry.get("response")
 
         # Wait for rate limit
         await self.throttle_manager.wait_if_needed(APIEndpoint.JEU_INFOS.value)
 
         # Build parameters
         params = {
-            'devid': self.devid,
-            'devpassword': self.devpassword,
-            'softname': self.softname,
-            'ssid': self.ssid,
-            'sspassword': self.sspassword,
-            'output': 'xml',
-            'systemeid': systemeid,
-            'romnom': romnom,
-            'romtaille': romtaille,
-            'romtype': 'rom',
+            "devid": self.devid,
+            "devpassword": self.devpassword,
+            "softname": self.softname,
+            "ssid": self.ssid,
+            "sspassword": self.sspassword,
+            "output": "xml",
+            "systemeid": systemeid,
+            "romnom": romnom,
+            "romtaille": romtaille,
+            "romtype": "rom",
         }
 
         if crc:
-            params['crc'] = crc
+            params["crc"] = crc
 
         # Make request
         url = f"{self.BASE_URL}/jeuInfos.php"
@@ -388,17 +404,18 @@ class ScreenScraperClient:
             if self.event_bus:
                 try:
                     from ..ui.events import APIActivityEvent
+
                     # Calculate in-flight requests (max - available slots)
                     in_flight = (
-                        self.throttle_manager.max_concurrent -
-                        self.throttle_manager.concurrency_semaphore._value
+                        self.throttle_manager.max_concurrent
+                        - self.throttle_manager.concurrency_semaphore._value
                     )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=in_flight,
                             metadata_total=0,  # Not tracked at API level
                             search_in_flight=0,  # Would need separate tracking
-                            search_total=0  # Not tracked at API level
+                            search_total=0,  # Not tracked at API level
                         )
                     )
                 except Exception:
@@ -408,11 +425,7 @@ class ScreenScraperClient:
             try:
                 # Create the HTTP request task that can be cancelled
                 request_task = asyncio.create_task(
-                    self.client.get(
-                        url,
-                        params=params,
-                        timeout=self._timeout
-                    )
+                    self.client.get(url, params=params, timeout=self._timeout)
                 )
 
                 # Wait for either completion or shutdown
@@ -421,7 +434,7 @@ class ScreenScraperClient:
                     done, pending = await asyncio.wait(
                         [request_task],
                         return_when=asyncio.FIRST_COMPLETED,
-                        timeout=0.1  # Check shutdown every 100ms
+                        timeout=0.1,  # Check shutdown every 100ms
                     )
 
                     # Check for shutdown while waiting
@@ -429,7 +442,7 @@ class ScreenScraperClient:
                         done, pending = await asyncio.wait(
                             [request_task],
                             return_when=asyncio.FIRST_COMPLETED,
-                            timeout=0.1
+                            timeout=0.1,
                         )
 
                     if shutdown_event.is_set() and not done:
@@ -440,7 +453,9 @@ class ScreenScraperClient:
                         except asyncio.CancelledError:
                             # Expected when cancelling task during shutdown
                             pass
-                        raise asyncio.CancelledError("Shutdown requested during API search")
+                        raise asyncio.CancelledError(
+                            "Shutdown requested during API search"
+                        )
 
                     response = await request_task
                 else:
@@ -448,19 +463,23 @@ class ScreenScraperClient:
                     response = await request_task
 
             except asyncio.CancelledError:
-                            # Expected when cancelling task during shutdown
+                # Expected when cancelling task during shutdown
                 raise
             except httpx.TimeoutException:
                 if self.connection_pool_manager:
                     if self.connection_pool_manager.record_timeout():
-                        logger.warning("Multiple consecutive timeouts detected - resetting connection pool")
+                        logger.warning(
+                            "Multiple consecutive timeouts detected - resetting connection pool"
+                        )
                         await self.connection_pool_manager.reset_client()
                         self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Request timeout")
             except httpx.ConnectError:
                 if self.connection_pool_manager:
                     if self.connection_pool_manager.record_timeout():
-                        logger.warning("Multiple consecutive connection errors - resetting connection pool")
+                        logger.warning(
+                            "Multiple consecutive connection errors - resetting connection pool"
+                        )
                         await self.connection_pool_manager.reset_client()
                         self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Connection error")
@@ -471,7 +490,9 @@ class ScreenScraperClient:
 
             # Log response
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
+                logger.debug(
+                    f"API Response: {response.status_code} in {elapsed_time:.2f}s"
+                )
 
             # Handle HTTP status (pass throttle_manager for 429 handling)
             handle_http_status(
@@ -479,19 +500,21 @@ class ScreenScraperClient:
                 context=romnom,
                 throttle_manager=self.throttle_manager,
                 endpoint=APIEndpoint.JEU_INFOS.value,
-                retry_after=response.headers.get('Retry-After')
+                retry_after=response.headers.get("Retry-After"),
             )
 
             # Reset backoff on successful request
             if response.status_code == 200:
-                self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_INFOS.value)
+                self.throttle_manager.reset_backoff_multiplier(
+                    APIEndpoint.JEU_INFOS.value
+                )
                 # Record successful request for connection health tracking
                 if self.connection_pool_manager:
                     self.connection_pool_manager.record_success()
 
             # Validate and parse response
             try:
-                root = validate_response(response.content, expected_format='xml')
+                root = validate_response(response.content, expected_format="xml")
             except ResponseError as e:
                 raise SkippableAPIError(f"Invalid response: {e}")
 
@@ -510,18 +533,22 @@ class ScreenScraperClient:
                         self._rate_limits_initialized = True
                         logger.info(f"API user limits detected: {self._user_limits}")
                     # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
-                    elif 'requeststoday' in new_user_info:
-                        new_requests = new_user_info.get('requeststoday', 0)
-                        old_requests = self._user_limits.get('requeststoday', 0)
+                    elif "requeststoday" in new_user_info:
+                        new_requests = new_user_info.get("requeststoday", 0)
+                        old_requests = self._user_limits.get("requeststoday", 0)
                         if new_requests > old_requests:
                             self._user_limits = new_user_info
-                            logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
+                            logger.debug(
+                                f"API quota updated: {old_requests} -> {new_requests} requests today"
+                            )
 
                 # Update throttle manager quota tracking
                 await self.throttle_manager.update_quota(new_user_info)
 
                 # Check quota thresholds and log warnings if exceeded
-                await self.throttle_manager.check_quota_threshold(self._quota_warning_threshold)
+                await self.throttle_manager.check_quota_threshold(
+                    self._quota_warning_threshold
+                )
 
             # Parse game info
             try:
@@ -532,23 +559,27 @@ class ScreenScraperClient:
             # Store in cache if enabled and we have a hash
             if use_cache and crc and game_data:
                 self.cache.put(crc, game_data, rom_size=romtaille)
-                logger.debug(f"Cached response for {romnom} (hash={crc}, size={romtaille})")
+                logger.debug(
+                    f"Cached response for {romnom} (hash={crc}, size={romtaille})"
+                )
 
             # Emit APIActivityEvent when request completes (still inside semaphore)
             if self.event_bus:
                 try:
                     from ..ui.events import APIActivityEvent
+
                     # Calculate in-flight after this completes
                     in_flight = (
-                        self.throttle_manager.max_concurrent -
-                        self.throttle_manager.concurrency_semaphore._value - 1
+                        self.throttle_manager.max_concurrent
+                        - self.throttle_manager.concurrency_semaphore._value
+                        - 1
                     )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=max(0, in_flight),
                             metadata_total=1,  # Signal completion
                             search_in_flight=0,
-                            search_total=0
+                            search_total=0,
                         )
                     )
                 except Exception:
@@ -560,7 +591,7 @@ class ScreenScraperClient:
         self,
         rom_info: ROMInfo,
         shutdown_event: Optional[asyncio.Event] = None,
-        max_results: int = 5
+        max_results: int = 5,
     ) -> list[Dict[str, Any]]:
         """
         Search for game by name using jeuRecherche.php endpoint.
@@ -597,7 +628,7 @@ class ScreenScraperClient:
                 systemeid=systemeid,
                 recherche=rom_info.query_filename,
                 max_results=max_results,
-                shutdown_event=shutdown_event
+                shutdown_event=shutdown_event,
             )
 
         # Execute with retry
@@ -609,7 +640,7 @@ class ScreenScraperClient:
                 max_attempts=self.max_retries,
                 initial_delay=self.retry_backoff,
                 backoff_factor=2.0,
-                context=context
+                context=context,
             )
             return results
         except (FatalAPIError, SkippableAPIError):
@@ -623,7 +654,7 @@ class ScreenScraperClient:
         systemeid: int,
         recherche: str,
         max_results: int = 5,
-        shutdown_event: Optional[asyncio.Event] = None
+        shutdown_event: Optional[asyncio.Event] = None,
     ) -> list[Dict[str, Any]]:
         """
         Query jeuRecherche.php endpoint for text search.
@@ -646,15 +677,15 @@ class ScreenScraperClient:
 
         # Build parameters
         params = {
-            'devid': self.devid,
-            'devpassword': self.devpassword,
-            'softname': self.softname,
-            'ssid': self.ssid,
-            'sspassword': self.sspassword,
-            'output': 'xml',
-            'systemeid': systemeid,
-            'recherche': recherche,
-            'max': max_results,
+            "devid": self.devid,
+            "devpassword": self.devpassword,
+            "softname": self.softname,
+            "ssid": self.ssid,
+            "sspassword": self.sspassword,
+            "output": "xml",
+            "systemeid": systemeid,
+            "recherche": recherche,
+            "max": max_results,
         }
 
         # Make request
@@ -675,17 +706,18 @@ class ScreenScraperClient:
             if self.event_bus:
                 try:
                     from ..ui.events import APIActivityEvent
+
                     # Calculate in-flight requests (max - available slots)
                     in_flight = (
-                        self.throttle_manager.max_concurrent -
-                        self.throttle_manager.concurrency_semaphore._value
+                        self.throttle_manager.max_concurrent
+                        - self.throttle_manager.concurrency_semaphore._value
                     )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=in_flight,
                             metadata_total=0,  # Not tracked at API level
                             search_in_flight=0,  # Would need separate tracking
-                            search_total=0  # Not tracked at API level
+                            search_total=0,  # Not tracked at API level
                         )
                     )
                 except Exception:
@@ -695,11 +727,7 @@ class ScreenScraperClient:
             try:
                 # Create the HTTP request task that can be cancelled
                 request_task = asyncio.create_task(
-                    self.client.get(
-                        url,
-                        params=params,
-                        timeout=self._timeout
-                    )
+                    self.client.get(url, params=params, timeout=self._timeout)
                 )
 
                 # Wait for either completion or shutdown
@@ -708,7 +736,7 @@ class ScreenScraperClient:
                     done, pending = await asyncio.wait(
                         [request_task],
                         return_when=asyncio.FIRST_COMPLETED,
-                        timeout=0.1  # Check shutdown every 100ms
+                        timeout=0.1,  # Check shutdown every 100ms
                     )
 
                     # Check for shutdown while waiting
@@ -716,7 +744,7 @@ class ScreenScraperClient:
                         done, pending = await asyncio.wait(
                             [request_task],
                             return_when=asyncio.FIRST_COMPLETED,
-                            timeout=0.1
+                            timeout=0.1,
                         )
 
                     if shutdown_event.is_set() and not done:
@@ -727,7 +755,9 @@ class ScreenScraperClient:
                         except asyncio.CancelledError:
                             # Expected when cancelling task during shutdown
                             pass
-                        raise asyncio.CancelledError("Shutdown requested during API search")
+                        raise asyncio.CancelledError(
+                            "Shutdown requested during API search"
+                        )
 
                     response = await request_task
                 else:
@@ -735,19 +765,23 @@ class ScreenScraperClient:
                     response = await request_task
 
             except asyncio.CancelledError:
-                            # Expected when cancelling task during shutdown
+                # Expected when cancelling task during shutdown
                 raise
             except httpx.TimeoutException:
                 if self.connection_pool_manager:
                     if self.connection_pool_manager.record_timeout():
-                        logger.warning("Multiple consecutive timeouts detected - resetting connection pool")
+                        logger.warning(
+                            "Multiple consecutive timeouts detected - resetting connection pool"
+                        )
                         await self.connection_pool_manager.reset_client()
                         self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Request timeout")
             except httpx.ConnectError:
                 if self.connection_pool_manager:
                     if self.connection_pool_manager.record_timeout():
-                        logger.warning("Multiple consecutive connection errors - resetting connection pool")
+                        logger.warning(
+                            "Multiple consecutive connection errors - resetting connection pool"
+                        )
                         await self.connection_pool_manager.reset_client()
                         self.client = await self.connection_pool_manager.get_client()
                 raise Exception("Connection error")
@@ -758,7 +792,9 @@ class ScreenScraperClient:
 
             # Log response
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"API Response: {response.status_code} in {elapsed_time:.2f}s")
+                logger.debug(
+                    f"API Response: {response.status_code} in {elapsed_time:.2f}s"
+                )
 
             # Handle HTTP status (pass throttle_manager for 429 handling)
             handle_http_status(
@@ -766,19 +802,21 @@ class ScreenScraperClient:
                 context=f"search:{recherche}",
                 throttle_manager=self.throttle_manager,
                 endpoint=APIEndpoint.JEU_RECHERCHE.value,
-                retry_after=response.headers.get('Retry-After')
+                retry_after=response.headers.get("Retry-After"),
             )
 
             # Reset backoff on successful request
             if response.status_code == 200:
-                self.throttle_manager.reset_backoff_multiplier(APIEndpoint.JEU_RECHERCHE.value)
+                self.throttle_manager.reset_backoff_multiplier(
+                    APIEndpoint.JEU_RECHERCHE.value
+                )
                 # Record successful request for connection health tracking
                 if self.connection_pool_manager:
                     self.connection_pool_manager.record_success()
 
             # Validate and parse response
             try:
-                root = validate_response(response.content, expected_format='xml')
+                root = validate_response(response.content, expected_format="xml")
             except ResponseError as e:
                 raise SkippableAPIError(f"Invalid response: {e}")
 
@@ -797,12 +835,14 @@ class ScreenScraperClient:
                         self._rate_limits_initialized = True
                         logger.info(f"API user limits detected: {self._user_limits}")
                     # Monotonic update: only update if requeststoday increased (handle out-of-order responses)
-                    elif 'requeststoday' in new_user_info:
-                        new_requests = new_user_info.get('requeststoday', 0)
-                        old_requests = self._user_limits.get('requeststoday', 0)
+                    elif "requeststoday" in new_user_info:
+                        new_requests = new_user_info.get("requeststoday", 0)
+                        old_requests = self._user_limits.get("requeststoday", 0)
                         if new_requests > old_requests:
                             self._user_limits = new_user_info
-                            logger.debug(f"API quota updated: {old_requests} -> {new_requests} requests today")
+                            logger.debug(
+                                f"API quota updated: {old_requests} -> {new_requests} requests today"
+                            )
 
             # Parse search results
             try:
@@ -814,17 +854,19 @@ class ScreenScraperClient:
             if self.event_bus:
                 try:
                     from ..ui.events import APIActivityEvent
+
                     # Calculate in-flight after this completes
                     in_flight = (
-                        self.throttle_manager.max_concurrent -
-                        self.throttle_manager.concurrency_semaphore._value - 1
+                        self.throttle_manager.max_concurrent
+                        - self.throttle_manager.concurrency_semaphore._value
+                        - 1
                     )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=0,
                             metadata_total=0,
                             search_in_flight=max(0, in_flight),
-                            search_total=1  # Signal completion
+                            search_total=1,  # Signal completion
                         )
                     )
                 except Exception:

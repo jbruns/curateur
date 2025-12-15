@@ -45,7 +45,9 @@ class EventBus:
                      Can be sync or async.
         """
         self._subscribers[event_type].append(callback)
-        logger.debug(f"Subscribed to {event_type.__name__} (total subscribers: {len(self._subscribers[event_type])})")
+        logger.debug(
+            f"Subscribed to {event_type.__name__} (total subscribers: {len(self._subscribers[event_type])})"
+        )
 
     def unsubscribe(self, event_type: type, callback: Callable) -> None:
         """Unsubscribe from events of a specific type.
@@ -89,7 +91,9 @@ class EventBus:
         except RuntimeError:
             # No running event loop - this shouldn't happen in production
             # but we'll log it for debugging
-            logger.warning(f"No event loop running, cannot publish {type(event).__name__}")
+            logger.warning(
+                f"No event loop running, cannot publish {type(event).__name__}"
+            )
 
     async def process_events(self) -> None:
         """Process events from the queue.
@@ -128,7 +132,7 @@ class EventBus:
                         self._error_count += 1
                         logger.error(
                             f"Error in event handler for {event_type.__name__}: {e}",
-                            exc_info=True
+                            exc_info=True,
                         )
                         # Continue processing other handlers
 
@@ -157,7 +161,9 @@ class EventBus:
             # Queue didn't drain in time - force drain remaining items
             remaining = self._queue.qsize()
             if remaining > 0:
-                logger.warning(f"Event queue timeout - {remaining} events remaining, force draining")
+                logger.warning(
+                    f"Event queue timeout - {remaining} events remaining, force draining"
+                )
                 # Drain remaining items without processing
                 while not self._queue.empty():
                     try:
@@ -178,10 +184,12 @@ class EventBus:
             Dictionary with 'events_processed', 'errors', 'queue_size', 'subscriber_count'
         """
         return {
-            'events_processed': self._event_count,
-            'errors': self._error_count,
-            'queue_size': self._queue.qsize(),
-            'subscriber_count': sum(len(callbacks) for callbacks in self._subscribers.values())
+            "events_processed": self._event_count,
+            "errors": self._error_count,
+            "queue_size": self._queue.qsize(),
+            "subscriber_count": sum(
+                len(callbacks) for callbacks in self._subscribers.values()
+            ),
         }
 
     @property

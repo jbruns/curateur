@@ -30,7 +30,9 @@ from curateur.gamelist.game_entry import GameEntry, GamelistMetadata
 from curateur.tools.organize_roms import split_base_and_disc
 
 
-def group_multidisc_entries(entries: List[GameEntry]) -> Dict[str, List[Tuple[GameEntry, int]]]:
+def group_multidisc_entries(
+    entries: List[GameEntry],
+) -> Dict[str, List[Tuple[GameEntry, int]]]:
     """
     Group game entries by base name, tracking disc numbers.
 
@@ -68,7 +70,9 @@ def group_multidisc_entries(entries: List[GameEntry]) -> Dict[str, List[Tuple[Ga
     return groups
 
 
-def deduplicate_multidisc(entries: List[GameEntry], dry_run: bool = False) -> Tuple[List[GameEntry], List[GameEntry]]:
+def deduplicate_multidisc(
+    entries: List[GameEntry], dry_run: bool = False
+) -> Tuple[List[GameEntry], List[GameEntry]]:
     """
     Remove duplicate multi-disc entries, keeping only the first disc.
 
@@ -109,7 +113,9 @@ def deduplicate_multidisc(entries: List[GameEntry], dry_run: bool = False) -> Tu
                 for entry, disc_num in sorted_group[1:]:
                     removed_entries.append(entry)
                     if not dry_run:
-                        print(f"  Removing: {entry.path} (Disc {disc_num}) - keeping Disc {kept_disc}")
+                        print(
+                            f"  Removing: {entry.path} (Disc {disc_num}) - keeping Disc {kept_disc}"
+                        )
 
     return kept_entries, removed_entries
 
@@ -135,10 +141,24 @@ def parse_gamelist_metadata(gamelist_path: Path) -> GamelistMetadata:
         database_elem = provider.find("Database")
         web_elem = provider.find("Web")
 
-        system = system_elem.text if system_elem is not None and system_elem.text else None
-        software = software_elem.text if software_elem is not None and software_elem.text else "curateur"
-        database = database_elem.text if database_elem is not None and database_elem.text else "ScreenScraper.fr"
-        web = web_elem.text if web_elem is not None and web_elem.text else "http://www.screenscraper.fr"
+        system = (
+            system_elem.text if system_elem is not None and system_elem.text else None
+        )
+        software = (
+            software_elem.text
+            if software_elem is not None and software_elem.text
+            else "curateur"
+        )
+        database = (
+            database_elem.text
+            if database_elem is not None and database_elem.text
+            else "ScreenScraper.fr"
+        )
+        web = (
+            web_elem.text
+            if web_elem is not None and web_elem.text
+            else "http://www.screenscraper.fr"
+        )
     else:
         system = None
         software = "curateur"
@@ -156,17 +176,12 @@ def parse_gamelist_metadata(gamelist_path: Path) -> GamelistMetadata:
             system = "unknown"
 
     return GamelistMetadata(
-        system=system,
-        software=software,
-        database=database,
-        web=web
+        system=system, software=software, database=database, web=web
     )
 
 
 def process_gamelist(
-    gamelist_path: Path,
-    dry_run: bool = False,
-    create_backup: bool = True
+    gamelist_path: Path, dry_run: bool = False, create_backup: bool = True
 ) -> None:
     """
     Process a single gamelist.xml file.
@@ -211,11 +226,13 @@ def process_gamelist(
         print(f"  Removed duplicates: {len(removed_entries)}")
 
         if dry_run:
-            print("\n[DRY RUN] No changes made. Run without --dry-run to apply changes.")
+            print(
+                "\n[DRY RUN] No changes made. Run without --dry-run to apply changes."
+            )
         else:
             # Create backup
             if create_backup:
-                backup_path = gamelist_path.with_suffix('.xml.backup')
+                backup_path = gamelist_path.with_suffix(".xml.backup")
                 shutil.copy2(gamelist_path, backup_path)
                 print(f"\nBackup created: {backup_path}")
 
@@ -245,35 +262,32 @@ Examples:
 
   # Process without creating backup
   python -m curateur.tools.deduplicate_multidisc --no-backup /path/to/gamelist.xml
-        """
+        """,
     )
 
     parser.add_argument(
-        'gamelists',
-        nargs='+',
-        type=Path,
-        help='Path(s) to gamelist.xml file(s)'
+        "gamelists", nargs="+", type=Path, help="Path(s) to gamelist.xml file(s)"
     )
 
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Show what would be removed without making changes'
+        "--dry-run",
+        action="store_true",
+        help="Show what would be removed without making changes",
     )
 
     parser.add_argument(
-        '--backup',
-        dest='create_backup',
-        action='store_true',
+        "--backup",
+        dest="create_backup",
+        action="store_true",
         default=True,
-        help='Create backup before modifying (default)'
+        help="Create backup before modifying (default)",
     )
 
     parser.add_argument(
-        '--no-backup',
-        dest='create_backup',
-        action='store_false',
-        help='Skip creating backup file'
+        "--no-backup",
+        dest="create_backup",
+        action="store_false",
+        help="Skip creating backup file",
     )
 
     args = parser.parse_args()
@@ -282,17 +296,16 @@ Examples:
     for gamelist_path in args.gamelists:
         try:
             process_gamelist(
-                gamelist_path,
-                dry_run=args.dry_run,
-                create_backup=args.create_backup
+                gamelist_path, dry_run=args.dry_run, create_backup=args.create_backup
             )
         except Exception as e:
             print(f"ERROR processing {gamelist_path}: {e}")
             import traceback
+
             traceback.print_exc()
 
     print("\nDone!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

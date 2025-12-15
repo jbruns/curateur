@@ -12,7 +12,7 @@ from curateur.scanner.m3u_parser import parse_m3u, get_disc1_file, M3UError
 from curateur.scanner.disc_handler import (
     is_disc_subdirectory,
     validate_disc_subdirectory,
-    DiscSubdirError
+    DiscSubdirError,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,13 +20,12 @@ logger = logging.getLogger(__name__)
 
 class ScannerError(Exception):
     """ROM scanning errors."""
+
     pass
 
 
 def scan_system(
-    system: SystemDefinition,
-    rom_root: Path,
-    crc_size_limit: int = 1073741824
+    system: SystemDefinition, rom_root: Path, crc_size_limit: int = 1073741824
 ) -> List[ROMInfo]:
     """
     Scan a system's ROM directory for all valid ROM files.
@@ -72,7 +71,7 @@ def scan_system(
 
     for entry in entries:
         # Skip hidden files/directories
-        if entry.name.startswith('.'):
+        if entry.name.startswith("."):
             continue
 
         try:
@@ -108,15 +107,13 @@ def scan_system(
         "Scan complete: %s ROMs found after processing %s entries and resolving %s conflicts",
         len(roms),
         len(entries),
-        len(conflicts)
+        len(conflicts),
     )
     return roms
 
 
 def _process_entry(
-    entry: Path,
-    system: SystemDefinition,
-    crc_size_limit: int
+    entry: Path, system: SystemDefinition, crc_size_limit: int
 ) -> Optional[ROMInfo]:
     """
     Process a single filesystem entry (file or directory).
@@ -136,9 +133,7 @@ def _process_entry(
     entry_lower = entry.name.lower()
 
     # Check if entry matches system extensions
-    matches_extension = any(
-        entry_lower.endswith(ext) for ext in system.extensions
-    )
+    matches_extension = any(entry_lower.endswith(ext) for ext in system.extensions)
 
     if not matches_extension:
         return None
@@ -146,16 +141,14 @@ def _process_entry(
     # Determine ROM type and process accordingly
     if entry.is_dir():
         return _process_disc_subdirectory(entry, system, crc_size_limit)
-    elif entry_lower.endswith('.m3u'):
+    elif entry_lower.endswith(".m3u"):
         return _process_m3u_file(entry, system, crc_size_limit)
     else:
         return _process_standard_rom(entry, system, crc_size_limit)
 
 
 def _process_standard_rom(
-    rom_file: Path,
-    system: SystemDefinition,
-    crc_size_limit: int
+    rom_file: Path, system: SystemDefinition, crc_size_limit: int
 ) -> ROMInfo:
     """Process a standard ROM file."""
     file_size = rom_file.stat().st_size
@@ -176,14 +169,12 @@ def _process_standard_rom(
         file_size=file_size,
         hash_type="crc32",
         hash_value=None,  # Will be calculated in pipeline
-        crc_size_limit=crc_size_limit
+        crc_size_limit=crc_size_limit,
     )
 
 
 def _process_m3u_file(
-    m3u_file: Path,
-    system: SystemDefinition,
-    crc_size_limit: int
+    m3u_file: Path, system: SystemDefinition, crc_size_limit: int
 ) -> ROMInfo:
     """
     Process an M3U playlist file.
@@ -212,14 +203,12 @@ def _process_m3u_file(
         hash_type="crc32",
         hash_value=None,  # Will be calculated in pipeline
         disc_files=disc_files,
-        crc_size_limit=crc_size_limit
+        crc_size_limit=crc_size_limit,
     )
 
 
 def _process_disc_subdirectory(
-    disc_subdir: Path,
-    system: SystemDefinition,
-    crc_size_limit: int
+    disc_subdir: Path, system: SystemDefinition, crc_size_limit: int
 ) -> ROMInfo:
     """
     Process a disc subdirectory.
@@ -247,14 +236,12 @@ def _process_disc_subdirectory(
         hash_type="crc32",
         hash_value=None,  # Will be calculated in pipeline
         contained_file=contained_file,
-        crc_size_limit=crc_size_limit
+        crc_size_limit=crc_size_limit,
     )
 
 
 def _detect_conflicts(
-    roms: List[ROMInfo],
-    m3u_files: Set[str],
-    disc_subdirs: Set[str]
+    roms: List[ROMInfo], m3u_files: Set[str], disc_subdirs: Set[str]
 ) -> List[Tuple[str, List[str]]]:
     """
     Detect conflicts between M3U files and disc subdirectories.
@@ -279,7 +266,7 @@ def _detect_conflicts(
             # Check if they refer to the same game
             # Example: "Game.m3u" conflicts with "Game (Disc 1).cue"
             if _basenames_conflict(m3u_base, disc_base):
-                conflicts.append((m3u_base, ['M3U playlist', 'disc subdirectory']))
+                conflicts.append((m3u_base, ["M3U playlist", "disc subdirectory"]))
                 break
 
     return conflicts
@@ -304,10 +291,18 @@ def _basenames_conflict(basename1: str, basename2: str) -> bool:
     norm2 = basename2.lower().strip()
 
     # Remove common disc indicators
-    for disc_pattern in [' (disc 1)', ' (disc 2)', ' disc 1', ' disc 2',
-                         ' - disc 1', ' - disc 2', '(disc 1)', '(disc 2)']:
-        norm1 = norm1.replace(disc_pattern, '')
-        norm2 = norm2.replace(disc_pattern, '')
+    for disc_pattern in [
+        " (disc 1)",
+        " (disc 2)",
+        " disc 1",
+        " disc 2",
+        " - disc 1",
+        " - disc 2",
+        "(disc 1)",
+        "(disc 2)",
+    ]:
+        norm1 = norm1.replace(disc_pattern, "")
+        norm2 = norm2.replace(disc_pattern, "")
 
     # Check for match
     return norm1 == norm2 or norm1.startswith(norm2) or norm2.startswith(norm1)

@@ -8,7 +8,7 @@ credential constants for inclusion in releases.
 Usage:
     # Generate obfuscated constants
     python -m curateur.tools.setup_dev_credentials
-    
+
     # Verify existing constants
     python -m curateur.tools.setup_dev_credentials --verify
 
@@ -31,13 +31,13 @@ def format_bytearray(data: bytearray, indent: int = 4) -> str:
     """Format bytearray as Python code with proper line wrapping."""
     bytes_per_line = 12
     lines = []
-    
+
     for i in range(0, len(data), bytes_per_line):
-        chunk = data[i:i + bytes_per_line]
-        byte_str = ', '.join(f'{b}' for b in chunk)
-        lines.append(' ' * indent + byte_str + ',')
-    
-    return '\n'.join(lines)
+        chunk = data[i : i + bytes_per_line]
+        byte_str = ", ".join(f"{b}" for b in chunk)
+        lines.append(" " * indent + byte_str + ",")
+
+    return "\n".join(lines)
 
 
 def generate_constants():
@@ -48,19 +48,19 @@ def generate_constants():
     print("This will generate obfuscated constants for curateur/api/credentials.py")
     print("The credentials will be XOR obfuscated (not cryptographically secure).")
     print()
-    
+
     # Get credentials
     devid = input("Enter Developer ID: ").strip()
     devpassword = getpass("Enter Developer Password: ").strip()
-    
+
     if not devid or not devpassword:
         print("\nError: Both devid and devpassword are required.")
         sys.exit(1)
-    
+
     # Obfuscate
     devid_obf = obfuscate(devid)
     devpass_obf = obfuscate(devpassword)
-    
+
     # Generate Python code
     print("\n" + "=" * 50)
     print("Generated Constants (copy to curateur/api/credentials.py):")
@@ -75,7 +75,7 @@ def generate_constants():
     print("])")
     print()
     print("=" * 50)
-    
+
     # Verify
     print("\nVerification:")
     print(f"  devid: {deobfuscate(devid_obf)}")
@@ -87,15 +87,15 @@ def verify_existing():
     """Verify existing credentials can be deobfuscated."""
     try:
         from curateur.api.credentials import get_dev_credentials
-        
+
         print("Verifying existing credentials...")
         creds = get_dev_credentials()
-        
+
         print("✓ Credentials successfully deobfuscated:")
         print(f"  devid: {creds['devid']}")
         print(f"  devpassword: {'*' * len(creds['devpassword'])}")
         print(f"  softname: {creds['softname']}")
-        
+
     except ValueError as e:
         print(f"✗ Error: {e}")
         sys.exit(1)
@@ -104,20 +104,20 @@ def verify_existing():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="Setup or verify developer credentials"
     )
     parser.add_argument(
-        '--verify',
-        action='store_true',
-        help='Verify existing credentials instead of generating new ones'
+        "--verify",
+        action="store_true",
+        help="Verify existing credentials instead of generating new ones",
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.verify:
         verify_existing()
     else:

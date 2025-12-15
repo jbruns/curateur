@@ -47,11 +47,11 @@ class HeadlessLogger:
 
         # Stats tracking
         self.stats = {
-            'successful': 0,
-            'failed': 0,
-            'skipped': 0,
-            'unmatched': 0,
-            'search_fallback': 0
+            "successful": 0,
+            "failed": 0,
+            "skipped": 0,
+            "unmatched": 0,
+            "search_fallback": 0,
         }
 
         # Pause/quit state (always False for headless)
@@ -93,7 +93,9 @@ class HeadlessLogger:
     # System-level methods
     # ========================================================================
 
-    def update_header(self, system_name: str, system_num: int, total_systems: int) -> None:
+    def update_header(
+        self, system_name: str, system_num: int, total_systems: int
+    ) -> None:
         """Log system start."""
         self.current_system = system_name
         self.current_system_index = system_num
@@ -124,7 +126,9 @@ class HeadlessLogger:
         else:
             logger.info(f"  Gamelist integrity: {score:.1%}")
 
-    def display_system_operation(self, system_name: str, operation: str, details: str) -> None:
+    def display_system_operation(
+        self, system_name: str, operation: str, details: str
+    ) -> None:
         """Log system-level operation."""
         logger.info(f"  {operation}: {details}")
 
@@ -140,15 +144,21 @@ class HeadlessLogger:
     # ROM-level methods (minimal/no-op for headless)
     # ========================================================================
 
-    def update_hashing_progress(self, current: int, total: int, details: str = '') -> None:
+    def update_hashing_progress(
+        self, current: int, total: int, details: str = ""
+    ) -> None:
         """No-op for headless (too verbose)."""
         pass
 
-    def update_api_fetch_stage(self, rom_name: str, action: str, cache_hit: bool = False) -> None:
+    def update_api_fetch_stage(
+        self, rom_name: str, action: str, cache_hit: bool = False
+    ) -> None:
         """No-op for headless (too verbose)."""
         pass
 
-    def update_media_download_stage(self, rom_name: str, media_type: str, action: str) -> None:
+    def update_media_download_stage(
+        self, rom_name: str, media_type: str, action: str
+    ) -> None:
         """No-op for headless (too verbose)."""
         pass
 
@@ -156,17 +166,19 @@ class HeadlessLogger:
         """No-op for headless."""
         pass
 
-    def increment_media_validation_failed(self, media_type: Optional[str] = None) -> None:
+    def increment_media_validation_failed(
+        self, media_type: Optional[str] = None
+    ) -> None:
         """No-op for headless."""
         pass
 
     def increment_search_fallback(self) -> None:
         """Track search fallback count."""
-        self.stats['search_fallback'] += 1
+        self.stats["search_fallback"] += 1
 
     def increment_unmatched(self) -> None:
         """Track unmatched ROM count."""
-        self.stats['unmatched'] += 1
+        self.stats["unmatched"] += 1
 
     def increment_gamelist_added(self) -> None:
         """No-op for headless."""
@@ -180,11 +192,11 @@ class HeadlessLogger:
         """Track completion stats."""
         self.processed_in_system += 1
         if skipped:
-            self.stats['skipped'] += 1
+            self.stats["skipped"] += 1
         elif success:
-            self.stats['successful'] += 1
+            self.stats["successful"] += 1
         else:
-            self.stats['failed'] += 1
+            self.stats["failed"] += 1
 
     def add_completed_game(self, game_info: Dict[str, Any]) -> None:
         """No-op for headless (no spotlight)."""
@@ -198,8 +210,12 @@ class HeadlessLogger:
         """Log concurrency level."""
         logger.info(f"Parallel processing: {max_threads} threads")
 
-    def update_footer(self, stats: Dict[str, Any], api_quota: Optional[Dict] = None,
-                     thread_stats: Optional[Dict] = None) -> None:
+    def update_footer(
+        self,
+        stats: Dict[str, Any],
+        api_quota: Optional[Dict] = None,
+        thread_stats: Optional[Dict] = None,
+    ) -> None:
         """No-op for headless (no footer)."""
         pass
 
@@ -210,16 +226,16 @@ class HeadlessLogger:
 
     def set_auth_status(self, status: str) -> None:
         """Log auth status."""
-        if status == 'in_progress':
+        if status == "in_progress":
             logger.info("Authenticating with ScreenScraper...")
-        elif status == 'complete':
+        elif status == "complete":
             logger.info("Authentication successful")
 
     # ========================================================================
     # Keyboard/prompt methods (no-op for headless)
     # ========================================================================
 
-    def prompt_confirm(self, message: str, default: str = 'y') -> bool:
+    def prompt_confirm(self, message: str, default: str = "y") -> bool:
         """
         Always return default for headless (no interaction).
 
@@ -230,7 +246,7 @@ class HeadlessLogger:
         Returns:
             True if default is 'y', False otherwise
         """
-        return default.lower() == 'y'
+        return default.lower() == "y"
 
     def clear_skip_request(self) -> None:
         """No-op for headless."""

@@ -9,6 +9,7 @@ from lxml import etree
 @dataclass
 class SystemDefinition:
     """Represents a system defined in es_systems.xml."""
+
     name: str
     fullname: str
     path: str
@@ -17,7 +18,7 @@ class SystemDefinition:
 
     def supports_m3u(self) -> bool:
         """Check if system supports M3U playlists."""
-        return '.m3u' in self.extensions
+        return ".m3u" in self.extensions
 
     def resolve_rom_path(self, rom_root: Path) -> Path:
         """
@@ -37,14 +38,12 @@ class SystemDefinition:
         path_str = self.path
 
         # Replace %ROMPATH% placeholder (case-insensitive, handle both / and \)
-        if '%ROMPATH%' in path_str.upper():
+        if "%ROMPATH%" in path_str.upper():
             # Find the actual case-sensitive match
             import re
+
             path_str = re.sub(
-                r'%ROMPATH%[/\\]?',
-                str(rom_root) + '/',
-                path_str,
-                flags=re.IGNORECASE
+                r"%ROMPATH%[/\\]?", str(rom_root) + "/", path_str, flags=re.IGNORECASE
             )
 
         # Expand user home directory and resolve
@@ -53,6 +52,7 @@ class SystemDefinition:
 
 class ESSystemsError(Exception):
     """ES systems parsing errors."""
+
     pass
 
 
@@ -77,14 +77,14 @@ def parse_es_systems(xml_path: Path) -> List[SystemDefinition]:
     except Exception as e:
         raise ESSystemsError(f"Failed to read es_systems.xml: {e}")
 
-    if root.tag != 'systemList':
+    if root.tag != "systemList":
         raise ESSystemsError(
             f"Invalid root element: expected 'systemList', got '{root.tag}'"
         )
 
     systems = []
 
-    for system_elem in root.findall('system'):
+    for system_elem in root.findall("system"):
         try:
             system = _parse_system_element(system_elem)
             systems.append(system)
@@ -113,10 +113,10 @@ def _parse_system_element(elem: etree.Element) -> SystemDefinition:
         ValueError: If required fields are missing
     """
     # Extract required fields
-    name = _get_element_text(elem, 'name')
-    fullname = _get_element_text(elem, 'fullname')
-    path = _get_element_text(elem, 'path')
-    extension_str = _get_element_text(elem, 'extension')
+    name = _get_element_text(elem, "name")
+    fullname = _get_element_text(elem, "fullname")
+    path = _get_element_text(elem, "path")
+    extension_str = _get_element_text(elem, "extension")
 
     # Platform can be in <platformid> or <platform> (handle both)
     platform = _get_platform_id(elem)
@@ -127,18 +127,14 @@ def _parse_system_element(elem: etree.Element) -> SystemDefinition:
         )
 
     # Parse extensions (space-separated, can contain ".zip .7z" format)
-    extensions = [
-        ext.strip().lower()
-        for ext in extension_str.split()
-        if ext.strip()
-    ]
+    extensions = [ext.strip().lower() for ext in extension_str.split() if ext.strip()]
 
     return SystemDefinition(
         name=name,
         fullname=fullname,
         path=path,
         extensions=extensions,
-        platform=platform
+        platform=platform,
     )
 
 
@@ -161,7 +157,7 @@ def _get_platform_id(system_elem: etree.Element) -> Optional[str]:
         Platform ID string or None
     """
     # Get <platform> element (ES-DE standard)
-    platform_elem = system_elem.find('platform')
+    platform_elem = system_elem.find("platform")
 
     if platform_elem is not None and platform_elem.text:
         text = platform_elem.text.strip()
@@ -173,8 +169,7 @@ def _get_platform_id(system_elem: etree.Element) -> Optional[str]:
 
 
 def get_systems_by_name(
-    systems: List[SystemDefinition],
-    names: Optional[List[str]] = None
+    systems: List[SystemDefinition], names: Optional[List[str]] = None
 ) -> List[SystemDefinition]:
     """
     Filter systems by name.

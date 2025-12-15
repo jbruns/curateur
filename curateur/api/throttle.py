@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RateLimit:
     """Rate limit configuration"""
-    calls: int          # Maximum calls per window
-    window_seconds: int # Time window in seconds
+
+    calls: int  # Maximum calls per window
+    window_seconds: int  # Time window in seconds
 
 
 class ThrottleManager:
@@ -54,7 +55,7 @@ class ThrottleManager:
         self,
         default_limit: RateLimit,
         adaptive: bool = True,
-        max_concurrent: Optional[int] = None
+        max_concurrent: Optional[int] = None,
     ):
         """
         Initialize throttle manager
@@ -84,7 +85,7 @@ class ThrottleManager:
         logger.debug(
             "Throttle manager initialized with max %s concurrent API requests, %s concurrent media downloads",
             self.max_concurrent,
-            self.max_media_downloads
+            self.max_media_downloads,
         )
 
         # Quota tracking from ScreenScraper API
@@ -224,9 +225,7 @@ class ThrottleManager:
             return 0.0
 
     def handle_rate_limit(
-        self,
-        endpoint: str,
-        retry_after: Optional[int] = None
+        self, endpoint: str, retry_after: Optional[int] = None
     ) -> None:
         """
         Handle 429 rate limit response
@@ -261,7 +260,9 @@ class ThrottleManager:
         # Calculate multiplier: 1x → 1.5x → 2x → 3x (capped at 3x)
         # More conservative than exponential to avoid excessive backoff
         multipliers = [1.0, 1.5, 2.0, 3.0]
-        multiplier_index = min(self.consecutive_429s[endpoint] - 1, len(multipliers) - 1)
+        multiplier_index = min(
+            self.consecutive_429s[endpoint] - 1, len(multipliers) - 1
+        )
         base_multiplier = multipliers[multiplier_index]
 
         # Add ±10% random jitter to prevent thundering herd when multiple concurrent requests recover
@@ -319,14 +320,14 @@ class ThrottleManager:
         """
         if endpoint not in self.call_history:
             return {
-                'endpoint': endpoint,
-                'recent_calls': 0,
-                'limit': self.default_limit.calls,
-                'window_seconds': self.default_limit.window_seconds,
-                'backoff_remaining': 0.0,
-                'in_backoff': False,
-                'backoff_multiplier': 1,
-                'consecutive_429s': 0
+                "endpoint": endpoint,
+                "recent_calls": 0,
+                "limit": self.default_limit.calls,
+                "window_seconds": self.default_limit.window_seconds,
+                "backoff_remaining": 0.0,
+                "in_backoff": False,
+                "backoff_multiplier": 1,
+                "consecutive_429s": 0,
             }
 
         history = self.call_history[endpoint]
@@ -342,14 +343,14 @@ class ThrottleManager:
             backoff_remaining = max(0, self.backoff_until[endpoint] - now)
 
         return {
-            'endpoint': endpoint,
-            'recent_calls': recent_calls,
-            'limit': self.default_limit.calls,
-            'window_seconds': self.default_limit.window_seconds,
-            'backoff_remaining': backoff_remaining,
-            'in_backoff': backoff_remaining > 0,
-            'backoff_multiplier': self.backoff_multiplier.get(endpoint, 1),
-            'consecutive_429s': self.consecutive_429s.get(endpoint, 0)
+            "endpoint": endpoint,
+            "recent_calls": recent_calls,
+            "limit": self.default_limit.calls,
+            "window_seconds": self.default_limit.window_seconds,
+            "backoff_remaining": backoff_remaining,
+            "in_backoff": backoff_remaining > 0,
+            "backoff_multiplier": self.backoff_multiplier.get(endpoint, 1),
+            "consecutive_429s": self.consecutive_429s.get(endpoint, 0),
         }
 
     def reset(self, endpoint: Optional[str] = None) -> None:
@@ -389,14 +390,14 @@ class ThrottleManager:
             user_limits: Dictionary with user quota fields from API response
         """
         async with self._quota_lock:
-            if 'requeststoday' in user_limits:
-                self.requeststoday = int(user_limits['requeststoday'])
-            if 'maxrequestsperday' in user_limits:
-                self.maxrequestsperday = int(user_limits['maxrequestsperday'])
-            if 'requestskotoday' in user_limits:
-                self.requestskotoday = int(user_limits['requestskotoday'])
-            if 'maxrequestskoperday' in user_limits:
-                self.maxrequestskoperday = int(user_limits['maxrequestskoperday'])
+            if "requeststoday" in user_limits:
+                self.requeststoday = int(user_limits["requeststoday"])
+            if "maxrequestsperday" in user_limits:
+                self.maxrequestsperday = int(user_limits["maxrequestsperday"])
+            if "requestskotoday" in user_limits:
+                self.requestskotoday = int(user_limits["requestskotoday"])
+            if "maxrequestskoperday" in user_limits:
+                self.maxrequestskoperday = int(user_limits["maxrequestskoperday"])
 
     async def check_quota_threshold(self, threshold: float) -> None:
         """
@@ -441,8 +442,8 @@ class ThrottleManager:
             requestskotoday, maxrequestskoperday
         """
         return {
-            'requeststoday': self.requeststoday,
-            'maxrequestsperday': self.maxrequestsperday,
-            'requestskotoday': self.requestskotoday,
-            'maxrequestskoperday': self.maxrequestskoperday
+            "requeststoday": self.requeststoday,
+            "maxrequestsperday": self.maxrequestsperday,
+            "requestskotoday": self.requestskotoday,
+            "maxrequestskoperday": self.maxrequestskoperday,
         }

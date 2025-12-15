@@ -15,11 +15,13 @@ from io import BytesIO
 
 class DownloadError(Exception):
     """Base exception for download errors."""
+
     pass
 
 
 class ValidationError(Exception):
     """Exception raised when image validation fails."""
+
     pass
 
 
@@ -41,7 +43,7 @@ class ImageDownloader:
         max_retries: int = 3,
         min_width: int = 50,
         min_height: int = 50,
-        validation_mode: str = 'disabled'
+        validation_mode: str = "disabled",
     ):
         """
         Initialize image downloader.
@@ -62,10 +64,7 @@ class ImageDownloader:
         self.validation_mode = validation_mode
 
     async def download(
-        self,
-        url: str,
-        output_path: Path,
-        validate: bool = True
+        self, url: str, output_path: Path, validate: bool = True
     ) -> Tuple[bool, Optional[str]]:
         """
         Download an image from URL to output path.
@@ -96,7 +95,7 @@ class ImageDownloader:
                 image_data = await self._download_with_retry(url, attempt)
 
                 # Validate if requested and validation mode is not disabled
-                if validate and self.validation_mode != 'disabled':
+                if validate and self.validation_mode != "disabled":
                     is_valid, validation_error = self._validate_image_data(image_data)
                     if not is_valid:
                         if attempt < self.max_retries - 1:
@@ -105,9 +104,9 @@ class ImageDownloader:
                         return False, f"Validation failed: {validation_error}"
 
                 # Write to temporary file first
-                temp_path = output_path.with_suffix(output_path.suffix + '.tmp')
+                temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
                 try:
-                    with open(temp_path, 'wb') as f:
+                    with open(temp_path, "wb") as f:
                         f.write(image_data)
                     # Move to final location only on success
                     temp_path.rename(output_path)
@@ -121,10 +120,13 @@ class ImageDownloader:
 
             except (httpx.HTTPError, httpx.TimeoutException) as e:
                 if attempt == self.max_retries - 1:
-                    return False, f"Download failed after {self.max_retries} attempts: {e}"
+                    return (
+                        False,
+                        f"Download failed after {self.max_retries} attempts: {e}",
+                    )
 
                 # Wait before retry with async sleep
-                delay = 2 ** attempt
+                delay = 2**attempt
                 await asyncio.sleep(delay)
 
             except Exception as e:
@@ -147,21 +149,19 @@ class ImageDownloader:
             httpx.HTTPError: If download fails
         """
         response = await self.client.get(
-            url,
-            timeout=self.timeout,
-            headers={'User-Agent': 'curateur/1.0.0'}
+            url, timeout=self.timeout, headers={"User-Agent": "curateur/1.0.0"}
         )
         response.raise_for_status()
 
         # Check content type only if validation is enabled
-        if self.validation_mode != 'disabled':
-            content_type = response.headers.get('Content-Type', '')
+        if self.validation_mode != "disabled":
+            content_type = response.headers.get("Content-Type", "")
             allowed_types = [
-                'image/',
-                'application/pdf',
-                'video/',
-                'application/force-download',
-                'application/octet-stream'
+                "image/",
+                "application/pdf",
+                "video/",
+                "application/force-download",
+                "application/octet-stream",
             ]
             if not any(content_type.startswith(t) for t in allowed_types):
                 raise DownloadError(f"Invalid content type: {content_type}")
@@ -219,7 +219,7 @@ class ImageDownloader:
             return False, "File does not exist"
 
         try:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 image_data = f.read()
 
             return self._validate_image_data(image_data)

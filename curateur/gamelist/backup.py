@@ -143,6 +143,8 @@ class GamelistBackup:
                 logger.warning(f"Failed to delete old backup {backup.name}: {e}")
 
         if deleted > 0:
-            logger.info(f"Cleaned up {deleted} old backup(s), kept {keep_count} most recent")
+            logger.info(
+                f"Cleaned up {deleted} old backup(s), kept {keep_count} most recent"
+            )
 
         return deleted
