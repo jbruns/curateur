@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # All media type directory names from MEDIA_TYPE_MAP
 MEDIA_DIRECTORIES = [
     'covers',
-    'screenshots', 
+    'screenshots',
     'titlescreens',
     'marquees',
     '3dboxes',

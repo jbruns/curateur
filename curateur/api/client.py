@@ -536,7 +536,10 @@ class ScreenScraperClient:
                 try:
                     from ..ui.events import APIActivityEvent
                     # Calculate in-flight after this completes
-                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value - 1
+                    in_flight = (
+                        self.throttle_manager.max_concurrent -
+                        self.throttle_manager.concurrency_semaphore._value - 1
+                    )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=max(0, in_flight),
@@ -670,7 +673,10 @@ class ScreenScraperClient:
                 try:
                     from ..ui.events import APIActivityEvent
                     # Calculate in-flight requests (max - available slots)
-                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value
+                    in_flight = (
+                        self.throttle_manager.max_concurrent -
+                        self.throttle_manager.concurrency_semaphore._value
+                    )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=in_flight,
@@ -806,7 +812,10 @@ class ScreenScraperClient:
                 try:
                     from ..ui.events import APIActivityEvent
                     # Calculate in-flight after this completes
-                    in_flight = self.throttle_manager.max_concurrent - self.throttle_manager.concurrency_semaphore._value - 1
+                    in_flight = (
+                        self.throttle_manager.max_concurrent -
+                        self.throttle_manager.concurrency_semaphore._value - 1
+                    )
                     await self.event_bus.publish(
                         APIActivityEvent(
                             metadata_in_flight=0,

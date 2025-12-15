@@ -117,7 +117,10 @@ class ProgressTracker:
             detail=detail
         ))
     
-    def finish_system(self, succeeded: Optional[int] = None, failed: Optional[int] = None, skipped: Optional[int] = None) -> None:
+    def finish_system(
+        self, succeeded: Optional[int] = None, failed: Optional[int] = None,
+        skipped: Optional[int] = None
+    ) -> None:
         """Finish tracking current system and print summary.
         
         Args:

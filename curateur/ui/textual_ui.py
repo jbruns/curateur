@@ -602,7 +602,8 @@ class PerformancePanel(Container):
         quota_pct = (self.quota_used / self.quota_limit * 100) if self.quota_limit > 0 else 0
         quota_bar = self.create_inline_progress_bar(self.quota_used, self.quota_limit, 30)
         self.query_one("#api-quota", Static).update(
-            f"[bold]API Quota:[/bold] {self.quota_used}/{self.quota_limit} ({quota_pct:.1f}%) [yellow]{quota_bar}[/yellow]"
+            f"[bold]API Quota:[/bold] {self.quota_used}/{self.quota_limit} "
+            f"({quota_pct:.1f}%) [yellow]{quota_bar}[/yellow]"
         )
 
     def update_eta_stats(self) -> None:
@@ -738,7 +739,10 @@ class ActiveRequestsTable(Container):
         # Start timer to update durations every 0.5 seconds
         self.set_interval(0.5, self._update_durations)
 
-    def update_request(self, rom_name: str, stage: str, status: str, media_type: str = None, duration: float = None) -> None:
+    def update_request(
+        self, rom_name: str, stage: str, status: str,
+        media_type: str = None, duration: float = None
+    ) -> None:
         """Add or update an active request."""
         from textual.widgets import DataTable
         import time
@@ -1044,7 +1048,10 @@ class SystemsTab(Container):
         except Exception as e:
             logger.debug(f"Failed to initialize systems tree: {e}")
 
-    def update_system_node(self, system_name: str, fullname: str, successful: int, total: int, status: str = "in_progress") -> None:
+    def update_system_node(
+        self, system_name: str, fullname: str, successful: int, total: int,
+        status: str = "in_progress"
+    ) -> None:
         """Update a system node in the tree."""
         from textual.widgets import Tree
 
@@ -1296,7 +1303,8 @@ class ConfigTab(Container):
         # Runtime Settings
         elif select_id == "max-workers-select":
             try:
-                if hasattr(self.app, 'orchestrator') and self.app.orchestrator and self.app.orchestrator.throttle_manager:
+                if (hasattr(self.app, 'orchestrator') and self.app.orchestrator and
+                        self.app.orchestrator.throttle_manager):
                     self.app.orchestrator.throttle_manager.update_concurrency_limit(new_value)
             except Exception as e:
                 logger.error(f"Failed to update max workers: {e}")
@@ -2026,7 +2034,11 @@ class CurateurUI(App):
                         current_stats["skipped"] = current_stats.get("skipped", 0) + 1
                     
                     # Update summary with current progress
-                    total = current_stats.get("successful", 0) + current_stats.get("failed", 0) + current_stats.get("skipped", 0)
+                    total = (
+                        current_stats.get("successful", 0) +
+                        current_stats.get("failed", 0) +
+                        current_stats.get("skipped", 0)
+                    )
                     total_roms = current_stats.get("total_roms", 0)
                     current_stats["summary"] = (
                         f"Processing: {total}/{total_roms} ROMs\n"

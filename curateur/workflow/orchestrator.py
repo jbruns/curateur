@@ -523,7 +523,10 @@ class WorkflowOrchestrator:
             await self.event_bus.publish(
                 LogEntryEvent(
                     level=logging.INFO,
-                    message=f"Completed {system.name}: {scraped_count} successful, {failed_count} failed, {skipped_count} skipped in {system_duration:.1f}s",
+                    message=(
+                        f"Completed {system.name}: {scraped_count} successful, "
+                        f"{failed_count} failed, {skipped_count} skipped in {system_duration:.1f}s"
+                    ),
                     timestamp=datetime.now()
                 )
             )
@@ -753,8 +756,15 @@ class WorkflowOrchestrator:
                             
                             # Extract year from release_dates (prefer us, wor, eu)
                             release_dates = game_info.get('release_dates', {})
-                            release_date_str = release_dates.get('us') or release_dates.get('wor') or release_dates.get('eu') or None
-                            year = release_date_str[:4] if release_date_str and len(release_date_str) >= 4 else 'Unknown'
+                            release_date_str = (
+                                release_dates.get('us') or release_dates.get('wor') or
+                                release_dates.get('eu') or None
+                            )
+                            year = (
+                                release_date_str[:4]
+                                if release_date_str and len(release_date_str) >= 4
+                                else 'Unknown'
+                            )
                             
                             # Extract single genre from genres list
                             genres = game_info.get('genres', [])
