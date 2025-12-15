@@ -716,9 +716,9 @@ class FilterableLogWidget(Container):
 class ActiveRequestsTable(Container):
     """Table showing currently active requests."""
 
-    # Track active requests by unique key (rom_name or rom_name:media_type) with start times
-    active_requests = reactive(dict)
-    request_start_times = {}  # Maps request_key -> start timestamp
+    # Remove reactive - just use regular dict
+    active_requests = {}
+    request_start_times = {}
 
     def compose(self) -> ComposeResult:
         from textual.widgets import DataTable
@@ -739,39 +739,28 @@ class ActiveRequestsTable(Container):
         self.set_interval(0.5, self._update_durations)
 
     def update_request(self, rom_name: str, stage: str, status: str, media_type: str = None, duration: float = None) -> None:
-        """Add or update an active request.
-        
-        Args:
-            rom_name: Name of the ROM file
-            stage: Processing stage (e.g., "Metadata", "Media DL")
-            status: Request status
-            media_type: Optional media type for media downloads (e.g., "cover", "screenshot")
-            duration: Optional duration override
-        """
+        """Add or update an active request."""
         from textual.widgets import DataTable
         import time
 
         try:
             table = self.query_one("#active-requests-table", DataTable)
             
-            # Create unique key: for media downloads, append media type
+            # Create unique key
             if media_type:
                 request_key = f"{rom_name}:{media_type}"
             else:
                 request_key = rom_name
             
-            # Ensure we have a start time for this request
+            # Ensure we have a start time
             if request_key not in self.request_start_times:
                 self.request_start_times[request_key] = time.time()
             
-            # Calculate duration if not provided
+            # Calculate duration
             if duration is None:
                 duration = time.time() - self.request_start_times[request_key]
 
-            # Format media type display
             media_display = media_type if media_type else "-"
-            
-            # Truncate ROM name to 40 characters max
             rom_display = rom_name[:40] + "..." if len(rom_name) > 40 else rom_name
 
             # Update or add request
@@ -784,7 +773,7 @@ class ActiveRequestsTable(Container):
                 table.update_cell(row_key, "Duration", f"{duration:.1f}s")
                 table.update_cell(row_key, "Status", status)
             else:
-                # Add new row
+                # Add new row - DIRECTLY MODIFY dict instead of reassigning
                 row_key = table.add_row(
                     rom_display,
                     stage,
@@ -792,26 +781,19 @@ class ActiveRequestsTable(Container):
                     f"{duration:.1f}s",
                     status
                 )
-                self.active_requests = {**self.active_requests, request_key: row_key}
+                self.active_requests[request_key] = row_key  # Direct assignment, not dict recreation
 
-            # Update border title with count
-            count = len(self.active_requests)
-            self.border_title = f"Active Requests ({count} concurrent)"
+            # Update border title
+            self._update_border_title()
 
         except Exception as e:
             logger.debug(f"Failed to update active request: {e}")
 
     def remove_request(self, rom_name: str, media_type: str = None) -> None:
-        """Remove a completed request.
-        
-        Args:
-            rom_name: Name of the ROM file
-            media_type: Optional media type for media downloads
-        """
+        """Remove a completed request."""
         from textual.widgets import DataTable
 
         try:
-            # Create unique key matching what was used in update_request
             if media_type:
                 request_key = f"{rom_name}:{media_type}"
             else:
@@ -822,24 +804,19 @@ class ActiveRequestsTable(Container):
                 row_key = self.active_requests[request_key]
                 table.remove_row(row_key)
 
-                # Update dictionary
-                new_requests = dict(self.active_requests)
-                del new_requests[request_key]
-                self.active_requests = new_requests
+                # DIRECTLY DELETE instead of recreating dict
+                del self.active_requests[request_key]
                 
-                # Remove start time tracking
                 if request_key in self.request_start_times:
                     del self.request_start_times[request_key]
 
-                # Update border title with count
-                count = len(self.active_requests)
-                self.border_title = f"Active Requests ({count} concurrent)"
+                self._update_border_title()
 
         except Exception as e:
             logger.debug(f"Failed to remove active request: {e}")
 
     def _update_durations(self) -> None:
-        """Update duration column for all active requests in real-time."""
+        """Update duration column for all active requests."""
         from textual.widgets import DataTable
         import time
 
@@ -854,19 +831,22 @@ class ActiveRequestsTable(Container):
 
         current_time = time.time()
 
-        # Use list() to create a snapshot and avoid race conditions during iteration
+        # Iterate over a snapshot to avoid race conditions
         for request_key, row_key in list(self.active_requests.items()):
-            # Skip if request was already removed (race condition with remove_request)
             if request_key not in self.request_start_times:
                 continue
                 
             elapsed = current_time - self.request_start_times[request_key]
             try:
                 table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
-            except Exception:
-                # Row was removed between iteration and update - silently ignore
-                # This is expected in concurrent scenarios
-                pass
+            except Exception as e:
+                # Log but don't crash - row might have been removed
+                logger.debug(f"Failed to update duration for {request_key}: {e}")
+
+    def _update_border_title(self) -> None:
+        """Update border title with current count."""
+        count = len(self.active_requests)
+        self.border_title = f"Active Requests ({count} concurrent)"
 
     def clear_all(self) -> None:
         """Clear all active requests."""
@@ -876,7 +856,8 @@ class ActiveRequestsTable(Container):
             table = self.query_one("#active-requests-table", DataTable)
             table.clear()
             self.active_requests = {}
-            self.border_title = "Active Requests (0 concurrent)"
+            self.request_start_times = {}
+            self._update_border_title()
         except Exception as e:
             logger.debug(f"Failed to clear active requests: {e}")
 
