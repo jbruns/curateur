@@ -116,7 +116,7 @@ TabPane {
     margin: 0 0 0 0;
 }
 
-#hashing-content, #cache-content, #gamelist-content, #api-content, #media-content {
+#rom-progress-content, #hashing-content, #cache-content, #gamelist-content, #api-content, #media-content {
     background: transparent;
     margin: 0 0 1 0;
     padding: 0 1;

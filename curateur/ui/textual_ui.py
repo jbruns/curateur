@@ -158,6 +158,7 @@ class CurrentSystemOperations(Container):
     rom_successful = reactive(0)
     rom_skipped = reactive(0)
     rom_failed = reactive(0)
+    rom_total = reactive(0)
 
     # Spinner animation frame counter
     spinner_frame = 0
@@ -254,6 +255,10 @@ class CurrentSystemOperations(Container):
         """Update display when ROM failed count changes."""
         self.update_rom_progress()
 
+    def watch_rom_total(self, old_value: int, new_value: int) -> None:
+        """Update display when ROM total count changes."""
+        self.update_rom_progress()
+
     def update_display(self) -> None:
         """Render all sections."""
         self.update_rom_progress()
@@ -277,8 +282,12 @@ class CurrentSystemOperations(Container):
     def update_rom_progress(self) -> None:
         """Update ROM progress section."""
         rom_processed = self.rom_successful + self.rom_skipped + self.rom_failed
+        rom_pct = (rom_processed / self.rom_total * 100) if self.rom_total > 0 else 0
+        
         rom_content = Text()
-        rom_content.append("ROMs\n", style="bold cyan")
+        rom_content.append("System Progress\n", style="bold cyan")
+        rom_content.append(f"{rom_processed}/{self.rom_total} ", style="white")
+        rom_content.append(f"({rom_pct:.1f}%)\n", style="bright_magenta")
         rom_content.append(f"✓ {self.rom_successful} ", style="bright_green")
         rom_content.append(f"⊝ {self.rom_skipped} ", style="dim yellow")
         rom_content.append(f"✗ {self.rom_failed}", style="red")
@@ -2121,6 +2130,7 @@ class CurateurUI(App):
             current_system.rom_successful = 0
             current_system.rom_skipped = 0
             current_system.rom_failed = 0
+            current_system.rom_total = event.total_roms
 
             # Reset media stats
             current_system.media_in_flight = 0
