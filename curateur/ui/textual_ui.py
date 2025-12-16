@@ -804,9 +804,13 @@ class ActiveRequestsTable(Container):
 
         table = self.query_one("#active-requests-table", DataTable)
         # Store column keys for use in update_cell() calls
-        self.col_rom, self.col_stage, self.col_media_type, self.col_duration, self.col_status = table.add_columns(
-            "ROM", "Stage", "Media Type", "Duration", "Status"
-        )
+        (
+            self.col_rom,
+            self.col_stage,
+            self.col_media_type,
+            self.col_duration,
+            self.col_status,
+        ) = table.add_columns("ROM", "Stage", "Media Type", "Duration", "Status")
         table.cursor_type = "row"
 
         # Start timer to update durations every 0.5 seconds
@@ -1252,7 +1256,14 @@ class ConfigTab(Container):
                     with Horizontal(classes="config-row"):
                         yield Label("Request Timeout (s):", classes="config-label")
                         yield Select(
-                            [("15", 15), ("30", 30), ("45", 45), ("60", 60), ("90", 90), ("120", 120)],
+                            [
+                                ("15", 15),
+                                ("30", 30),
+                                ("45", 45),
+                                ("60", 60),
+                                ("90", 90),
+                                ("120", 120),
+                            ],
                             value=30,
                             id="request-timeout",
                             allow_blank=False,
@@ -2235,7 +2246,9 @@ class CurateurUI(App):
 
             # Update current system ROM progress counters
             try:
-                current_system = self.query_one("#current-system", CurrentSystemOperations)
+                current_system = self.query_one(
+                    "#current-system", CurrentSystemOperations
+                )
                 if event.status == "complete":
                     current_system.rom_successful += 1
                 elif event.status == "failed":

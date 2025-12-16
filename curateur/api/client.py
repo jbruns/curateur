@@ -317,7 +317,10 @@ class ScreenScraperClient:
         return user_info
 
     def update_runtime_config(
-        self, max_retries: int = None, retry_backoff: float = None, request_timeout: int = None
+        self,
+        max_retries: int = None,
+        retry_backoff: float = None,
+        request_timeout: int = None,
     ) -> None:
         """Update API client configuration at runtime.
 
