@@ -1997,6 +1997,20 @@ class WorkflowOrchestrator:
             f"Starting ROM hash calculation: {total} ROMs in batches of {batch_size}"
         )
 
+        # Emit initial HashingProgressEvent to show spinner immediately
+        if self.event_bus:
+            from ..ui.events import HashingProgressEvent
+
+            await self.event_bus.publish(
+                HashingProgressEvent(
+                    completed=0,
+                    total=total,
+                    skipped=0,
+                    in_progress=True,
+                )
+            )
+            await asyncio.sleep(0)  # Yield to event processor
+
         for i in range(0, total, batch_size):
             batch = rom_entries[i : i + batch_size]
 

@@ -113,7 +113,7 @@ class OverallProgressWidget(Container):
             f"Systems: {self.current_system_index}/{self.systems_total}\n",
             style="white",
         )
-        header.append(f"ROMs: {processed}", style="cyan")
+        header.append(f"ROMs: {processed} ", style="cyan")
 
         # Status counts with glyphs
         header.append(f"✓ {self.successful} ", style="bright_green")
@@ -265,7 +265,8 @@ class CurrentSystemOperations(Container):
         if self.hash_in_progress:
             spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
             spinner = spinner_chars[self.spinner_frame]
-            hash_content.append(f" {spinner}", style="bright_magenta")
+            hash_content.append(f" {spinner} ", style="bright_magenta")
+            hash_content.append("(in progress...)", style="yellow")
 
         hash_content.append(
             f"\n{self.hash_completed}/{self.hash_total} ", style="white"
