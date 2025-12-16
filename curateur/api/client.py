@@ -317,13 +317,14 @@ class ScreenScraperClient:
         return user_info
 
     def update_runtime_config(
-        self, max_retries: int = None, retry_backoff: float = None
+        self, max_retries: int = None, retry_backoff: float = None, request_timeout: int = None
     ) -> None:
         """Update API client configuration at runtime.
 
         Args:
             max_retries: New max retry count (None to skip)
             retry_backoff: New retry backoff in seconds (None to skip)
+            request_timeout: New request timeout in seconds (None to skip)
         """
         if max_retries is not None:
             self.max_retries = max_retries
@@ -332,6 +333,14 @@ class ScreenScraperClient:
         if retry_backoff is not None:
             self.retry_backoff = retry_backoff
             logger.info(f"Updated retry_backoff to {retry_backoff}s")
+
+        if request_timeout is not None:
+            self.request_timeout = request_timeout
+            # Update the httpx.Timeout object with new read timeout
+            self._timeout = httpx.Timeout(
+                connect=5.0, read=request_timeout, write=5.0, pool=5.0
+            )
+            logger.info(f"Updated request_timeout to {request_timeout}s")
 
     async def _query_jeu_infos(
         self,
