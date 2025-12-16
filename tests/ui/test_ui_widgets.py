@@ -236,3 +236,72 @@ async def test_ui_state_consistency(config, event_bus):
     
     # UI should still have system reference
     assert ui.current_system is not None
+
+
+@pytest.mark.asyncio
+async def test_active_requests_table_duration_updates():
+    """Test that ActiveRequestsTable properly stores column keys and updates durations."""
+    from curateur.ui.textual_ui import ActiveRequestsTable
+    from textual.app import App
+    
+    class TestApp(App):
+        """Minimal app for testing widget."""
+        def compose(self):
+            yield ActiveRequestsTable()
+    
+    async with TestApp().run_test() as pilot:
+        # Get the widget
+        widget = pilot.app.query_one(ActiveRequestsTable)
+        
+        # Verify column keys are stored after mount
+        assert hasattr(widget, 'col_rom'), "col_rom not stored"
+        assert hasattr(widget, 'col_stage'), "col_stage not stored"
+        assert hasattr(widget, 'col_media_type'), "col_media_type not stored"
+        assert hasattr(widget, 'col_duration'), "col_duration not stored"
+        assert hasattr(widget, 'col_status'), "col_status not stored"
+        
+        # Add a test request
+        widget.update_request(
+            rom_name="Test ROM.nes",
+            stage="API Fetch",
+            status="Active",
+            media_type="screenshot"
+        )
+        
+        # Verify request was added
+        assert len(widget.active_requests) == 1
+        assert len(widget.request_start_times) == 1
+        
+        # Wait a bit for time to pass
+        await pilot.pause(0.1)
+        
+        # Manually trigger duration update
+        widget._update_durations()
+        
+        # Verify no errors occurred (if column keys weren't stored correctly, this would fail)
+        # The duration should have been updated without raising exceptions
+        
+        # Add another request
+        widget.update_request(
+            rom_name="Test ROM 2.nes",
+            stage="Media DL",
+            status="Active"
+        )
+        
+        assert len(widget.active_requests) == 2
+        
+        # Remove first request
+        widget.remove_request("Test ROM.nes", "screenshot")
+        
+        assert len(widget.active_requests) == 1
+        
+        # Update durations again - should handle stale keys gracefully
+        widget._update_durations()
+        
+        # Verify cleanup worked
+        assert len(widget.active_requests) == 1
+        assert "Test ROM.nes:screenshot" not in widget.active_requests
+        
+        # Clear all
+        widget.clear_all()
+        assert len(widget.active_requests) == 0
