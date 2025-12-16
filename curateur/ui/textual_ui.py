@@ -154,10 +154,17 @@ class CurrentSystemOperations(Container):
     gamelist_added = reactive(0)
     gamelist_updated = reactive(0)
 
+    # ROM progress statistics
+    rom_successful = reactive(0)
+    rom_skipped = reactive(0)
+    rom_failed = reactive(0)
+
     # Spinner animation frame counter
     spinner_frame = 0
 
     def compose(self) -> ComposeResult:
+        yield Static(id="rom-progress-content")
+        yield Rule(line_style="heavy")
         yield Static(id="hashing-content")
         yield Rule(line_style="heavy")
         yield Static(id="cache-content")
@@ -235,8 +242,21 @@ class CurrentSystemOperations(Container):
         """Update display when media failed count changes."""
         self.update_media()
 
+    def watch_rom_successful(self, old_value: int, new_value: int) -> None:
+        """Update display when ROM successful count changes."""
+        self.update_rom_progress()
+
+    def watch_rom_skipped(self, old_value: int, new_value: int) -> None:
+        """Update display when ROM skipped count changes."""
+        self.update_rom_progress()
+
+    def watch_rom_failed(self, old_value: int, new_value: int) -> None:
+        """Update display when ROM failed count changes."""
+        self.update_rom_progress()
+
     def update_display(self) -> None:
         """Render all sections."""
+        self.update_rom_progress()
         self.update_hashing()
         self.update_cache()
         self.update_gamelist()
@@ -253,6 +273,17 @@ class CurrentSystemOperations(Container):
             self.spinner_frame = (self.spinner_frame + 1) % 10
             self.update_hashing()
             self.update_api()
+
+    def update_rom_progress(self) -> None:
+        """Update ROM progress section."""
+        rom_processed = self.rom_successful + self.rom_skipped + self.rom_failed
+        rom_content = Text()
+        rom_content.append("ROMs\n", style="bold cyan")
+        rom_content.append(f"✓ {self.rom_successful} ", style="bright_green")
+        rom_content.append(f"⊝ {self.rom_skipped} ", style="dim yellow")
+        rom_content.append(f"✗ {self.rom_failed}", style="red")
+
+        self.query_one("#rom-progress-content", Static).update(rom_content)
 
     def update_hashing(self) -> None:
         """Update hashing section."""
@@ -772,7 +803,10 @@ class ActiveRequestsTable(Container):
         self.request_start_times = {}
 
         table = self.query_one("#active-requests-table", DataTable)
-        table.add_columns("ROM", "Stage", "Media Type", "Duration", "Status")
+        # Store column keys for use in update_cell() calls
+        self.col_rom, self.col_stage, self.col_media_type, self.col_duration, self.col_status = table.add_columns(
+            "ROM", "Stage", "Media Type", "Duration", "Status"
+        )
         table.cursor_type = "row"
 
         # Start timer to update durations every 0.5 seconds
@@ -814,11 +848,11 @@ class ActiveRequestsTable(Container):
             if request_key in self.active_requests:
                 # Update existing row
                 row_key = self.active_requests[request_key]
-                table.update_cell(row_key, "ROM", rom_display)
-                table.update_cell(row_key, "Stage", stage)
-                table.update_cell(row_key, "Media Type", media_display)
-                table.update_cell(row_key, "Duration", f"{duration:.1f}s")
-                table.update_cell(row_key, "Status", status)
+                table.update_cell(row_key, self.col_rom, rom_display)
+                table.update_cell(row_key, self.col_stage, stage)
+                table.update_cell(row_key, self.col_media_type, media_display)
+                table.update_cell(row_key, self.col_duration, f"{duration:.1f}s")
+                table.update_cell(row_key, self.col_status, status)
             else:
                 # Add new row - DIRECTLY MODIFY dict instead of reassigning
                 row_key = table.add_row(
@@ -875,6 +909,7 @@ class ActiveRequestsTable(Container):
             return
 
         current_time = time.time()
+        stale_keys = []  # Track keys that no longer exist
 
         # Iterate over a snapshot to avoid race conditions
         for request_key, row_key in list(self.active_requests.items()):
@@ -883,10 +918,17 @@ class ActiveRequestsTable(Container):
 
             elapsed = current_time - self.request_start_times[request_key]
             try:
-                table.update_cell(row_key, "Duration", f"{elapsed:.1f}s")
-            except Exception as e:
-                # Log but don't crash - row might have been removed
-                logger.debug(f"Failed to update duration for {request_key}: {e}")
+                table.update_cell(row_key, self.col_duration, f"{elapsed:.1f}s")
+            except Exception:
+                # Row was removed between snapshot and update - mark for cleanup
+                stale_keys.append(request_key)
+
+        # Clean up stale entries
+        for request_key in stale_keys:
+            if request_key in self.active_requests:
+                del self.active_requests[request_key]
+            if request_key in self.request_start_times:
+                del self.request_start_times[request_key]
 
     def _update_border_title(self) -> None:
         """Update border title with current count."""
@@ -1207,6 +1249,16 @@ class ConfigTab(Container):
                             compact=True,
                         )
 
+                    with Horizontal(classes="config-row"):
+                        yield Label("Request Timeout (s):", classes="config-label")
+                        yield Select(
+                            [("15", 15), ("30", 30), ("45", 45), ("60", 60), ("90", 90), ("120", 120)],
+                            value=30,
+                            id="request-timeout",
+                            allow_blank=False,
+                            compact=True,
+                        )
+
                 # Runtime Settings
                 with Container(classes="config-section", id="runtime-settings-section"):
                     with Horizontal(classes="config-row"):
@@ -1299,6 +1351,9 @@ class ConfigTab(Container):
 
             retry_backoff = config.get("api", {}).get("retry_backoff_seconds", 5)
             self.query_one("#retry-backoff", Select).value = retry_backoff
+
+            request_timeout = config.get("api", {}).get("request_timeout", 30)
+            self.query_one("#request-timeout", Select).value = request_timeout
         except Exception as e:
             logger.debug(f"Failed to initialize API settings: {e}")
 
@@ -1409,6 +1464,19 @@ class ConfigTab(Container):
                     )
             except Exception as e:
                 logger.error(f"Failed to update retry backoff: {e}")
+
+        elif select_id == "request-timeout":
+            try:
+                if (
+                    hasattr(self.app, "orchestrator")
+                    and self.app.orchestrator
+                    and self.app.orchestrator.api_client
+                ):
+                    self.app.orchestrator.api_client.update_runtime_config(
+                        request_timeout=new_value
+                    )
+            except Exception as e:
+                logger.error(f"Failed to update request timeout: {e}")
 
         # Runtime Settings
         elif select_id == "max-workers-select":
@@ -2038,6 +2106,11 @@ class CurateurUI(App):
             current_system.gamelist_added = 0
             current_system.gamelist_updated = 0
 
+            # Reset ROM progress stats
+            current_system.rom_successful = 0
+            current_system.rom_skipped = 0
+            current_system.rom_failed = 0
+
             # Reset media stats
             current_system.media_in_flight = 0
             current_system.media_downloaded = 0
@@ -2157,6 +2230,20 @@ class CurateurUI(App):
                     overall_progress.failed += 1
                 elif event.status == "skipped":
                     overall_progress.skipped += 1
+            except Exception as e:
+                logger.debug(f"Failed to update overall progress: {e}")
+
+            # Update current system ROM progress counters
+            try:
+                current_system = self.query_one("#current-system", CurrentSystemOperations)
+                if event.status == "complete":
+                    current_system.rom_successful += 1
+                elif event.status == "failed":
+                    current_system.rom_failed += 1
+                elif event.status == "skipped":
+                    current_system.rom_skipped += 1
+            except Exception as e:
+                logger.debug(f"Failed to update current system ROM progress: {e}")
             except Exception as e:
                 logger.debug(f"Failed to update overall progress: {e}")
 
