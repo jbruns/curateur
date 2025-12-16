@@ -370,6 +370,7 @@ Container {
     border-title-align: right;
     padding: 1;
     margin: 0 0 1 0;
+    height: auto;
 }
 
 #api-settings-section {
