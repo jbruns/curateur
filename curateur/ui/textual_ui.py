@@ -2152,7 +2152,7 @@ class CurateurUI(App):
                 "in_progress",
             )
 
-            # Initialize system stats in detail panel
+            # Initialize system stats in detail panel - reset ALL stats for new system
             detail_panel = self.query_one("#system-detail-panel", SystemDetailPanel)
             detail_panel.update_system_stats(
                 event.system_name,
@@ -2164,6 +2164,20 @@ class CurateurUI(App):
                     "skipped": 0,
                     "status": "in_progress",
                     "summary": f"Started processing {event.total_roms} ROMs...",
+                    # Reset cache stats
+                    "cache_existing": 0,
+                    "cache_new": 0,
+                    "cache_hit_rate": 0.0,
+                    # Reset API stats
+                    "api_requests": 0,
+                    "api_retries": 0,
+                    # Reset gamelist stats
+                    "gamelist_existing": 0,
+                    "gamelist_added": 0,
+                    "gamelist_updated": 0,
+                    # Reset media stats
+                    "media_by_type": {},
+                    "summary_data": None,
                 },
             )
         except Exception as e:
