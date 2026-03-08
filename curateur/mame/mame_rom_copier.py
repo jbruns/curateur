@@ -5,11 +5,11 @@ Handles disk space validation, file copying with skip logic, and CHD directory m
 
 import logging
 import shutil
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional, Set, Tuple
 
-from .mame_xml_parser import MAMEXMLParser, MAMEMachine
+from .mame_xml_parser import MAMEXMLParser
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class MAMEROMCopier:
         required_space = self._calculate_required_space(shortnames)
         available_space = shutil.disk_usage(self.target_rom_path.parent).free
 
-        logger.info(f"Disk space check:")
+        logger.info("Disk space check:")
         logger.info(f"  Required: {self._format_bytes(required_space)}")
         logger.info(f"  Available: {self._format_bytes(available_space)}")
 
@@ -104,7 +104,7 @@ class MAMEROMCopier:
             self._copy_chds(shortnames, stats, errors)
 
         # Log summary
-        logger.info(f"Copy complete:")
+        logger.info("Copy complete:")
         logger.info(f"  ROMs: {stats.roms_copied} copied, {stats.roms_skipped} skipped")
         if self.source_chd_path:
             logger.info(

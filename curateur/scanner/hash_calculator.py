@@ -1,7 +1,7 @@
 """Hash calculation for ROM and media files."""
 
-import zlib
 import hashlib
+import zlib
 from pathlib import Path
 from typing import Optional
 

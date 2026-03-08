@@ -22,6 +22,7 @@ This is a maintenance tool - run it when:
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
+
 from lxml import etree
 
 # Add parent directory to path for imports

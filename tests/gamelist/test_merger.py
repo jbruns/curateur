@@ -1,7 +1,7 @@
 import pytest
 
-from curateur.gamelist.metadata_merger import MetadataMerger
 from curateur.gamelist.game_entry import GameEntry
+from curateur.gamelist.metadata_merger import MetadataMerger
 
 
 def _entry(path: str, name: str, **kwargs) -> GameEntry:
@@ -61,7 +61,7 @@ def test_auto_favorite_new_entries_above_threshold():
     merger = MetadataMerger(
         merge_strategy="refresh_metadata",
         auto_favorite_enabled=True,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new)
 
@@ -84,7 +84,7 @@ def test_auto_favorite_disabled_does_not_favorite_new_entries():
     merger = MetadataMerger(
         merge_strategy="refresh_metadata",
         auto_favorite_enabled=False,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new)
 
@@ -95,13 +95,17 @@ def test_auto_favorite_disabled_does_not_favorite_new_entries():
 @pytest.mark.unit
 def test_auto_favorite_does_not_override_existing_entries():
     """Test that auto-favorite doesn't override user-set favorite on existing entries"""
-    existing = [_entry("./Alpha.zip", "Alpha", rating=0.8, favorite=True)]  # User favorited despite low rating
-    new = [_entry("./Alpha.zip", "Alpha", rating=0.95)]  # New scraped data with high rating
+    existing = [
+        _entry("./Alpha.zip", "Alpha", rating=0.8, favorite=True)
+    ]  # User favorited despite low rating
+    new = [
+        _entry("./Alpha.zip", "Alpha", rating=0.95)
+    ]  # New scraped data with high rating
 
     merger = MetadataMerger(
         merge_strategy="refresh_metadata",
         auto_favorite_enabled=True,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new)
 
@@ -112,13 +116,15 @@ def test_auto_favorite_does_not_override_existing_entries():
 @pytest.mark.unit
 def test_auto_favorite_upgrades_existing_entries_with_low_rating():
     """Test that auto-favorite sets flag on existing entries when rating increases above threshold"""
-    existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]  # Low rating, not favorited
+    existing = [
+        _entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)
+    ]  # Low rating, not favorited
     new = [_entry("./Alpha.zip", "Alpha", rating=0.95)]  # Updated with high rating
 
     merger = MetadataMerger(
         merge_strategy="refresh_metadata",
         auto_favorite_enabled=True,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new)
 
@@ -131,14 +137,18 @@ def test_preserve_user_edits_blocks_auto_favorite():
     """Test that preserve_user_edits strategy prevents auto-favorite from modifying existing entries"""
     existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]
     new_entries = [
-        _entry("./Alpha.zip", "Alpha", rating=0.95),  # Updated existing with high rating
-        _entry("./Beta.zip", "Beta", rating=0.95, favorite=False),  # New entry with high rating
+        _entry(
+            "./Alpha.zip", "Alpha", rating=0.95
+        ),  # Updated existing with high rating
+        _entry(
+            "./Beta.zip", "Beta", rating=0.95, favorite=False
+        ),  # New entry with high rating
     ]
 
     merger = MetadataMerger(
         merge_strategy="preserve_user_edits",
         auto_favorite_enabled=True,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new_entries)
 
@@ -156,14 +166,18 @@ def test_refresh_metadata_allows_auto_favorite():
     """Test that refresh_metadata strategy allows auto-favorite"""
     existing = [_entry("./Alpha.zip", "Alpha", rating=0.5, favorite=False)]
     new_entries = [
-        _entry("./Alpha.zip", "Alpha", rating=0.95),  # Updated existing with high rating
-        _entry("./Beta.zip", "Beta", rating=0.95, favorite=False),  # New entry with high rating
+        _entry(
+            "./Alpha.zip", "Alpha", rating=0.95
+        ),  # Updated existing with high rating
+        _entry(
+            "./Beta.zip", "Beta", rating=0.95, favorite=False
+        ),  # New entry with high rating
     ]
 
     merger = MetadataMerger(
         merge_strategy="refresh_metadata",
         auto_favorite_enabled=True,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new_entries)
 
@@ -184,7 +198,7 @@ def test_reset_all_allows_auto_favorite():
     merger = MetadataMerger(
         merge_strategy="reset_all",
         auto_favorite_enabled=True,
-        auto_favorite_threshold=0.9
+        auto_favorite_threshold=0.9,
     )
     merged = merger.merge_entry_lists(existing, new_entries)
 

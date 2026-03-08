@@ -3,8 +3,7 @@
 import logging
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Dict, Any, Optional
-
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +51,11 @@ def calculate_match_confidence(
     total_score = sum(scores[key] * weights[key] for key in scores)
 
     logger.debug(
-        f"Match scoring breakdown: filename={scores['filename']:.2f} ({weights['filename']*100:.0f}%), "
-        f"region={scores['region']:.2f} ({weights['region']*100:.0f}%), "
-        f"size={scores['size']:.2f} ({weights['size']*100:.0f}%), "
-        f"media={scores['media']:.2f} ({weights['media']*100:.0f}%), "
-        f"rating={scores['rating']:.2f} ({weights['rating']*100:.0f}%) "
+        f"Match scoring breakdown: filename={scores['filename']:.2f} ({weights['filename'] * 100:.0f}%), "
+        f"region={scores['region']:.2f} ({weights['region'] * 100:.0f}%), "
+        f"size={scores['size']:.2f} ({weights['size'] * 100:.0f}%), "
+        f"media={scores['media']:.2f} ({weights['media'] * 100:.0f}%), "
+        f"rating={scores['rating']:.2f} ({weights['rating'] * 100:.0f}%) "
         f"-> total={total_score:.2f}"
     )
 

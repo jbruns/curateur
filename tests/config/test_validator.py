@@ -1,6 +1,6 @@
 import pytest
 
-from curateur.config.validator import validate_config, ValidationError
+from curateur.config.validator import ValidationError, validate_config
 
 
 def _base_config(es_systems_path: str) -> dict:
@@ -26,8 +26,16 @@ def _base_config(es_systems_path: str) -> dict:
             "scrape_mode": "changed",
             "name_verification": "normal",
         },
-        "media": {"media_types": ["covers", "screenshots"], "validation_mode": "normal"},
-        "api": {"request_timeout": 10, "max_retries": 3, "retry_backoff_seconds": 1, "quota_warning_threshold": 0.5},
+        "media": {
+            "media_types": ["covers", "screenshots"],
+            "validation_mode": "normal",
+        },
+        "api": {
+            "request_timeout": 10,
+            "max_retries": 3,
+            "retry_backoff_seconds": 1,
+            "quota_warning_threshold": 0.5,
+        },
         "logging": {"level": "INFO", "console": True, "file": None},
         "runtime": {
             "dry_run": True,
@@ -35,9 +43,17 @@ def _base_config(es_systems_path: str) -> dict:
             "crc_size_limit": 1024,
             "enable_cache": True,
             "rate_limit_override_enabled": False,
-            "rate_limit_override": {"max_workers": 1, "requests_per_minute": 60, "daily_quota": 10000},
+            "rate_limit_override": {
+                "max_workers": 1,
+                "requests_per_minute": 60,
+                "daily_quota": 10000,
+            },
         },
-        "search": {"enable_search_fallback": True, "confidence_threshold": 0.7, "max_results": 5},
+        "search": {
+            "enable_search_fallback": True,
+            "confidence_threshold": 0.7,
+            "max_results": 5,
+        },
     }
 
 
@@ -69,7 +85,10 @@ def test_validate_config_collects_errors(tmp_path):
     msg = str(exc.value)
     assert "screenscraper.user_id is required" in msg
     assert "paths.es_systems file not found" in msg
-    assert "gamelist_integrity_threshold must be between 0.0 and 1.0" in msg or "must be a number" in msg
+    assert (
+        "gamelist_integrity_threshold must be between 0.0 and 1.0" in msg
+        or "must be a number" in msg
+    )
     assert "media.media_types must be a list" in msg
     assert "api.max_retries must be an integer" in msg
     assert "api.quota_warning_threshold must be between 0.0 and 1.0" in msg
@@ -79,4 +98,3 @@ def test_validate_config_collects_errors(tmp_path):
     assert "runtime.rate_limit_override_enabled must be a boolean" in msg
     assert "runtime.rate_limit_override.max_workers must be between 1 and 10" in msg
     assert "logging.file must be a string path or null" in msg
-

@@ -3,7 +3,7 @@ from collections import deque
 
 import pytest
 
-from curateur.api.throttle import ThrottleManager, RateLimit
+from curateur.api.throttle import RateLimit, ThrottleManager
 
 
 @pytest.mark.unit
@@ -42,7 +42,9 @@ def test_handle_rate_limit_sets_backoff_and_clears_history(monkeypatch):
 
 @pytest.mark.unit
 def test_update_concurrency_limit_rescales_media_semaphore():
-    throttle = ThrottleManager(default_limit=RateLimit(calls=10, window_seconds=60), max_concurrent=2)
+    throttle = ThrottleManager(
+        default_limit=RateLimit(calls=10, window_seconds=60), max_concurrent=2
+    )
     assert throttle.concurrency_semaphore._value == 2  # type: ignore[attr-defined]
     # Default media semaphore starts at 20
     assert throttle.media_download_semaphore._value == 20  # type: ignore[attr-defined]

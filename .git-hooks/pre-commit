@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit hook to check for file corruption and code quality issues
+# Pre-commit hook to check for lint and formatting issues
 #
 # Install this hook by copying to .git/hooks/pre-commit and making it executable:
 #   cp .git-hooks/pre-commit .git/hooks/pre-commit
@@ -17,26 +17,23 @@ if [ -z "$PYTHON_FILES" ]; then
     exit 0
 fi
 
-# Run black formatter check on staged Python files
-echo "Checking code formatting with black..."
-black --safe --check $PYTHON_FILES || {
-    echo "❌ Code formatting issues found"
-    echo "Run 'black --safe $PYTHON_FILES' to auto-format"
+# Run ruff linter on staged Python files
+echo "Checking code with ruff..."
+ruff check $PYTHON_FILES || {
+    echo "❌ Ruff lint issues found"
+    echo "Run 'ruff check --fix' to auto-fix"
     echo "Or use 'git commit --no-verify' to skip checks"
     exit 1
 }
 
-# Run corruption check on staged Python files
-echo "Checking code quality..."
-for file in $PYTHON_FILES; do
-    if [ -f "$file" ]; then
-        python3 curateur/tools/code_quality_check.py "$file" || {
-            echo "❌ Code quality check failed for $file"
-            echo "Fix the issues above or use 'git commit --no-verify' to skip checks"
-            exit 1
-        }
-    fi
-done
+# Run ruff format check on staged Python files
+echo "Checking code formatting with ruff..."
+ruff format --check $PYTHON_FILES || {
+    echo "❌ Code formatting issues found"
+    echo "Run 'ruff format' to auto-format"
+    echo "Or use 'git commit --no-verify' to skip checks"
+    exit 1
+}
 
 echo "✅ All checks passed"
 exit 0

@@ -27,7 +27,9 @@ def test_performance_monitor_metrics_and_eta(monkeypatch):
 
     metrics = monitor.get_metrics()
 
-    assert metrics.roms_processed == 2  # record_rom_processing increments, record_rom_processed increments
+    assert (
+        metrics.roms_processed == 2
+    )  # record_rom_processing increments, record_rom_processed increments
     assert metrics.api_calls == 2
     assert metrics.downloads == 1
     assert metrics.avg_api_time > 0

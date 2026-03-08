@@ -7,8 +7,10 @@ preserving user edits.
 
 from copy import deepcopy
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Optional
+
 from lxml import etree
+
 from .game_entry import GameEntry
 
 

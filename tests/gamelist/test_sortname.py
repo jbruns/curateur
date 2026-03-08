@@ -6,6 +6,7 @@ and that the feature can be enabled/disabled via configuration.
 """
 
 import pytest
+
 from curateur.gamelist.game_entry import GameEntry
 
 
@@ -56,7 +57,9 @@ class TestSortnameGeneration:
 
     def test_generate_sortname_with_special_characters(self):
         """Test sortname with special characters"""
-        sortname = GameEntry._generate_sortname("The Legend of Zelda: Breath of the Wild")
+        sortname = GameEntry._generate_sortname(
+            "The Legend of Zelda: Breath of the Wild"
+        )
         assert sortname == "Legend of Zelda: Breath of the Wild, The"
 
 
@@ -66,16 +69,10 @@ class TestSortnameIntegration:
 
     def test_sortname_enabled_with_article(self):
         """Test that sortname is generated when enabled and name has article"""
-        game_info = {
-            'id': '1',
-            'names': {'us': 'The Legend of Zelda'},
-            'rating': 18.0
-        }
+        game_info = {"id": "1", "names": {"us": "The Legend of Zelda"}, "rating": 18.0}
 
         entry = GameEntry.from_api_response(
-            game_info,
-            './zelda.rom',
-            auto_sortname_enabled=True
+            game_info, "./zelda.rom", auto_sortname_enabled=True
         )
 
         assert entry.name == "The Legend of Zelda"
@@ -83,16 +80,10 @@ class TestSortnameIntegration:
 
     def test_sortname_enabled_without_article(self):
         """Test that sortname is None when enabled but name has no article"""
-        game_info = {
-            'id': '1',
-            'names': {'us': 'Super Mario Bros'},
-            'rating': 18.0
-        }
+        game_info = {"id": "1", "names": {"us": "Super Mario Bros"}, "rating": 18.0}
 
         entry = GameEntry.from_api_response(
-            game_info,
-            './mario.rom',
-            auto_sortname_enabled=True
+            game_info, "./mario.rom", auto_sortname_enabled=True
         )
 
         assert entry.name == "Super Mario Bros"
@@ -100,16 +91,10 @@ class TestSortnameIntegration:
 
     def test_sortname_disabled_with_article(self):
         """Test that sortname is None when disabled even if name has article"""
-        game_info = {
-            'id': '1',
-            'names': {'us': 'The Legend of Zelda'},
-            'rating': 18.0
-        }
+        game_info = {"id": "1", "names": {"us": "The Legend of Zelda"}, "rating": 18.0}
 
         entry = GameEntry.from_api_response(
-            game_info,
-            './zelda.rom',
-            auto_sortname_enabled=False
+            game_info, "./zelda.rom", auto_sortname_enabled=False
         )
 
         assert entry.name == "The Legend of Zelda"
@@ -117,32 +102,19 @@ class TestSortnameIntegration:
 
     def test_sortname_default_disabled(self):
         """Test that sortname is disabled by default"""
-        game_info = {
-            'id': '1',
-            'names': {'us': 'The Legend of Zelda'},
-            'rating': 18.0
-        }
+        game_info = {"id": "1", "names": {"us": "The Legend of Zelda"}, "rating": 18.0}
 
-        entry = GameEntry.from_api_response(
-            game_info,
-            './zelda.rom'
-        )
+        entry = GameEntry.from_api_response(game_info, "./zelda.rom")
 
         assert entry.name == "The Legend of Zelda"
         assert entry.sortname is None
 
     def test_sortname_with_multiple_articles(self):
         """Test sortname with 'A' in the middle of the name"""
-        game_info = {
-            'id': '1',
-            'names': {'us': 'A Boy and His Blob'},
-            'rating': 15.0
-        }
+        game_info = {"id": "1", "names": {"us": "A Boy and His Blob"}, "rating": 15.0}
 
         entry = GameEntry.from_api_response(
-            game_info,
-            './blob.rom',
-            auto_sortname_enabled=True
+            game_info, "./blob.rom", auto_sortname_enabled=True
         )
 
         # Should only move the first article

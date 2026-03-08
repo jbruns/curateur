@@ -4,11 +4,11 @@ import httpx
 import pytest
 import respx
 
+from curateur.api import client as client_module
 from curateur.api.cache import MetadataCache
 from curateur.api.client import ScreenScraperClient
-from curateur.api.throttle import ThrottleManager, RateLimit
-from curateur.api.error_handler import RetryableAPIError, SkippableAPIError
-from curateur.api import client as client_module
+from curateur.api.error_handler import SkippableAPIError
+from curateur.api.throttle import RateLimit, ThrottleManager
 from curateur.scanner.rom_types import ROMInfo, ROMType
 
 
@@ -35,7 +35,9 @@ def test_build_redacted_url_hides_credentials():
         cache=None,
     )
     url = "https://api.screenscraper.fr/api2/jeuInfos.php"
-    redacted = client._build_redacted_url(url, {"devpassword": "secret", "sspassword": "pw"})
+    redacted = client._build_redacted_url(
+        url, {"devpassword": "secret", "sspassword": "pw"}
+    )
     assert "secret" not in redacted
     assert "pw" not in redacted
     assert "redacted" in redacted
@@ -89,7 +91,9 @@ async def test_query_game_parses_response_and_updates_cache(tmp_path: Path):
         )
 
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(200, content=xml)
+            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(
+                200, content=xml
+            )
 
             result = await client.query_game(rom_info)
 
@@ -131,13 +135,17 @@ async def test_query_game_handles_rate_limit_and_api_error(tmp_path: Path):
 
         with respx.mock(assert_all_called=True) as mock:
             # Rate limited -> surfaces as SkippableAPIError after retry loop
-            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(429, content=xml_error)
+            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(
+                429, content=xml_error
+            )
             with pytest.raises(SkippableAPIError):
                 await client.query_game(rom_info)
 
         with respx.mock(assert_all_called=True) as mock:
             # API error message returns SkippableAPIError
-            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(200, content=xml_error)
+            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(
+                200, content=xml_error
+            )
             with pytest.raises(SkippableAPIError):
                 await client.query_game(rom_info)
 
@@ -170,7 +178,9 @@ async def test_query_game_verification_failure(monkeypatch, tmp_path: Path):
         )
 
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(200, content=xml)
+            mock.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(
+                200, content=xml
+            )
             # Force name verification to fail
             monkeypatch.setattr(
                 client_module,
@@ -240,7 +250,9 @@ async def test_search_game_parses_results(tmp_path: Path):
         )
 
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.screenscraper.fr/api2/jeuRecherche.php").respond(200, content=xml)
+            mock.get("https://api.screenscraper.fr/api2/jeuRecherche.php").respond(
+                200, content=xml
+            )
             results = await client.search_game(rom_info)
     assert results[0]["name"] == "Alpha"
 
@@ -271,6 +283,8 @@ async def test_get_user_info_parses_limits(monkeypatch):
         )
 
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(200, content=xml)
+            mock.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(
+                200, content=xml
+            )
             limits = await client.get_user_info()
     assert limits["maxthreads"] == 2

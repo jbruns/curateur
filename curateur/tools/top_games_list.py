@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Command-line tool to fetch games from RAWG API sorted by Metacritic score."""
 
-import sys
 import argparse
-import logging
-import requests
 import csv
-from typing import Optional, List, Dict
-from urllib.parse import urljoin
+import logging
+import sys
 from io import StringIO
+from typing import Dict, List, Optional
+from urllib.parse import urljoin
+
+import requests
 
 # Setup logging - output to stderr to avoid interfering with CSV output
 logging.basicConfig(
@@ -293,7 +294,7 @@ def main():
     )
 
     logger.info(f"Fetching games for platform: {args.platform} (ID: {platform_id})")
-    logger.info(f"Ordering by Metacritic score (descending)")
+    logger.info("Ordering by Metacritic score (descending)")
 
     if args.min_metacritic:
         logger.info(f"Filtering for Metacritic >= {args.min_metacritic}")

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from curateur.media.organizer import MediaOrganizer
 
 
@@ -41,7 +39,10 @@ def test_media_organizer_builds_paths_and_relative(tmp_path):
     disc_file2 = disc_subdir3 / "Baten Kaitos Origins (USA) (Disc 2).rvz"
     disc_file2.touch()
     # Should return parent directory name (with .rvz), not strip it
-    assert organizer.get_rom_basename(str(disc_file2)) == "Baten Kaitos Origins (USA) (Disc 2).rvz"
+    assert (
+        organizer.get_rom_basename(str(disc_file2))
+        == "Baten Kaitos Origins (USA) (Disc 2).rvz"
+    )
 
     # Test regular file with disc number in name (NOT in a disc subdirectory)
     regular_file = tmp_path / "roms" / "Final Fantasy VII (Disc 2).iso"

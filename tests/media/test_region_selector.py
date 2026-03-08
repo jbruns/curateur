@@ -2,8 +2,8 @@ import pytest
 
 from curateur.media.region_selector import (
     detect_region_from_filename,
-    select_best_region,
     get_media_for_region,
+    select_best_region,
     should_use_region_filtering,
 )
 
@@ -26,7 +26,9 @@ def test_detect_region_from_filename(filename, expected):
 def test_select_best_region_uses_preferred_and_filename_matches():
     available = ["jp", "us", "eu"]
     # Filename includes jp and us; preferred puts us first
-    best = select_best_region(available, "Game (Japan, USA).nes", preferred_regions=["us", "eu", "jp"])
+    best = select_best_region(
+        available, "Game (Japan, USA).nes", preferred_regions=["us", "eu", "jp"]
+    )
     assert best == "us"
 
 

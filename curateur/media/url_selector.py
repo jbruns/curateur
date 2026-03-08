@@ -6,13 +6,14 @@ media type, region preferences, and quality.
 """
 
 import logging
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
+from .media_types import is_supported_media_type
 from .region_selector import (
-    select_best_region,
     get_media_for_region,
+    select_best_region,
     should_use_region_filtering,
 )
-from .media_types import is_supported_media_type
 
 logger = logging.getLogger(__name__)
 

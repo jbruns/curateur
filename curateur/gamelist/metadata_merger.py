@@ -7,10 +7,10 @@ Implements three merge strategies:
 - reset_all: Complete clean slate (API data + path only)
 """
 
-from typing import List, Set, Optional
-from dataclasses import dataclass, replace
 import logging
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import List, Set
 
 from .game_entry import GameEntry
 

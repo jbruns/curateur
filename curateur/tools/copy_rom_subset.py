@@ -12,10 +12,9 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import List, Optional, Set
 
-from curateur.config.es_systems import parse_es_systems, SystemDefinition
-from curateur.media.media_types import MEDIA_TYPE_MAP
+from curateur.config.es_systems import SystemDefinition, parse_es_systems
 from curateur.scanner.disc_handler import is_disc_subdirectory
 
 logger = logging.getLogger(__name__)

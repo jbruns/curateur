@@ -14,7 +14,9 @@ def test_calculate_match_confidence_weights_fields():
         "screenshot": {"url": "shot.png"},
     }
 
-    score = calculate_match_confidence(rom_info, game_data, preferred_regions=["us", "eu"])
+    score = calculate_match_confidence(
+        rom_info, game_data, preferred_regions=["us", "eu"]
+    )
     # High score because filename, region, and size all align
     assert score > 0.7
 
@@ -28,5 +30,7 @@ def test_calculate_match_confidence_penalizes_region_mismatch():
         "note": 10,
     }
 
-    score = calculate_match_confidence(rom_info, game_data, preferred_regions=["us", "eu"])
+    score = calculate_match_confidence(
+        rom_info, game_data, preferred_regions=["us", "eu"]
+    )
     assert score < 0.5

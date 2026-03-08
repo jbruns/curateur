@@ -7,7 +7,7 @@ media based on region preferences.
 
 import logging
 import re
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ def select_best_region(
         Result: 'us' (first match in priority order)
     """
     if not available_regions:
-        logger.debug(f"    select_best_region: no available regions")
+        logger.debug("    select_best_region: no available regions")
         return None
 
     # Default region preferences
@@ -153,7 +153,7 @@ def select_best_region(
             )
             return region
 
-    logger.debug(f"    select_best_region: no match found")
+    logger.debug("    select_best_region: no match found")
     return None
 
 

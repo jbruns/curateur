@@ -5,12 +5,12 @@ Downloads images from URLs with retry logic and validates them using Pillow.
 """
 
 import asyncio
-import os
+from io import BytesIO
 from pathlib import Path
 from typing import Optional, Tuple
+
 import httpx
 from PIL import Image
-from io import BytesIO
 
 
 class DownloadError(Exception):
@@ -110,7 +110,7 @@ class ImageDownloader:
                         f.write(image_data)
                     # Move to final location only on success
                     temp_path.rename(output_path)
-                except Exception as e:
+                except Exception:
                     # Clean up temp file on error
                     if temp_path.exists():
                         temp_path.unlink()

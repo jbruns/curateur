@@ -2,20 +2,21 @@
 
 import asyncio
 import uuid
-import pytest
+from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
+from curateur.scanner.rom_types import ROMType
 from curateur.ui.event_bus import EventBus
 from curateur.ui.events import SearchRequestEvent, SearchResponseEvent
 from curateur.ui.textual_ui import CurateurUI
 from curateur.workflow.orchestrator import WorkflowOrchestrator
-from curateur.scanner.rom_types import ROMType
-from pathlib import Path
-
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def event_bus():
@@ -27,15 +28,10 @@ def event_bus():
 def config():
     """Create a dummy config for testing."""
     return {
-        'scraping': {
-            'systems': ['nes'],
-            'preferred_regions': ['us', 'wor', 'eu']
-        },
-        'runtime': {
-            'enable_cache': False
-        },
-        'paths': {},
-        'media': {}
+        "scraping": {"systems": ["nes"], "preferred_regions": ["us", "wor", "eu"]},
+        "runtime": {"enable_cache": False},
+        "paths": {},
+        "media": {},
     }
 
 
@@ -52,7 +48,9 @@ def mock_work_queue():
     """Create a mock work queue."""
     queue = Mock()
     queue.reset_for_new_system = Mock()
-    queue.get_stats = Mock(return_value={'processed': 0, 'failed': 0, 'pending': 0, 'max_retries': 3})
+    queue.get_stats = Mock(
+        return_value={"processed": 0, "failed": 0, "pending": 0, "max_retries": 3}
+    )
     queue.get_failed_items = Mock(return_value=[])
     return queue
 
@@ -79,20 +77,24 @@ def orchestrator(config, mock_api_client, mock_work_queue, event_bus, tmp_path):
 @pytest.fixture
 def sample_rom_info():
     """Create a sample ROM info object."""
-    return type('ROMInfo', (), {
-        'filename': 'Super Mario Bros.nes',
-        'path': Path('/roms/nes/Super Mario Bros.nes'),
-        'system': 'nes',
-        'file_size': 40960,
-        'hash_type': 'crc32',
-        'hash_value': 'ABCD1234',
-        'query_filename': 'Super Mario Bros',
-        'basename': 'Super Mario Bros',
-        'rom_type': ROMType.STANDARD,
-        'crc_size_limit': 1073741824,
-        'disc_files': None,
-        'contained_file': None
-    })()
+    return type(
+        "ROMInfo",
+        (),
+        {
+            "filename": "Super Mario Bros.nes",
+            "path": Path("/roms/nes/Super Mario Bros.nes"),
+            "system": "nes",
+            "file_size": 40960,
+            "hash_type": "crc32",
+            "hash_value": "ABCD1234",
+            "query_filename": "Super Mario Bros",
+            "basename": "Super Mario Bros",
+            "rom_type": ROMType.STANDARD,
+            "crc_size_limit": 1073741824,
+            "disc_files": None,
+            "contained_file": None,
+        },
+    )()
 
 
 @pytest.fixture
@@ -107,9 +109,9 @@ def sample_search_results():
                 "regions": ["us", "wor"],
                 "publisher": "Nintendo",
                 "developer": "Nintendo EAD",
-                "players": "1-2"
+                "players": "1-2",
             },
-            "confidence": 0.95
+            "confidence": 0.95,
         },
         {
             "game_data": {
@@ -119,9 +121,9 @@ def sample_search_results():
                 "regions": ["us"],
                 "publisher": "Nintendo",
                 "developer": "Nintendo EAD",
-                "players": "1-2"
+                "players": "1-2",
             },
-            "confidence": 0.65
+            "confidence": 0.65,
         },
         {
             "game_data": {
@@ -131,16 +133,17 @@ def sample_search_results():
                 "regions": ["jp"],
                 "publisher": "Nintendo",
                 "developer": "Nintendo EAD",
-                "players": "1-2"
+                "players": "1-2",
             },
-            "confidence": 0.50
-        }
+            "confidence": 0.50,
+        },
     ]
 
 
 # ============================================================================
 # Test SearchRequestEvent and SearchResponseEvent
 # ============================================================================
+
 
 class TestSearchEvents:
     """Test search event creation and properties."""
@@ -152,7 +155,7 @@ class TestSearchEvents:
             rom_name="Super Mario Bros.nes",
             rom_path="/roms/nes/Super Mario Bros.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         assert event.request_id == "test-uuid-123"
@@ -169,7 +172,7 @@ class TestSearchEvents:
             rom_name="Test.nes",
             rom_path="/test.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         with pytest.raises(AttributeError):
@@ -179,9 +182,7 @@ class TestSearchEvents:
         """Test creating a SearchResponseEvent with selection."""
         game_data = {"id": "12345", "names": {"en": "Test Game"}}
         event = SearchResponseEvent(
-            request_id="test-123",
-            action="selected",
-            selected_game=game_data
+            request_id="test-123", action="selected", selected_game=game_data
         )
 
         assert event.request_id == "test-123"
@@ -191,9 +192,7 @@ class TestSearchEvents:
     def test_search_response_event_skip(self):
         """Test creating a SearchResponseEvent with skip."""
         event = SearchResponseEvent(
-            request_id="test-123",
-            action="skip",
-            selected_game=None
+            request_id="test-123", action="skip", selected_game=None
         )
 
         assert event.action == "skip"
@@ -201,10 +200,7 @@ class TestSearchEvents:
 
     def test_search_response_event_cancel(self):
         """Test creating a SearchResponseEvent with cancel."""
-        event = SearchResponseEvent(
-            request_id="test-123",
-            action="cancel"
-        )
+        event = SearchResponseEvent(request_id="test-123", action="cancel")
 
         assert event.action == "cancel"
         assert event.selected_game is None
@@ -213,6 +209,7 @@ class TestSearchEvents:
 # ============================================================================
 # Test Orchestrator Search Response Handling
 # ============================================================================
+
 
 class TestOrchestratorSearchHandling:
     """Test orchestrator's search response handling methods."""
@@ -231,7 +228,7 @@ class TestOrchestratorSearchHandling:
         response = SearchResponseEvent(
             request_id=request_id,
             action="selected",
-            selected_game={"id": "12345", "names": {"en": "Test Game"}}
+            selected_game={"id": "12345", "names": {"en": "Test Game"}},
         )
 
         await orchestrator.handle_search_response(response)
@@ -243,12 +240,11 @@ class TestOrchestratorSearchHandling:
         assert delivered_response.selected_game["id"] == "12345"
 
     @pytest.mark.asyncio
-    async def test_handle_search_response_unknown_request_id(self, orchestrator, caplog):
+    async def test_handle_search_response_unknown_request_id(
+        self, orchestrator, caplog
+    ):
         """Test handling response for unknown request ID."""
-        response = SearchResponseEvent(
-            request_id="unknown-id",
-            action="skip"
-        )
+        response = SearchResponseEvent(request_id="unknown-id", action="skip")
 
         await orchestrator.handle_search_response(response)
 
@@ -284,7 +280,7 @@ class TestOrchestratorSearchHandling:
             response = SearchResponseEvent(
                 request_id=request_id,
                 action="selected",
-                selected_game=sample_search_results[0]["game_data"]
+                selected_game=sample_search_results[0]["game_data"],
             )
             await orchestrator.handle_search_response(response)
 
@@ -333,9 +329,7 @@ class TestOrchestratorSearchHandling:
 
         # Simulate user skipping
         response = SearchResponseEvent(
-            request_id=request_id,
-            action="skip",
-            selected_game=None
+            request_id=request_id, action="skip", selected_game=None
         )
         await orchestrator.handle_search_response(response)
 
@@ -420,10 +414,7 @@ class TestOrchestratorSearchHandling:
             assert request_id in orchestrator.search_response_queues
 
         # Send response
-        response = SearchResponseEvent(
-            request_id=request_id,
-            action="cancel"
-        )
+        response = SearchResponseEvent(request_id=request_id, action="cancel")
         await orchestrator.handle_search_response(response)
 
         # Wait for completion
@@ -438,6 +429,7 @@ class TestOrchestratorSearchHandling:
 # Test UI Search Queue Processing
 # ============================================================================
 
+
 class TestUISearchQueue:
     """Test UI's search queue processing."""
 
@@ -446,13 +438,15 @@ class TestUISearchQueue:
         """Test that UI initializes with search queue."""
         ui = CurateurUI(config, event_bus)
 
-        assert hasattr(ui, 'search_queue')
+        assert hasattr(ui, "search_queue")
         assert isinstance(ui.search_queue, asyncio.Queue)
         assert ui.current_search_dialog is None
         assert ui.search_processor_running is False
 
     @pytest.mark.asyncio
-    async def test_on_search_request_queues_event(self, config, event_bus, sample_search_results):
+    async def test_on_search_request_queues_event(
+        self, config, event_bus, sample_search_results
+    ):
         """Test that on_search_request queues the event."""
         ui = CurateurUI(config, event_bus)
 
@@ -461,7 +455,7 @@ class TestUISearchQueue:
             rom_name="Test.nes",
             rom_path="/test.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         await ui.on_search_request(event)
@@ -472,7 +466,9 @@ class TestUISearchQueue:
         assert queued_event.rom_name == "Test.nes"
 
     @pytest.mark.asyncio
-    async def test_on_search_request_starts_processor_once(self, config, event_bus, sample_search_results):
+    async def test_on_search_request_starts_processor_once(
+        self, config, event_bus, sample_search_results
+    ):
         """Test that search processor only starts once."""
         ui = CurateurUI(config, event_bus)
 
@@ -481,7 +477,7 @@ class TestUISearchQueue:
             rom_name="Test1.nes",
             rom_path="/test1.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         event2 = SearchRequestEvent(
@@ -489,7 +485,7 @@ class TestUISearchQueue:
             rom_name="Test2.nes",
             rom_path="/test2.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         # Queue multiple events
@@ -503,7 +499,9 @@ class TestUISearchQueue:
         assert initial_state == final_state
 
     @pytest.mark.asyncio
-    async def test_show_search_dialog_data_conversion(self, config, event_bus, sample_search_results):
+    async def test_show_search_dialog_data_conversion(
+        self, config, event_bus, sample_search_results
+    ):
         """Test that _show_search_dialog converts data correctly."""
         ui = CurateurUI(config, event_bus)
 
@@ -512,7 +510,7 @@ class TestUISearchQueue:
             rom_name="Test.nes",
             rom_path="/test.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         # Mock push_screen_wait to capture converted data
@@ -553,14 +551,14 @@ class TestUISearchQueue:
             rom_name="Test.nes",
             rom_path="/test.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         # Mock dialog to return selection
         selected_result = {
             "name": "Super Mario Bros.",
             "confidence": 0.95,
-            "_full_data": sample_search_results[0]["game_data"]
+            "_full_data": sample_search_results[0]["game_data"],
         }
 
         async def mock_push_screen_wait(dialog):
@@ -607,7 +605,7 @@ class TestUISearchQueue:
             rom_name="Test.nes",
             rom_path="/test.nes",
             system="nes",
-            search_results=sample_search_results
+            search_results=sample_search_results,
         )
 
         # Mock dialog to return skip
@@ -641,13 +639,20 @@ class TestUISearchQueue:
 # Integration Tests
 # ============================================================================
 
+
 class TestInteractiveSearchIntegration:
     """Integration tests for complete search flow."""
 
     @pytest.mark.asyncio
     async def test_complete_search_flow_with_selection(
-        self, config, event_bus, mock_api_client, mock_work_queue,
-        sample_rom_info, sample_search_results, tmp_path
+        self,
+        config,
+        event_bus,
+        mock_api_client,
+        mock_work_queue,
+        sample_rom_info,
+        sample_search_results,
+        tmp_path,
     ):
         """Test complete flow from search request to user selection."""
         # Create orchestrator with textual UI
@@ -678,7 +683,7 @@ class TestInteractiveSearchIntegration:
         selected_result = {
             "name": "Super Mario Bros.",
             "confidence": 0.95,
-            "_full_data": sample_search_results[0]["game_data"]
+            "_full_data": sample_search_results[0]["game_data"],
         }
 
         async def mock_push_screen_wait(dialog):
@@ -744,7 +749,7 @@ class TestInteractiveSearchIntegration:
                 rom_name=f"Test{i}.nes",
                 rom_path=f"/test{i}.nes",
                 system="nes",
-                search_results=sample_search_results
+                search_results=sample_search_results,
             )
             for i in range(3)
         ]

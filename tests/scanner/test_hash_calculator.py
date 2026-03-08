@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from curateur.scanner.hash_calculator import calculate_hash, format_file_size

@@ -2,8 +2,7 @@
 
 import re
 from difflib import SequenceMatcher
-from typing import Optional, Tuple
-
+from typing import Tuple
 
 # Verification threshold levels
 VERIFICATION_THRESHOLDS = {
@@ -168,7 +167,7 @@ def format_verification_result(
         f"{status} Name verification:",
         f"  ROM: {rom_filename}",
         f"  API: {api_game_name}",
-        f"  Similarity: {similarity*100:.0f}% ({reason})",
+        f"  Similarity: {similarity * 100:.0f}% ({reason})",
     ]
 
     return "\n".join(lines)

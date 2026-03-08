@@ -1,11 +1,10 @@
 import pytest
 
 from curateur.api.name_verifier import (
-    verify_name_match,
-    normalize_name,
-    calculate_similarity,
     check_word_overlap,
     format_verification_result,
+    normalize_name,
+    verify_name_match,
 )
 
 
@@ -38,6 +37,8 @@ def test_check_word_overlap_accepts_abbreviations():
 
 @pytest.mark.unit
 def test_format_verification_result_includes_similarity():
-    msg = format_verification_result("foo.nes", "Foo", True, 0.9, "Similarity above threshold")
+    msg = format_verification_result(
+        "foo.nes", "Foo", True, 0.9, "Similarity above threshold"
+    )
     assert "Similarity" in msg
     assert "✓" in msg

@@ -1,7 +1,7 @@
 """Disc-based ROM subdirectory handling."""
 
 from pathlib import Path
-from typing import Optional, List
+from typing import List
 
 
 class DiscSubdirError(Exception):

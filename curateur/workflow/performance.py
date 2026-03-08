@@ -6,10 +6,11 @@ Tracks scraping performance and calculates ETA.
 
 import logging
 import time
-import psutil
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional, Deque
+from typing import Deque, Optional
+
+import psutil
 
 logger = logging.getLogger(__name__)
 

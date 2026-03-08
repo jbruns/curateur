@@ -1,7 +1,4 @@
-import argparse
 from pathlib import Path
-
-import pytest
 
 import curateur.cli as cli
 from curateur.config.loader import ConfigError
@@ -10,7 +7,11 @@ from curateur.config.loader import ConfigError
 def _minimal_config(tmp_path: Path) -> dict:
     return {
         "logging": {"console": False},
-        "scraping": {"systems": [], "preferred_regions": ["us"], "name_verification": "normal"},
+        "scraping": {
+            "systems": [],
+            "preferred_regions": ["us"],
+            "name_verification": "normal",
+        },
         "runtime": {"dry_run": False},
         "paths": {
             "roms": str(tmp_path),
@@ -23,7 +24,15 @@ def _minimal_config(tmp_path: Path) -> dict:
 
 def test_create_parser_includes_flags():
     parser = cli.create_parser()
-    args = parser.parse_args(["--dry-run", "--enable-search", "--search-threshold", "0.8", "--interactive-search"])
+    args = parser.parse_args(
+        [
+            "--dry-run",
+            "--enable-search",
+            "--search-threshold",
+            "0.8",
+            "--interactive-search",
+        ]
+    )
     assert args.dry_run is True
     assert args.enable_search is True
     assert args.search_threshold == 0.8
@@ -31,7 +40,11 @@ def test_create_parser_includes_flags():
 
 
 def test_main_handles_config_error(monkeypatch):
-    monkeypatch.setattr(cli, "load_config", lambda path=None: (_ for _ in ()).throw(ConfigError("bad config")))
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda path=None: (_ for _ in ()).throw(ConfigError("bad config")),
+    )
     code = cli.main([])
     assert code == 1
 

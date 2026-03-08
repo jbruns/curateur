@@ -3,7 +3,7 @@ Shared pytest fixtures and utilities for the curateur test suite.
 """
 
 from pathlib import Path
-from typing import Dict, Any, Callable
+from typing import Any, Callable, Dict
 
 import pytest
 import yaml
@@ -51,7 +51,7 @@ def rom_system_def(es_systems_file: Path):
 def make_config(tmp_path: Path) -> Callable[[Dict[str, Any]], Path]:
     """
     Create a minimal config.yaml in a temp directory.
-    
+
     Usage:
         path = make_config({"runtime": {"dry_run": False}})
     """
@@ -86,11 +86,7 @@ def merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     """
     result: Dict[str, Any] = dict(base)
     for key, value in override.items():
-        if (
-            key in result
-            and isinstance(result[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = merge_dicts(result[key], value)
         else:
             result[key] = value

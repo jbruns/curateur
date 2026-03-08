@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from curateur.api.client import ScreenScraperClient
-from curateur.api.throttle import ThrottleManager, RateLimit
+from curateur.api.throttle import RateLimit, ThrottleManager
 from curateur.scanner.rom_types import ROMInfo, ROMType
 
 

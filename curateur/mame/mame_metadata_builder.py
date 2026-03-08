@@ -5,18 +5,12 @@ game metadata with clone inheritance and filtering support.
 """
 
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Optional, Set
 
 from ..gamelist.game_entry import GameEntry
-from .mame_xml_parser import MAMEXMLParser, MAMEMachine
-from .ini_parser import (
-    BestGamesParser,
-    GenreParser,
-    MultiplayerParser,
-    GameOrNoGameParser,
-)
+from .mame_xml_parser import MAMEMachine, MAMEXMLParser
 
 logger = logging.getLogger(__name__)
 

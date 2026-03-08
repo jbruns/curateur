@@ -1,13 +1,14 @@
 """Command-line interface for MAME ROM organizer."""
 
-import sys
-import logging
 import argparse
-import yaml
+import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
-from curateur.mame.mame_gamelist_generator import MAMEGamelistGenerator, MAMEConfig
+import yaml
+
+from curateur.mame.mame_gamelist_generator import MAMEConfig, MAMEGamelistGenerator
 
 # Setup logging
 logging.basicConfig(

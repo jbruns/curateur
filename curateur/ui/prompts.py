@@ -6,7 +6,7 @@ Provides confirmation prompts, multiple choice selections, and input validation.
 
 import logging
 import threading
-from typing import Optional, Callable, List, Dict, Any
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ class PromptSystem:
                     else:
                         print(f"Please enter a number between 1 and {len(choices)}")
                 except ValueError:
-                    print(f"Please enter a valid number")
+                    print("Please enter a valid number")
 
             except (KeyboardInterrupt, EOFError):
                 logger.info("User interrupted prompt")

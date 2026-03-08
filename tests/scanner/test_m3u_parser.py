@@ -1,8 +1,6 @@
-from pathlib import Path
-
 import pytest
 
-from curateur.scanner.m3u_parser import parse_m3u, get_disc1_file, M3UError
+from curateur.scanner.m3u_parser import M3UError, get_disc1_file, parse_m3u
 
 
 @pytest.mark.unit

@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
-import pytest
 from datetime import datetime
+
+import pytest
 
 from curateur.ui.event_bus import EventBus
 from curateur.ui.event_log_handler import EventLogHandler, setup_event_logging
@@ -21,7 +22,7 @@ class TestEventLogHandler:
     @pytest.fixture
     def logger(self):
         """Create a test logger."""
-        test_logger = logging.getLogger('test_event_log_handler')
+        test_logger = logging.getLogger("test_event_log_handler")
         test_logger.handlers.clear()
         test_logger.setLevel(logging.DEBUG)
         return test_logger
@@ -42,7 +43,7 @@ class TestEventLogHandler:
 
         # Create and add log handler
         log_handler = EventLogHandler(event_bus)
-        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        log_handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(log_handler)
 
         # Log some messages
@@ -75,12 +76,12 @@ class TestEventLogHandler:
 
         # Create handler with WARNING level
         log_handler = EventLogHandler(event_bus, level=logging.WARNING)
-        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        log_handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(log_handler)
 
         # Log messages at different levels
         logger.debug("Debug message")  # Should not be emitted
-        logger.info("Info message")    # Should not be emitted
+        logger.info("Info message")  # Should not be emitted
         logger.warning("Warning message")  # Should be emitted
         logger.error("Error message")  # Should be emitted
 
@@ -108,7 +109,7 @@ class TestEventLogHandler:
 
         # Create handler with custom format
         log_handler = EventLogHandler(event_bus)
-        log_handler.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+        log_handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
         logger.addHandler(log_handler)
 
         # Log a message
@@ -198,7 +199,7 @@ class TestEventLogHandler:
 
         # Setup event logging
         log_handler = setup_event_logging(event_bus, level=logging.INFO)
-        
+
         # Get a logger and log a message
         test_logger = logging.getLogger(__name__)
         test_logger.info("Test message")
@@ -220,7 +221,7 @@ class TestEventLogHandler:
         assert len(received_events) >= 0  # Handler was set up
         # If we received events, check for our test message
         if received_events:
-            test_events = [e for e in received_events if "Test message" in e.message]
+            _ = [e for e in received_events if "Test message" in e.message]
             # It's okay if the message wasn't captured due to timing
 
     @pytest.mark.asyncio
@@ -251,7 +252,7 @@ class TestEventLogHandler:
 
         # Create handler
         log_handler = EventLogHandler(event_bus)
-        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        log_handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(log_handler)
 
         # Log at all levels
@@ -271,4 +272,10 @@ class TestEventLogHandler:
         # Verify all levels were captured
         assert len(received_events) == 5
         levels = [e.level for e in received_events]
-        assert levels == [logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
+        assert levels == [
+            logging.DEBUG,
+            logging.INFO,
+            logging.WARNING,
+            logging.ERROR,
+            logging.CRITICAL,
+        ]

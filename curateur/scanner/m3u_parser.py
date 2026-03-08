@@ -1,7 +1,7 @@
 """M3U playlist file parsing and validation."""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 
 class M3UError(Exception):
@@ -84,7 +84,7 @@ def get_disc1_file(m3u_path: Path) -> Path:
 
     if not disc1_path.exists():
         raise M3UError(
-            f"Disc 1 file not found: {disc1_path}\n" f"  Referenced in: {m3u_path}"
+            f"Disc 1 file not found: {disc1_path}\n  Referenced in: {m3u_path}"
         )
 
     return disc1_path

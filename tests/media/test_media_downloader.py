@@ -1,10 +1,9 @@
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from curateur.media.media_downloader import MediaDownloader, DownloadResult
+from curateur.media.media_downloader import DownloadResult, MediaDownloader
 
 
 class DummyDownloader:
@@ -64,7 +63,9 @@ async def test_media_downloader_success_and_summary(tmp_path):
 async def test_media_downloader_handles_missing_url(tmp_path):
     dummy_selector = SimpleNamespace(
         enabled_media_types=["box-2D"],
-        select_media_urls=lambda media_list, rom_filename: {"box-2D": {"format": "jpg"}},
+        select_media_urls=lambda media_list, rom_filename: {
+            "box-2D": {"format": "jpg"}
+        },
     )
     downloader = MediaDownloader(
         media_root=tmp_path / "media",
@@ -85,7 +86,9 @@ async def test_media_downloader_handles_missing_url(tmp_path):
 async def test_media_downloader_respects_shutdown(tmp_path):
     dummy_selector = SimpleNamespace(
         enabled_media_types=["box-2D"],
-        select_media_urls=lambda media_list, rom_filename: {"box-2D": {"url": "http://example/cover", "format": "jpg"}},
+        select_media_urls=lambda media_list, rom_filename: {
+            "box-2D": {"url": "http://example/cover", "format": "jpg"}
+        },
     )
     downloader = MediaDownloader(
         media_root=tmp_path / "media",
@@ -98,7 +101,9 @@ async def test_media_downloader_respects_shutdown(tmp_path):
     event = asyncio.Event()
     event.set()
 
-    results, count = await downloader.download_media_for_game([], "Game.nes", "nes", shutdown_event=event)
+    results, count = await downloader.download_media_for_game(
+        [], "Game.nes", "nes", shutdown_event=event
+    )
     assert count == 1
     assert results[0].success is False
     assert "Cancelled" in results[0].error
@@ -134,7 +139,9 @@ async def test_media_downloader_skips_validation_for_non_images(tmp_path):
 async def test_media_downloader_uses_semaphore_and_progress_callback(tmp_path):
     dummy_selector = SimpleNamespace(
         enabled_media_types=["box-2D"],
-        select_media_urls=lambda media_list, rom_filename: {"box-2D": {"url": "http://example/cover", "format": "jpg"}},
+        select_media_urls=lambda media_list, rom_filename: {
+            "box-2D": {"url": "http://example/cover", "format": "jpg"}
+        },
     )
     downloader = MediaDownloader(
         media_root=tmp_path / "media",
@@ -152,7 +159,9 @@ async def test_media_downloader_uses_semaphore_and_progress_callback(tmp_path):
     def progress(media_type, idx, total):
         callbacks.append((media_type, idx, total))
 
-    results, count = await downloader.download_media_for_game([], "Game.nes", "nes", progress_callback=progress)
+    results, count = await downloader.download_media_for_game(
+        [], "Game.nes", "nes", progress_callback=progress
+    )
     assert count == 1
     assert callbacks == [("box-2D", 1, 1)]
     assert semaphore._value in (0, 1)  # consumed then released
@@ -163,7 +172,9 @@ async def test_media_downloader_uses_semaphore_and_progress_callback(tmp_path):
 async def test_media_downloader_strict_hash(monkeypatch, tmp_path):
     dummy_selector = SimpleNamespace(
         enabled_media_types=["box-2D"],
-        select_media_urls=lambda media_list, rom_filename: {"box-2D": {"url": "http://example/cover", "format": "jpg"}},
+        select_media_urls=lambda media_list, rom_filename: {
+            "box-2D": {"url": "http://example/cover", "format": "jpg"}
+        },
     )
     downloader = MediaDownloader(
         media_root=tmp_path / "media",

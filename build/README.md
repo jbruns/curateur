@@ -253,7 +253,7 @@ ls -lh dist/curateur*
 1. **Missing modules**: Add to `hiddenimports` in curateur.spec
 2. **Runtime errors**: Check PyInstaller warnings during build
 3. **Large file size**: Review excluded modules, enable UPX
-4. **Import errors**: Verify all dependencies in requirements.txt
+4. **Import errors**: Verify all dependencies in pyproject.toml
 
 ---
 
@@ -313,7 +313,7 @@ Current executable sizes:
 
 **Reduction strategies:**
 1. Enable UPX compression (already enabled)
-2. Exclude unused dependencies (check requirements.txt)
+2. Exclude unused dependencies (check pyproject.toml)
 3. Remove unnecessary data files
 4. Use `--strip` flag (may cause issues on some platforms)
 

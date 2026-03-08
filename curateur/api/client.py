@@ -2,31 +2,32 @@
 
 import asyncio
 import logging
-import httpx
 import time
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
-from curateur.scanner.rom_types import ROMInfo
-from curateur.api.system_map import get_systemeid
+import httpx
+
 from curateur.api.cache import MetadataCache
 from curateur.api.error_handler import (
-    handle_http_status,
-    retry_with_backoff,
     FatalAPIError,
     SkippableAPIError,
+    handle_http_status,
+    retry_with_backoff,
 )
-from curateur.api.throttle import ThrottleManager
+from curateur.api.name_verifier import format_verification_result, verify_name_match
 from curateur.api.response_parser import (
-    validate_response,
+    ResponseError,
+    extract_error_message,
     parse_game_info,
     parse_search_results,
     parse_user_info,
-    extract_error_message,
-    ResponseError,
+    validate_response,
 )
-from curateur.api.name_verifier import verify_name_match, format_verification_result
+from curateur.api.system_map import get_systemeid
+from curateur.api.throttle import ThrottleManager
+from curateur.scanner.rom_types import ROMInfo
 
 logger = logging.getLogger(__name__)
 

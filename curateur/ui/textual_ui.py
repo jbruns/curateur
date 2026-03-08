@@ -5,57 +5,54 @@ Event-driven terminal UI using the Textual framework. Displays real-time
 scraping progress across three tabs: Overview, Details, and Systems.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import List
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Header,
+    Button,
     Footer,
-    TabbedContent,
-    TabPane,
-    Static,
+    Header,
+    Label,
+    ListItem,
+    ListView,
     ProgressBar,
     Rule,
     Select,
+    Static,
     Switch,
-    Label,
-    Button,
-    ListView,
-    ListItem,
+    TabbedContent,
+    TabPane,
 )
-from textual.reactive import reactive
-from rich.text import Text
 
 from curateur import __version__
 from curateur.ui.event_bus import EventBus
 from curateur.ui.events import (
-    SystemStartedEvent,
-    SystemCompletedEvent,
-    ROMProgressEvent,
-    HashingProgressEvent,
-    APIActivityEvent,
-    MediaDownloadEvent,
-    LogEntryEvent,
-    PerformanceUpdateEvent,
-    GameCompletedEvent,
     ActiveRequestEvent,
-    SearchRequestEvent,
-    CacheMetricsEvent,
-    GamelistUpdateEvent,
-    MediaStatsEvent,
-    SearchActivityEvent,
+    APIActivityEvent,
     AuthenticationEvent,
+    CacheMetricsEvent,
+    GameCompletedEvent,
+    GamelistUpdateEvent,
+    HashingProgressEvent,
+    LogEntryEvent,
+    MediaDownloadEvent,
+    MediaStatsEvent,
+    PerformanceUpdateEvent,
     ProcessingSummaryEvent,
+    ROMProgressEvent,
+    SearchActivityEvent,
+    SearchRequestEvent,
+    SystemCompletedEvent,
+    SystemStartedEvent,
 )
-
-import asyncio
-import types
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +280,7 @@ class CurrentSystemOperations(Container):
         """Update ROM progress section."""
         rom_processed = self.rom_successful + self.rom_skipped + self.rom_failed
         rom_pct = (rom_processed / self.rom_total * 100) if self.rom_total > 0 else 0
-        
+
         rom_content = Text()
         rom_content.append("System Progress\n", style="bold cyan")
         rom_content.append(f"{rom_processed}/{self.rom_total} ", style="white")
@@ -834,8 +831,9 @@ class ActiveRequestsTable(Container):
         duration: float = None,
     ) -> None:
         """Add or update an active request."""
-        from textual.widgets import DataTable
         import time
+
+        from textual.widgets import DataTable
 
         try:
             table = self.query_one("#active-requests-table", DataTable)
@@ -909,8 +907,9 @@ class ActiveRequestsTable(Container):
 
     def _update_durations(self) -> None:
         """Update duration column for all active requests."""
-        from textual.widgets import DataTable
         import time
+
+        from textual.widgets import DataTable
 
         if not self.active_requests:
             return
@@ -1065,11 +1064,11 @@ class SystemDetailPanel(Container):
             status = stats.get("status", "pending")
             content.append("● STATUS\n", style="bold cyan")
             if status == "complete":
-                content.append(f"  ✓ Complete", style="bright_green")
+                content.append("  ✓ Complete", style="bright_green")
             elif status == "in_progress":
-                content.append(f"  ⚡ In Progress", style="yellow")
+                content.append("  ⚡ In Progress", style="yellow")
             else:
-                content.append(f"  ⏸ Pending", style="dim")
+                content.append("  ⏸ Pending", style="dim")
 
             if stats.get("duration"):
                 content.append(f" ({stats['duration']:.1f}s)", style="dim")
@@ -1201,7 +1200,6 @@ class SystemsTab(Container):
 
     def on_tree_node_selected(self, event) -> None:
         """Handle tree selection."""
-        from textual.widgets import Tree
 
         try:
             if hasattr(event, "node") and event.node.data:
@@ -1351,15 +1349,15 @@ class ConfigTab(Container):
         """Set border titles and initialize widget values from config."""
         # Set border titles
         self.query_one("#api-settings-section", Container).border_title = "API Settings"
-        self.query_one("#runtime-settings-section", Container).border_title = (
-            "Runtime Settings"
-        )
-        self.query_one("#logging-settings-section", Container).border_title = (
-            "Logging Settings"
-        )
-        self.query_one("#search-settings-section", Container).border_title = (
-            "Search Settings"
-        )
+        self.query_one(
+            "#runtime-settings-section", Container
+        ).border_title = "Runtime Settings"
+        self.query_one(
+            "#logging-settings-section", Container
+        ).border_title = "Logging Settings"
+        self.query_one(
+            "#search-settings-section", Container
+        ).border_title = "Search Settings"
 
         # Initialize widget values from app config
         config = self.app.config
@@ -1694,12 +1692,12 @@ class QuitConfirmDialog(ModalScreen):
                 with Container(id="quit-stats"):
                     stats = Text()
                     stats.append("Current Progress:\n", style="bold cyan")
-                    stats.append(f"  System: ", style="white")
+                    stats.append("  System: ", style="white")
                     stats.append(f"{self.current_system}\n", style="bright_magenta")
-                    stats.append(f"  Processed: ", style="white")
+                    stats.append("  Processed: ", style="white")
                     stats.append(f"{self.processed}/{self.total} ROMs\n", style="cyan")
                     remaining = self.total - self.processed
-                    stats.append(f"  Remaining: ", style="white")
+                    stats.append("  Remaining: ", style="white")
                     stats.append(f"{remaining} ROMs", style="yellow")
                     yield Static(stats)
 
@@ -2326,7 +2324,7 @@ class CurateurUI(App):
     async def on_hashing_progress(self, event: HashingProgressEvent) -> None:
         """Handle hashing progress event."""
         logger.debug(
-            f"Hashing: {event.completed}/{event.total} " f"(skipped: {event.skipped})"
+            f"Hashing: {event.completed}/{event.total} (skipped: {event.skipped})"
         )
 
         # Update current system widget

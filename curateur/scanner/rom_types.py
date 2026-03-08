@@ -1,9 +1,9 @@
 """ROM type definitions and data structures."""
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, List
 from enum import Enum
+from pathlib import Path
+from typing import List, Optional
 
 
 class ROMType(Enum):

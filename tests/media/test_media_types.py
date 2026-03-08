@@ -1,11 +1,11 @@
 import pytest
 
 from curateur.media.media_types import (
+    convert_directory_names_to_media_types,
     get_directory_for_media_type,
     is_supported_media_type,
-    convert_directory_names_to_media_types,
-    to_singular,
     to_plural,
+    to_singular,
 )
 
 

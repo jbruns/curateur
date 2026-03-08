@@ -5,10 +5,12 @@ Generates properly formatted gamelist.xml with provider info and game entries.
 """
 
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import List
-from copy import deepcopy
+
 from lxml import etree
+
 from .game_entry import GameEntry, GamelistMetadata
 
 logger = logging.getLogger(__name__)

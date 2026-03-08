@@ -4,8 +4,10 @@ Integration tests for gamelist generation with all config combinations.
 Tests the complete flow: config -> generator -> merger -> XML output
 Verifies all merge strategies, auto-favorite, and user field preservation.
 """
-import pytest
+
 from pathlib import Path
+
+import pytest
 from lxml import etree
 
 from curateur.gamelist.generator import GamelistGenerator
@@ -29,7 +31,7 @@ def _create_existing_gamelist(path: Path, entries: list):
 
     tree = etree.ElementTree(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tree.write(str(path), encoding='utf-8', xml_declaration=True, pretty_print=True)
+    tree.write(str(path), encoding="utf-8", xml_declaration=True, pretty_print=True)
 
 
 def _parse_gamelist(path: Path) -> dict:
@@ -262,7 +264,7 @@ class TestExistingGamelistUpdates:
                     "playcount": "10",
                     "lastplayed": "20230101T000000",
                 }
-            ]
+            ],
         )
 
         generator = GamelistGenerator(
@@ -328,7 +330,7 @@ class TestExistingGamelistUpdates:
                     "playcount": "10",
                     "lastplayed": "20230101T000000",
                 }
-            ]
+            ],
         )
 
         generator = GamelistGenerator(
@@ -393,7 +395,7 @@ class TestExistingGamelistUpdates:
                     "rating": "0.3",
                     "favorite": "true",  # User manually favorited despite low rating
                 }
-            ]
+            ],
         )
 
         generator = GamelistGenerator(
@@ -447,7 +449,7 @@ class TestExistingGamelistUpdates:
                     "rating": "0.5",
                     "playcount": "10",  # User data
                 }
-            ]
+            ],
         )
 
         generator = GamelistGenerator(
@@ -645,7 +647,7 @@ class TestMixedScenarios:
                     "rating": "0.8",
                     "favorite": "true",
                 },
-            ]
+            ],
         )
 
         generator = GamelistGenerator(

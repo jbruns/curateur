@@ -1,24 +1,23 @@
 """Command-line interface for curateur."""
 
-import sys
-import logging
 import argparse
 import asyncio
-import httpx
+import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 from curateur import __version__
-from curateur.config.loader import load_config, ConfigError
-from curateur.config.validator import validate_config, ValidationError
-from curateur.config.es_systems import parse_es_systems
 from curateur.api.client import ScreenScraperClient
-from curateur.workflow.orchestrator import WorkflowOrchestrator
-from curateur.workflow.progress import ProgressTracker, ErrorLogger
+from curateur.config.es_systems import parse_es_systems
+from curateur.config.loader import ConfigError, load_config
+from curateur.config.validator import ValidationError, validate_config
 from curateur.ui.event_bus import EventBus
 from curateur.ui.textual_ui import CurateurUI
+from curateur.workflow.orchestrator import WorkflowOrchestrator
+from curateur.workflow.progress import ErrorLogger, ProgressTracker
+
+logger = logging.getLogger(__name__)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -297,7 +296,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Create initial client with conservative pool size (will be updated after auth)
     client = pool_manager.create_client(max_connections=10)
     logger.debug(
-        f"HTTP connection pool created (initial size: 10, will scale after authentication)"
+        "HTTP connection pool created (initial size: 10, will scale after authentication)"
     )
 
     # Phase E: Validate API configuration
@@ -309,7 +308,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         max_retries = 3
 
     # Phase E: Initialize ThrottleManager
-    from curateur.api.throttle import ThrottleManager, RateLimit
+    from curateur.api.throttle import RateLimit, ThrottleManager
 
     # Get requests per minute from config (optional override)
     config_rpm = config.get("api", {}).get("requests_per_minute")
@@ -517,7 +516,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
     # Print header in headless mode only
     if headless_logger and not textual_ui:
         print(f"\ncurateur v{__version__}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(
             f"Mode: {'DRY-RUN (no downloads)' if config['runtime'].get('dry_run') else 'Full scraping'}"
         )
@@ -527,10 +526,10 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                 f"Search fallback: ENABLED (threshold: {search_config.get('confidence_threshold', 0.7):.1%})"
             )
             if search_config.get("interactive_search"):
-                print(f"Interactive mode: ENABLED")
+                print("Interactive mode: ENABLED")
         if thread_manager and thread_manager.max_concurrent > 1:
             print(f"Parallel processing: {thread_manager.max_concurrent} threads")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
     # Process each system
     try:
@@ -711,7 +710,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         # Print performance summary if available
         if performance_monitor:
             summary = performance_monitor.get_summary()
-            print(f"\nPerformance Summary:")
+            print("\nPerformance Summary:")
             print(f"  Total time: {summary['elapsed_seconds']:.1f}s")
             print(f"  ROMs/second: {summary['avg_roms_per_second']:.2f}")
             print(f"  API calls: {summary['total_api_calls']}")
@@ -723,7 +722,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             queue_stats = work_queue.get_stats()
             failed_items = work_queue.get_failed_items()
 
-            print(f"\nWork Queue Statistics:")
+            print("\nWork Queue Statistics:")
             print(f"  Processed: {queue_stats['processed']}")
             print(f"  Failed (retries exhausted): {queue_stats['failed']}")
             print(f"  Max retries per item: {queue_stats['max_retries']}")
@@ -733,7 +732,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
             print(f"  Total retry attempts: {total_retries}")
 
             if failed_items:
-                print(f"\n  Failed Items:")
+                print("\n  Failed Items:")
                 for item in failed_items[:10]:  # Show first 10
                     rom_name = item["rom_info"].get("filename", "unknown")
                     action = item["action"]
@@ -750,7 +749,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
         if throttle_manager and api_client:
             from curateur.api.client import APIEndpoint
 
-            print(f"\nThrottle Manager Statistics:")
+            print("\nThrottle Manager Statistics:")
             total_wait_time = 0.0
             max_backoff_multiplier = 1
             backoff_events = 0
@@ -777,7 +776,7 @@ async def run_scraper(config: dict, args: argparse.Namespace) -> int:
                         f"    In backoff: {stats['backoff_remaining']:.1f}s remaining"
                     )
 
-            print(f"  Summary:")
+            print("  Summary:")
             print(f"    Total backoff events: {backoff_events}")
             print(f"    Max backoff multiplier reached: {max_backoff_multiplier}x")
 

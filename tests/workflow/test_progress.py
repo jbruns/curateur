@@ -1,4 +1,4 @@
-from curateur.workflow.progress import ProgressTracker, ErrorLogger
+from curateur.workflow.progress import ErrorLogger, ProgressTracker
 
 
 def test_progress_tracker_counts_and_summary(capsys):

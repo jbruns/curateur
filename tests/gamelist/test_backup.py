@@ -1,8 +1,9 @@
 """Tests for gamelist backup functionality"""
-import pytest
-from pathlib import Path
-from datetime import datetime
+
 import time
+from datetime import datetime
+
+import pytest
 
 from curateur.gamelist.backup import GamelistBackup
 
@@ -57,7 +58,9 @@ def test_create_backup_filename_format(tmp_path):
     assert filename.endswith(".bak")
 
     # Extract timestamp part
-    timestamp_str = filename.replace("gamelist_curateur_backup_", "").replace(".bak", "")
+    timestamp_str = filename.replace("gamelist_curateur_backup_", "").replace(
+        ".bak", ""
+    )
 
     # Parse timestamp (with microseconds)
     backup_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S_%f")
@@ -323,8 +326,8 @@ def test_create_backup_handles_large_files(tmp_path):
     # Create a large gamelist with many entries
     content = '<?xml version="1.0"?>\n<gameList>\n'
     for i in range(1000):
-        content += f'  <game><path>./game{i}.zip</path><name>Game {i}</name></game>\n'
-    content += '</gameList>'
+        content += f"  <game><path>./game{i}.zip</path><name>Game {i}</name></game>\n"
+    content += "</gameList>"
 
     gamelist_path.write_text(content)
 
@@ -356,7 +359,7 @@ def test_backup_integration_workflow(tmp_path):
 
     # Create second backup
     time.sleep(0.1)
-    backup2 = GamelistBackup.create_backup(gamelist_path)
+    GamelistBackup.create_backup(gamelist_path)
 
     # List backups (should show 2)
     backups = GamelistBackup.list_backups(gamelist_dir)

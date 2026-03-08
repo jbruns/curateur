@@ -2,12 +2,12 @@
 
 import argparse
 import logging
+import re
 import shutil
 import tempfile
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from curateur.config.es_systems import SystemDefinition, parse_es_systems
 from curateur.scanner.disc_handler import (

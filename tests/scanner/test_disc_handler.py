@@ -1,12 +1,10 @@
-from pathlib import Path
-
 import pytest
 
 from curateur.scanner.disc_handler import (
-    is_disc_subdirectory,
-    get_contained_file,
-    validate_disc_subdirectory,
     DiscSubdirError,
+    get_contained_file,
+    is_disc_subdirectory,
+    validate_disc_subdirectory,
 )
 
 

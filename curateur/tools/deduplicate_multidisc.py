@@ -16,17 +16,16 @@ Options:
 """
 
 import argparse
-import sys
-from pathlib import Path
-from typing import List, Dict, Tuple
-from collections import defaultdict
 import shutil
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 from lxml import etree
 
+from curateur.gamelist.game_entry import GameEntry, GamelistMetadata
 from curateur.gamelist.parser import GamelistParser
 from curateur.gamelist.xml_writer import GamelistWriter
-from curateur.gamelist.game_entry import GameEntry, GamelistMetadata
 from curateur.tools.organize_roms import split_base_and_disc
 
 
@@ -220,7 +219,7 @@ def process_gamelist(
 
     # Show summary
     if removed_entries:
-        print(f"\nSummary:")
+        print("\nSummary:")
         print(f"  Total entries: {len(entries)}")
         print(f"  Kept entries: {len(kept_entries)}")
         print(f"  Removed duplicates: {len(removed_entries)}")

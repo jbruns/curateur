@@ -7,10 +7,11 @@ Coordinates URL selection, downloading, validation, and organization of game med
 import asyncio
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
-from .url_selector import MediaURLSelector
+from typing import Any, Dict, List, Optional, Tuple
+
 from .downloader import ImageDownloader
 from .organizer import MediaOrganizer
+from .url_selector import MediaURLSelector
 
 
 class DownloadResult:
@@ -316,8 +317,9 @@ class MediaDownloader:
 
             # Calculate hash based on validation mode
             import asyncio
-            from curateur.scanner.hash_calculator import calculate_hash
             import logging
+
+            from curateur.scanner.hash_calculator import calculate_hash
 
             logger = logging.getLogger(__name__)
             hash_value = None

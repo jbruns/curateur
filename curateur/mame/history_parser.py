@@ -6,6 +6,7 @@ Extracts game descriptions and historical information.
 import logging
 from pathlib import Path
 from typing import Dict, Optional
+
 from lxml import etree
 
 logger = logging.getLogger(__name__)

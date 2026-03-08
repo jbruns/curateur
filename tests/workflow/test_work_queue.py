@@ -1,8 +1,6 @@
-import asyncio
-
 import pytest
 
-from curateur.workflow.work_queue import WorkQueueManager, WorkItem, Priority
+from curateur.workflow.work_queue import Priority, WorkQueueManager
 
 
 @pytest.mark.unit

@@ -6,13 +6,14 @@ Coordinates gamelist creation, parsing, merging, and writing.
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 from .game_entry import GameEntry, GamelistMetadata
-from .xml_writer import GamelistWriter
-from .parser import GamelistParser
-from .metadata_merger import MetadataMerger
-from .path_handler import PathHandler
 from .integrity_validator import IntegrityValidator
+from .metadata_merger import MetadataMerger
+from .parser import GamelistParser
+from .path_handler import PathHandler
+from .xml_writer import GamelistWriter
 
 logger = logging.getLogger(__name__)
 

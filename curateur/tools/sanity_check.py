@@ -20,14 +20,14 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import List, Optional
 
 from curateur.config.es_systems import SystemDefinition, parse_es_systems
-from curateur.config.loader import load_config, ConfigError
-from curateur.config.validator import validate_config, ValidationError
-from curateur.scanner.disc_handler import is_disc_subdirectory, DiscSubdirError
+from curateur.config.loader import ConfigError, load_config
+from curateur.config.validator import ValidationError, validate_config
+from curateur.scanner.disc_handler import is_disc_subdirectory
 from curateur.scanner.hash_calculator import format_file_size
-from curateur.scanner.m3u_parser import parse_m3u, M3UError
+from curateur.scanner.m3u_parser import M3UError, parse_m3u
 
 logger = logging.getLogger(__name__)
 
@@ -215,8 +215,8 @@ def validate_system(
     m3u_files = []
     multidisc_files = []
 
-    # Track .cue directories for bin/cue validation
-    cue_directories = []
+    # Track .cue directories for bin/cue validation (reserved for future use)
+    _ = []
 
     # Track potential multi-disc files outside .multidisc
     misplaced_multidisc_files = []
@@ -623,7 +623,7 @@ def print_report(report: ValidationReport, verbose: bool = False):
         print(f"  Files checked: {sys_report.files_checked}")
 
         if not sys_report.has_issues():
-            print(f"  Status: ✓ No issues found")
+            print("  Status: ✓ No issues found")
             continue
 
         print(f"  Issues found: {len(sys_report.issues)}")

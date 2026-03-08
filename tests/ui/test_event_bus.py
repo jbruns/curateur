@@ -1,15 +1,16 @@
 """Unit tests for EventBus."""
 
 import asyncio
-import pytest
 from datetime import datetime
+
+import pytest
 
 from curateur.ui.event_bus import EventBus
 from curateur.ui.events import (
-    SystemStartedEvent,
-    LogEntryEvent,
-    HashingProgressEvent,
     GameCompletedEvent,
+    HashingProgressEvent,
+    LogEntryEvent,
+    SystemStartedEvent,
 )
 
 
@@ -41,7 +42,7 @@ class TestEventBus:
             system_fullname="Nintendo Entertainment System",
             total_roms=100,
             current_index=0,
-            total_systems=5
+            total_systems=5,
         )
         await event_bus.publish(test_event)
 
@@ -79,7 +80,7 @@ class TestEventBus:
         test_event = LogEntryEvent(
             level=20,  # INFO
             message="Test log message",
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
         )
         await event_bus.publish(test_event)
 
@@ -112,10 +113,7 @@ class TestEventBus:
 
         # Publish event
         test_event = HashingProgressEvent(
-            completed=50,
-            total=100,
-            in_progress=True,
-            skipped=5
+            completed=50, total=100, in_progress=True, skipped=5
         )
         await event_bus.publish(test_event)
 
@@ -149,11 +147,7 @@ class TestEventBus:
         task = asyncio.create_task(event_bus.process_events())
 
         # Publish event
-        test_event = GameCompletedEvent(
-            game_id="12345",
-            title="Test Game",
-            year="2024"
-        )
+        test_event = GameCompletedEvent(game_id="12345", title="Test Game", year="2024")
         await event_bus.publish(test_event)
 
         # Wait for processing
@@ -169,7 +163,7 @@ class TestEventBus:
 
         # Error count should be incremented
         stats = event_bus.get_stats()
-        assert stats['errors'] == 1
+        assert stats["errors"] == 1
 
     @pytest.mark.asyncio
     async def test_type_filtering(self, event_bus):
@@ -235,6 +229,7 @@ class TestEventBus:
     @pytest.mark.asyncio
     async def test_get_stats(self, event_bus):
         """Test event bus statistics."""
+
         def handler(event):
             pass
 
@@ -259,9 +254,9 @@ class TestEventBus:
         task.cancel()
 
         # Verify stats
-        assert stats['events_processed'] == 2
-        assert stats['errors'] == 0
-        assert stats['subscriber_count'] == 2
+        assert stats["events_processed"] == 2
+        assert stats["errors"] == 0
+        assert stats["subscriber_count"] == 2
 
     def test_publish_sync_without_event_loop(self, event_bus):
         """Test that publish_sync handles missing event loop gracefully."""
@@ -284,21 +279,21 @@ class TestEventBusWithAllEventTypes:
     async def test_all_event_types(self, event_bus):
         """Test that all event types can be published and received."""
         from curateur.ui.events import (
-            ROMProgressEvent,
-            APIActivityEvent,
-            MediaDownloadEvent,
-            PerformanceUpdateEvent,
-            GameCompletedEvent,
-            SystemCompletedEvent,
             ActiveRequestEvent,
+            APIActivityEvent,
+            AuthenticationEvent,
+            CacheMetricsEvent,
+            GameCompletedEvent,
+            GamelistUpdateEvent,
+            MediaDownloadEvent,
+            MediaStatsEvent,
+            PerformanceUpdateEvent,
+            ProcessingSummaryEvent,
+            ROMProgressEvent,
+            SearchActivityEvent,
             SearchRequestEvent,
             SearchResponseEvent,
-            CacheMetricsEvent,
-            GamelistUpdateEvent,
-            AuthenticationEvent,
-            SearchActivityEvent,
-            MediaStatsEvent,
-            ProcessingSummaryEvent,
+            SystemCompletedEvent,
         )
 
         received_events = {}
@@ -308,6 +303,7 @@ class TestEventBusWithAllEventTypes:
                 if event_type_name not in received_events:
                     received_events[event_type_name] = []
                 received_events[event_type_name].append(event)
+
             return handler
 
         # Subscribe to all event types
@@ -392,9 +388,7 @@ class TestEventBusWithAllEventTypes:
         # Publish many events
         num_events = 100
         for i in range(num_events):
-            await event_bus.publish(
-                LogEntryEvent(20, f"Message {i}", datetime.now())
-            )
+            await event_bus.publish(LogEntryEvent(20, f"Message {i}", datetime.now()))
 
         # Wait for processing
         await asyncio.sleep(0.3)
@@ -471,9 +465,7 @@ class TestEventBusWithAllEventTypes:
 
         # Publish events in order
         for i in range(10):
-            await event_bus.publish(
-                LogEntryEvent(20, f"Message {i}", datetime.now())
-            )
+            await event_bus.publish(LogEntryEvent(20, f"Message {i}", datetime.now()))
 
         # Wait for processing
         await asyncio.sleep(0.2)
@@ -503,9 +495,7 @@ class TestEventBusWithAllEventTypes:
 
         # Publish multiple events
         for i in range(5):
-            await event_bus.publish(
-                LogEntryEvent(20, f"Message {i}", datetime.now())
-            )
+            await event_bus.publish(LogEntryEvent(20, f"Message {i}", datetime.now()))
             await asyncio.sleep(0.05)  # Give time for processing
 
         # Wait for processing
@@ -554,11 +544,12 @@ class TestEventBusWithAllEventTypes:
 
         # Error count should be incremented
         stats = event_bus.get_stats()
-        assert stats['errors'] == 1
+        assert stats["errors"] == 1
 
     @pytest.mark.asyncio
     async def test_stats_accuracy(self, event_bus):
         """Test that statistics are accurately tracked."""
+
         def handler1(event):
             pass
 
@@ -592,9 +583,9 @@ class TestEventBusWithAllEventTypes:
         task.cancel()
 
         # Verify stats
-        assert stats['events_processed'] == 3
-        assert stats['errors'] == 0
-        assert stats['subscriber_count'] == 3
+        assert stats["events_processed"] == 3
+        assert stats["errors"] == 0
+        assert stats["subscriber_count"] == 3
 
     @pytest.mark.asyncio
     async def test_empty_event_queue(self, event_bus):
@@ -611,7 +602,7 @@ class TestEventBusWithAllEventTypes:
 
         # Should complete without errors
         stats = event_bus.get_stats()
-        assert stats['events_processed'] == 0
+        assert stats["events_processed"] == 0
 
     @pytest.mark.asyncio
     async def test_event_immutability(self, event_bus):

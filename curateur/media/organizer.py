@@ -7,7 +7,7 @@ managing file naming conventions.
 
 import os
 from pathlib import Path
-from typing import Optional
+
 from .media_types import get_directory_for_media_type
 
 

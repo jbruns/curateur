@@ -2,17 +2,19 @@ import pytest
 
 from curateur.api.response_parser import (
     ResponseError,
-    validate_response,
+    decode_html_entities,
+    extract_error_message,
     parse_game_info,
     parse_search_results,
-    extract_error_message,
-    decode_html_entities,
+    validate_response,
 )
 
 
 @pytest.mark.unit
 def test_validate_response_happy_path():
-    xml = b"<Data><jeu id='123'><noms><nom region='us'>Example</nom></noms></jeu></Data>"
+    xml = (
+        b"<Data><jeu id='123'><noms><nom region='us'>Example</nom></noms></jeu></Data>"
+    )
     root = validate_response(xml)
     assert root.tag == "Data"
 
@@ -129,7 +131,7 @@ def test_parse_genres_with_multiple_languages():
     </Data>
     """
     root = validate_response(xml)
-    game = parse_game_info(root, 'en')
+    game = parse_game_info(root, "en")
 
     # Should extract only English genres and de-duplicate by ID
     assert game["genres"] == ["Strategy", "Simulation"]
@@ -210,19 +212,19 @@ def test_parse_genres_respects_preferred_language():
         </genres>
       </jeu>
     </Data>
-    """.encode('utf-8')
+    """.encode("utf-8")
     root = validate_response(xml)
 
     # Test with French
-    game_fr = parse_game_info(root, 'fr')
+    game_fr = parse_game_info(root, "fr")
     assert game_fr["genres"] == ["Stratégie"]
 
     # Test with German
-    game_de = parse_game_info(root, 'de')
+    game_de = parse_game_info(root, "de")
     assert game_de["genres"] == ["Strategie"]
 
     # Test with English (default)
-    game_en = parse_game_info(root, 'en')
+    game_en = parse_game_info(root, "en")
     assert game_en["genres"] == ["Strategy"]
 
 
@@ -243,7 +245,7 @@ def test_parse_genres_comprehensive_coverage():
     </Data>
     """
     root = validate_response(xml_single)
-    game = parse_game_info(root, 'en')
+    game = parse_game_info(root, "en")
     assert game["genres"] == ["Platform"]
 
     # Case 2: Principal with sub-genre (like AirZonk.xml)
@@ -259,7 +261,7 @@ def test_parse_genres_comprehensive_coverage():
     </Data>
     """
     root = validate_response(xml_with_sub)
-    game = parse_game_info(root, 'en')
+    game = parse_game_info(root, "en")
     # Should only include principale="1", not the sub-genre
     assert game["genres"] == ["Shoot'em Up"]
 
@@ -276,5 +278,5 @@ def test_parse_genres_comprehensive_coverage():
     </Data>
     """
     root = validate_response(xml_multiple)
-    game = parse_game_info(root, 'en')
+    game = parse_game_info(root, "en")
     assert game["genres"] == ["Strategy", "Simulation"]

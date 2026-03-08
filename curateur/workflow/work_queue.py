@@ -8,7 +8,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional, Any
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 

@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from curateur.scanner.rom_scanner import scan_system, _process_entry
-from curateur.scanner.rom_types import ROMType
 from curateur.config.es_systems import SystemDefinition
+from curateur.scanner.rom_scanner import _process_entry, scan_system
+from curateur.scanner.rom_types import ROMType
 
 
 def _make_system(tmp_path: Path) -> SystemDefinition:

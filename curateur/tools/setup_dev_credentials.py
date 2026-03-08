@@ -18,13 +18,13 @@ obfuscated but NOT cryptographically secure.
 """
 
 import sys
-from pathlib import Path
 from getpass import getpass
+from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from curateur.api.obfuscator import obfuscate, deobfuscate
+from curateur.api.obfuscator import deobfuscate, obfuscate
 
 
 def format_bytearray(data: bytearray, indent: int = 4) -> str:

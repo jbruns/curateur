@@ -105,8 +105,7 @@ class ConnectionPoolManager:
         )
 
         logger.debug(
-            f"Connection pool: max_connections={max_connections}, "
-            f"timeout={timeout}s"
+            f"Connection pool: max_connections={max_connections}, timeout={timeout}s"
         )
 
         return client

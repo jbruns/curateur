@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from curateur.gamelist.integrity_validator import IntegrityValidator
 from curateur.gamelist.game_entry import GameEntry
+from curateur.gamelist.integrity_validator import IntegrityValidator
 
 
 def _entry(path: str) -> GameEntry:

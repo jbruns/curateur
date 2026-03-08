@@ -4,10 +4,10 @@ import pytest
 
 from curateur.api import error_handler
 from curateur.api.error_handler import (
+    ErrorCategory,
+    FatalAPIError,
     RetryableAPIError,
     SkippableAPIError,
-    FatalAPIError,
-    ErrorCategory,
 )
 
 

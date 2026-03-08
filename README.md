@@ -86,23 +86,21 @@ Outputs:
 - `curateur/tools/`: maintenance scripts (see below).
 
 ## Development
-- Install dev extras: `pip install -e .[dev]`.
+- Install dev extras: `pip install -e ".[dev]"`.
 - Run tests (pytest markers are strict by default):
   - Fast profile: `pytest -m "not slow and not live" --cov=curateur --cov-report=term-missing`
   - Full without live: `pytest -m "not live"`
   - Live API checks (requires credentials): `pytest -m "live" --maxfail=1`
-- Make targets: `make test`, `make check-corruption`, `make check-quality`, `make lint` (strict).
 - Testing approach is detailed in `TESTING_STRATEGY.md` (taxonomy, fixtures, and marker guidance).
 - Package entrypoint is `curateur`; during development you can also run `python -m curateur.cli ...`.
 
-### Dependencies & constraints
-- Ranges are bounded to allow patch/minor updates while blocking breaking majors (`requirements.txt`, `pyproject.toml`).
-- For reproducible installs, use the pinned set: `pip install -e .[dev] -c constraints.txt` (or `pip install -r requirements.txt -c constraints.txt`).
-- To refresh pins: create a clean venv, install from `requirements.txt`, run the test suite, then `pip freeze | grep -vE '^(pip|setuptools|wheel)==|^-e ' > constraints.txt`.
-- Keep the ranges and the constraints file in sync when updating dependencies.
+### Dependencies
+- All dependencies (core and dev) are declared in `pyproject.toml`.
+- Ranges are bounded to allow patch/minor updates while blocking breaking majors.
 
 ### Maintainer tools
-- Code quality scanner: `python3 curateur/tools/code_quality_check.py curateur/` (see `curateur/tools/README.md`).
+- Lint and format check: `ruff check curateur/ tests/ && ruff format --check curateur/ tests/`.
+- Auto-format code: `ruff format curateur/ tests/`.
 - Update ScreenScraper platform mapping: `python -m curateur.tools.generate_system_map --es-systems es_systems.xml --systemes-liste systemesListe.xml`.
 - Developer credentials (maintainers only): `python -m curateur.tools.setup_dev_credentials` to refresh obfuscated values in `curateur/api/credentials.py`.
 

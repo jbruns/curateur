@@ -1,7 +1,7 @@
 """Workflow coordination package."""
 
-from .orchestrator import WorkflowOrchestrator, ScrapingResult, SystemResult
-from .progress import ProgressTracker, ErrorLogger
+from .orchestrator import ScrapingResult, SystemResult, WorkflowOrchestrator
+from .progress import ErrorLogger, ProgressTracker
 
 __all__ = [
     "WorkflowOrchestrator",

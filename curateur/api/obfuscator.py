@@ -6,7 +6,6 @@ This is NOT cryptographically secure and can be reverse-engineered. It exists on
 to prevent casual scanning of repositories for plaintext credentials.
 """
 
-import base64
 from typing import Union
 
 # Project-specific key derived from software identity + static salt

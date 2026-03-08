@@ -8,9 +8,8 @@ thread-safe event delivery and error isolation.
 import asyncio
 import inspect
 import logging
-from typing import Callable, Any
 from collections import defaultdict
-
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 

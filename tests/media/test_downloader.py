@@ -1,7 +1,5 @@
-from pathlib import Path
-
-import pytest
 import httpx
+import pytest
 
 from curateur.media.downloader import ImageDownloader
 
@@ -27,8 +25,9 @@ class DummyClient:
 
 
 def _make_png_bytes(width=2, height=2):
-    from PIL import Image
     from io import BytesIO
+
+    from PIL import Image
 
     img = Image.new("RGB", (width, height), color="red")
     buf = BytesIO()
@@ -37,7 +36,9 @@ def _make_png_bytes(width=2, height=2):
 
 
 class FailingClient(DummyClient):
-    def __init__(self, content: bytes, content_type: str = "image/png", errors_before_success=1):
+    def __init__(
+        self, content: bytes, content_type: str = "image/png", errors_before_success=1
+    ):
         super().__init__(content, content_type=content_type)
         self._errors_before_success = errors_before_success
 
@@ -53,7 +54,9 @@ class FailingClient(DummyClient):
 async def test_image_downloader_downloads_and_validates(tmp_path):
     png_bytes = _make_png_bytes()
     client = DummyClient(png_bytes)
-    downloader = ImageDownloader(client=client, validation_mode="normal", min_width=1, min_height=1)
+    downloader = ImageDownloader(
+        client=client, validation_mode="normal", min_width=1, min_height=1
+    )
 
     out = tmp_path / "image.png"
     ok, err = await downloader.download("http://example/image.png", out)
@@ -69,7 +72,13 @@ async def test_image_downloader_downloads_and_validates(tmp_path):
 async def test_image_downloader_rejects_small_images(tmp_path):
     png_bytes = _make_png_bytes(width=1, height=1)
     client = DummyClient(png_bytes)
-    downloader = ImageDownloader(client=client, validation_mode="normal", min_width=5, min_height=5, max_retries=1)
+    downloader = ImageDownloader(
+        client=client,
+        validation_mode="normal",
+        min_width=5,
+        min_height=5,
+        max_retries=1,
+    )
 
     out = tmp_path / "small.png"
     ok, err = await downloader.download("http://example/small.png", out)
@@ -96,7 +105,9 @@ async def test_image_downloader_rejects_bad_content_type(tmp_path):
 async def test_image_downloader_retries_on_timeout(tmp_path):
     png_bytes = _make_png_bytes()
     client = FailingClient(png_bytes, errors_before_success=1)
-    downloader = ImageDownloader(client=client, validation_mode="disabled", max_retries=2)
+    downloader = ImageDownloader(
+        client=client, validation_mode="disabled", max_retries=2
+    )
 
     out = tmp_path / "retry.png"
     ok, err = await downloader.download("http://example/retry.png", out)

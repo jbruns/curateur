@@ -1,8 +1,9 @@
 """Configuration loading and parsing."""
 
-import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+import yaml
 
 
 class ConfigError(Exception):

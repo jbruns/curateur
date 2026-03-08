@@ -1,4 +1,5 @@
 """Tests for HeadlessLogger"""
+
 import pytest
 
 from curateur.ui.headless_logger import HeadlessLogger
@@ -11,11 +12,11 @@ def test_headless_logger_initialization():
     assert logger.is_paused is False
     assert logger.quit_requested is False
     assert logger.skip_requested is False
-    assert logger.stats['successful'] == 0
-    assert logger.stats['failed'] == 0
-    assert logger.stats['skipped'] == 0
-    assert logger.stats['unmatched'] == 0
-    assert logger.stats['search_fallback'] == 0
+    assert logger.stats["successful"] == 0
+    assert logger.stats["failed"] == 0
+    assert logger.stats["skipped"] == 0
+    assert logger.stats["unmatched"] == 0
+    assert logger.stats["search_fallback"] == 0
     assert logger.log_handler is None
     assert logger.current_system is None
     assert logger.total_systems == 0
@@ -27,22 +28,22 @@ def test_headless_logger_stats_tracking():
     logger = HeadlessLogger(config={})
 
     logger.increment_completed(success=True)
-    assert logger.stats['successful'] == 1
+    assert logger.stats["successful"] == 1
     assert logger.processed_in_system == 1
 
     logger.increment_completed(success=False)
-    assert logger.stats['failed'] == 1
+    assert logger.stats["failed"] == 1
     assert logger.processed_in_system == 2
 
     logger.increment_completed(skipped=True)
-    assert logger.stats['skipped'] == 1
+    assert logger.stats["skipped"] == 1
     assert logger.processed_in_system == 3
 
     logger.increment_unmatched()
-    assert logger.stats['unmatched'] == 1
+    assert logger.stats["unmatched"] == 1
 
     logger.increment_search_fallback()
-    assert logger.stats['search_fallback'] == 1
+    assert logger.stats["search_fallback"] == 1
 
 
 @pytest.mark.unit
@@ -85,10 +86,10 @@ def test_headless_logger_prompt_returns_default():
     """Test that prompts return default without interaction"""
     logger = HeadlessLogger(config={})
 
-    assert logger.prompt_confirm("Test?", default='y') is True
-    assert logger.prompt_confirm("Test?", default='n') is False
-    assert logger.prompt_confirm("Test?", default='Y') is True
-    assert logger.prompt_confirm("Test?", default='N') is False
+    assert logger.prompt_confirm("Test?", default="y") is True
+    assert logger.prompt_confirm("Test?", default="n") is False
+    assert logger.prompt_confirm("Test?", default="Y") is True
+    assert logger.prompt_confirm("Test?", default="N") is False
 
 
 @pytest.mark.unit
@@ -148,9 +149,9 @@ def test_headless_logger_pipeline_methods():
     logger.update_pipeline_concurrency(4)
     logger.set_throttle_status(True)
     logger.set_throttle_status(False)
-    logger.set_auth_status('in_progress')
-    logger.set_auth_status('complete')
-    logger.set_auth_status('unknown')
+    logger.set_auth_status("in_progress")
+    logger.set_auth_status("complete")
+    logger.set_auth_status("unknown")
 
 
 @pytest.mark.unit
@@ -168,4 +169,4 @@ def test_headless_logger_reset_between_systems():
     assert logger.processed_in_system == 0
 
     # Global stats should not be reset
-    assert logger.stats['successful'] == 2
+    assert logger.stats["successful"] == 2

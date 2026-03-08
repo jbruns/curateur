@@ -7,9 +7,9 @@ and improve performance for unchanged ROMs.
 
 import json
 import logging
-from pathlib import Path
-from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -263,8 +263,6 @@ class MetadataCache:
 
         # Ensure cache is loaded
         self._load_cache()
-
-        initial_count = len(self._memory_cache)
 
         # Find expired entries
         expired_hashes = [

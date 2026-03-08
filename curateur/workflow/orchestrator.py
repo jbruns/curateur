@@ -10,37 +10,35 @@ Coordinates the complete scraping workflow:
 
 import asyncio
 import logging
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Callable, Any, TYPE_CHECKING
+import time
 from dataclasses import dataclass
 from datetime import datetime
-import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
-    from ..workflow.thread_pool import ThreadPoolManager
-    from ..workflow.performance import PerformanceMonitor
-    from ..ui.headless_logger import HeadlessLogger
     from ..api.throttle import ThrottleManager
+    from ..workflow.performance import PerformanceMonitor
+    from ..workflow.thread_pool import ThreadPoolManager
 
-from ..config.es_systems import SystemDefinition
-from ..scanner.rom_scanner import scan_system
-from ..scanner.rom_types import ROMInfo
-from ..scanner.hash_calculator import calculate_hash
-from ..api.client import ScreenScraperClient
 from ..api.cache import MetadataCache
-from ..api.error_handler import SkippableAPIError, categorize_error, ErrorCategory
+from ..api.client import ScreenScraperClient
+from ..api.error_handler import SkippableAPIError
 from ..api.match_scorer import calculate_match_confidence
-from ..ui.prompts import prompt_for_search_match
-from ..media.media_downloader import MediaDownloader
-from ..media.media_types import to_singular
-from ..gamelist.generator import GamelistGenerator
+from ..config.es_systems import SystemDefinition
+from ..gamelist.backup import GamelistBackup
 from ..gamelist.game_entry import GameEntry
-from ..gamelist.parser import GamelistParser
+from ..gamelist.generator import GamelistGenerator
 from ..gamelist.integrity_validator import IntegrityValidator
 from ..gamelist.metadata_merger import MetadataMerger
-from ..gamelist.backup import GamelistBackup
-from ..workflow.work_queue import WorkQueueManager, Priority
-from ..workflow.evaluator import WorkflowEvaluator, WorkflowDecision
+from ..gamelist.parser import GamelistParser
+from ..media.media_downloader import MediaDownloader
+from ..scanner.hash_calculator import calculate_hash
+from ..scanner.rom_scanner import scan_system
+from ..scanner.rom_types import ROMInfo
+from ..ui.prompts import prompt_for_search_match
+from ..workflow.evaluator import WorkflowEvaluator
+from ..workflow.work_queue import Priority, WorkQueueManager
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +151,9 @@ class WorkflowOrchestrator:
         self.textual_ui = textual_ui
 
         # Search response handling for interactive search
-        self.search_response_queues: Dict[str, asyncio.Queue] = (
-            {}
-        )  # request_id -> response queue
+        self.search_response_queues: Dict[
+            str, asyncio.Queue
+        ] = {}  # request_id -> response queue
         self.search_response_lock = asyncio.Lock()
 
         # Initialize workflow evaluator with cache for media hash lookups
@@ -282,9 +280,9 @@ class WorkflowOrchestrator:
         # Log warning if cache is disabled
         if not enable_cache:
             logger.warning(
-                f"Metadata cache is DISABLED by configuration (runtime.enable_cache=false). "
-                f"All API queries will be performed even for unchanged ROMs. "
-                f"Existing cache will be ignored but not deleted."
+                "Metadata cache is DISABLED by configuration (runtime.enable_cache=false). "
+                "All API queries will be performed even for unchanged ROMs. "
+                "Existing cache will be ignored but not deleted."
             )
 
         cache = MetadataCache(
@@ -302,8 +300,8 @@ class WorkflowOrchestrator:
             else:
                 # Cache disabled - clear would be meaningless
                 logger.warning(
-                    f"--clear-cache specified but cache is disabled (runtime.enable_cache=false). "
-                    f"No cache will be cleared or created."
+                    "--clear-cache specified but cache is disabled (runtime.enable_cache=false). "
+                    "No cache will be cleared or created."
                 )
         else:
             # Cleanup expired entries on startup (only if cache enabled)
@@ -369,7 +367,7 @@ class WorkflowOrchestrator:
 
         # Emit SystemStartedEvent and LogEntryEvent for UI
         if self.event_bus:
-            from ..ui.events import SystemStartedEvent, LogEntryEvent
+            from ..ui.events import LogEntryEvent, SystemStartedEvent
 
             await self.event_bus.publish(
                 SystemStartedEvent(
@@ -535,9 +533,9 @@ class WorkflowOrchestrator:
         # Emit SystemCompletedEvent and GamelistUpdateEvent for UI
         if self.event_bus:
             from ..ui.events import (
-                SystemCompletedEvent,
-                LogEntryEvent,
                 GamelistUpdateEvent,
+                LogEntryEvent,
+                SystemCompletedEvent,
             )
 
             system_duration = time.time() - system_start_time
@@ -616,7 +614,6 @@ class WorkflowOrchestrator:
         Returns:
             ScrapingResult
         """
-        rom_path = rom_info.path
         rom_name = rom_info.filename
         task_name = f"task-{id(asyncio.current_task())}"
 
@@ -1076,8 +1073,8 @@ class WorkflowOrchestrator:
                     # Convert singular ES-DE types to ScreenScraper media types for checking disk
                     # E.g., 'cover' -> 'covers' -> 'box-2D'
                     from ..media.media_types import (
-                        to_plural,
                         convert_directory_names_to_media_types,
+                        to_plural,
                     )
 
                     # Check which media already exists on disk
@@ -1355,14 +1352,15 @@ class WorkflowOrchestrator:
                                 pass
 
                             # Download all media concurrently
-                            download_results, _ = (
-                                await media_downloader.download_media_for_game(
-                                    media_list=filtered_media_list,
-                                    rom_path=str(rom_info.path),
-                                    system=system.name,
-                                    progress_callback=media_progress_callback,
-                                    shutdown_event=shutdown_event,
-                                )
+                            (
+                                download_results,
+                                _,
+                            ) = await media_downloader.download_media_for_game(
+                                media_list=filtered_media_list,
+                                rom_path=str(rom_info.path),
+                                system=system.name,
+                                progress_callback=media_progress_callback,
+                                shutdown_event=shutdown_event,
                             )
 
                             # Process results - track successes and failures
@@ -1680,8 +1678,8 @@ class WorkflowOrchestrator:
                     if decision.media_to_download:
                         # Filter media_list for types that need re-download
                         from ..media.media_types import (
-                            to_plural,
                             convert_directory_names_to_media_types,
+                            to_plural,
                         )
 
                         plural_dirs = [to_plural(t) for t in decision.media_to_download]
@@ -1729,14 +1727,15 @@ class WorkflowOrchestrator:
                             ):
                                 pass
 
-                            download_results, _ = (
-                                await media_downloader.download_media_for_game(
-                                    media_list=redownload_media_list,
-                                    rom_path=str(rom_info.path),
-                                    system=system.name,
-                                    progress_callback=media_redownload_callback,
-                                    shutdown_event=shutdown_event,
-                                )
+                            (
+                                download_results,
+                                _,
+                            ) = await media_downloader.download_media_for_game(
+                                media_list=redownload_media_list,
+                                rom_path=str(rom_info.path),
+                                system=system.name,
+                                progress_callback=media_redownload_callback,
+                                shutdown_event=shutdown_event,
                             )
 
                             # Process re-download results
@@ -1984,9 +1983,9 @@ class WorkflowOrchestrator:
         Returns:
             List of ROMInfo objects with hash_value populated
         """
-        from ..scanner.rom_types import ROMType
-        from ..scanner.m3u_parser import get_disc1_file
         from ..scanner.disc_handler import get_contained_file
+        from ..scanner.m3u_parser import get_disc1_file
+        from ..scanner.rom_types import ROMType
 
         total = len(rom_entries)
         hashed_count = 0
@@ -2291,7 +2290,7 @@ class WorkflowOrchestrator:
                                 rom_name=result.rom_path.name,
                                 system=system.name,
                                 status="complete",
-                                detail=f"Successfully processed",
+                                detail="Successfully processed",
                             )
                         )
                     elif result.error:
@@ -2323,7 +2322,7 @@ class WorkflowOrchestrator:
                 count=self.thread_manager.max_concurrent,
             )
 
-            logger.info(f"Pipeline tasks spawned. Waiting for completion...")
+            logger.info("Pipeline tasks spawned. Waiting for completion...")
 
             # Start periodic UI updates in background
             ui_update_task = None
@@ -2412,7 +2411,7 @@ class WorkflowOrchestrator:
                                     rom_name=result.rom_path.name,
                                     system=system.name,
                                     status="complete",
-                                    detail=f"Successfully processed",
+                                    detail="Successfully processed",
                                 )
                             )
                         elif result.error:
@@ -2737,7 +2736,7 @@ class WorkflowOrchestrator:
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(f"# Unmatched ROMs for {system_name}\n")
                 f.write(f"# Total: {len(unmatched)}\n")
-                f.write(f"# These ROMs could not be matched via hash lookup")
+                f.write("# These ROMs could not be matched via hash lookup")
                 if self.enable_search_fallback:
                     f.write(" or search fallback")
                 f.write(".\n#\n")
@@ -2807,8 +2806,6 @@ class WorkflowOrchestrator:
     async def _periodic_ui_update(self, not_found_items: list, total_roms: int) -> None:
         """Background task to periodically update UI during parallel processing"""
         paused_logged = False  # Track whether we've logged pause state
-        quit_prompted = False  # Track whether we've prompted for quit confirmation
-        skip_prompted = False  # Track whether we've prompted for skip confirmation
 
         try:
             while True:
@@ -2855,9 +2852,9 @@ class WorkflowOrchestrator:
 
         # Import event types
         from ..ui.events import (
-            PerformanceUpdateEvent,
             CacheMetricsEvent,
             MediaStatsEvent,
+            PerformanceUpdateEvent,
         )
 
         # Get performance metrics if available
@@ -3049,7 +3046,7 @@ class WorkflowOrchestrator:
             with open(summary_path, "w") as f:
                 f.write(f"Curateur Summary - {system.name}\n")
                 f.write(f"Generated: {timestamp}\n")
-                f.write(f"{'='*60}\n\n")
+                f.write(f"{'=' * 60}\n\n")
 
                 f.write(f"Total ROMs: {len(results)}\n")
                 f.write(f"Successful: {scraped_count}\n")

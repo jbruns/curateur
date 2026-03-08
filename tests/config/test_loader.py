@@ -1,10 +1,12 @@
 import pytest
 
-from curateur.config.loader import load_config, ConfigError
+from curateur.config.loader import ConfigError, load_config
 
 
 @pytest.mark.unit
-def test_load_config_merges_dev_credentials(tmp_path, data_dir, es_systems_file, monkeypatch):
+def test_load_config_merges_dev_credentials(
+    tmp_path, data_dir, es_systems_file, monkeypatch
+):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         f"""

@@ -1,19 +1,16 @@
 """Main ROM scanner implementation."""
 
 import logging
-import os
 from pathlib import Path
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 from curateur.config.es_systems import SystemDefinition
-from curateur.scanner.rom_types import ROMInfo, ROMType
-from curateur.scanner.hash_calculator import calculate_hash
-from curateur.scanner.m3u_parser import parse_m3u, get_disc1_file, M3UError
 from curateur.scanner.disc_handler import (
-    is_disc_subdirectory,
-    validate_disc_subdirectory,
     DiscSubdirError,
+    validate_disc_subdirectory,
 )
+from curateur.scanner.m3u_parser import M3UError, get_disc1_file, parse_m3u
+from curateur.scanner.rom_types import ROMInfo, ROMType
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +52,7 @@ def scan_system(
     try:
         entries = list(rom_path.iterdir())
         logger.info(f"Found {len(entries)} entries in {rom_path}")
-    except PermissionError as e:
+    except PermissionError:
         raise ScannerError(f"Permission denied accessing ROM directory: {rom_path}")
     except Exception as e:
         raise ScannerError(f"Failed to scan ROM directory: {e}")

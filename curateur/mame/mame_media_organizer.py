@@ -5,9 +5,9 @@ Coordinates extraction from zip archives and copying of video files to ES-DE str
 
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Set
-from dataclasses import dataclass
 
 from .media_extractor import MediaExtractor
 

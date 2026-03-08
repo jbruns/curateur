@@ -6,9 +6,7 @@ Manages parallel API calls and downloads within ScreenScraper limits.
 
 import asyncio
 import logging
-from typing import Optional, Callable, AsyncIterator, Tuple, Any, Dict, Awaitable
-
-from .work_queue import WorkQueueManager
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -334,8 +332,9 @@ class ThreadPoolManager:
                 break
 
             # Reconstruct ROMInfo from work item
-            from ..scanner.rom_types import ROMType
             from pathlib import Path
+
+            from ..scanner.rom_types import ROMType
 
             rom_info_dict = work_item.rom_info
 

@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 import curateur.cli as cli
-from curateur.workflow.orchestrator import SystemResult
 from curateur.config.es_systems import SystemDefinition
+from curateur.workflow.orchestrator import SystemResult
 
 
 class DummyConnectionPool:
@@ -27,6 +27,7 @@ class DummyHTTPClient:
 
 class DummyThrottleManager:
     """Dummy throttle manager for testing."""
+
     async def update_quota(self, user_limits):
         pass
 
@@ -41,7 +42,12 @@ class DummyAPIClient:
         self.throttle_manager = DummyThrottleManager()
 
     async def get_user_info(self):
-        return {"maxthreads": 1, "maxrequestspermin": 60, "requeststoday": 0, "maxrequestsperday": 10}
+        return {
+            "maxthreads": 1,
+            "maxrequestspermin": 60,
+            "requeststoday": 0,
+            "maxrequestsperday": 10,
+        }
 
 
 class DummyThreadPool:
@@ -65,7 +71,9 @@ class DummyOrchestrator:
         self.args = args
         self.kwargs = kwargs
 
-    async def scrape_system(self, system, media_types, preferred_regions, progress_tracker=None):
+    async def scrape_system(
+        self, system, media_types, preferred_regions, progress_tracker=None
+    ):
         return SystemResult(
             system_name=system.fullname,
             total_roms=0,
@@ -87,7 +95,11 @@ async def test_run_scraper_happy_path(monkeypatch, tmp_path: Path, capsys):
 
     config = {
         "logging": {"console": False},
-        "scraping": {"systems": [], "preferred_regions": ["us"], "name_verification": "normal"},
+        "scraping": {
+            "systems": [],
+            "preferred_regions": ["us"],
+            "name_verification": "normal",
+        },
         "runtime": {"dry_run": True},
         "paths": {
             "roms": str(roms),
@@ -110,7 +122,9 @@ async def test_run_scraper_happy_path(monkeypatch, tmp_path: Path, capsys):
     )
 
     monkeypatch.setattr(cli, "parse_es_systems", lambda path: [fake_system])
-    monkeypatch.setattr(cli, "ConnectionPoolManager", DummyConnectionPool, raising=False)
+    monkeypatch.setattr(
+        cli, "ConnectionPoolManager", DummyConnectionPool, raising=False
+    )
     monkeypatch.setattr(cli, "ScreenScraperClient", DummyAPIClient, raising=False)
     monkeypatch.setattr(cli, "ThreadPoolManager", DummyThreadPool, raising=False)
     monkeypatch.setattr(cli, "WorkflowOrchestrator", DummyOrchestrator, raising=False)
@@ -129,7 +143,11 @@ async def test_run_scraper_happy_path(monkeypatch, tmp_path: Path, capsys):
 async def test_run_scraper_parse_error(monkeypatch, tmp_path: Path):
     config = {
         "logging": {"console": False},
-        "scraping": {"systems": [], "preferred_regions": ["us"], "name_verification": "normal"},
+        "scraping": {
+            "systems": [],
+            "preferred_regions": ["us"],
+            "name_verification": "normal",
+        },
         "runtime": {"dry_run": True},
         "paths": {
             "roms": str(tmp_path),
@@ -142,7 +160,9 @@ async def test_run_scraper_parse_error(monkeypatch, tmp_path: Path):
         "search": {},
     }
 
-    monkeypatch.setattr(cli, "parse_es_systems", lambda path: (_ for _ in ()).throw(Exception("bad es")))
+    monkeypatch.setattr(
+        cli, "parse_es_systems", lambda path: (_ for _ in ()).throw(Exception("bad es"))
+    )
 
     code = await cli.run_scraper(config, argparse.Namespace(clear_cache=False))
     assert code == 1

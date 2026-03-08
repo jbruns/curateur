@@ -1,12 +1,12 @@
 """Unified error handling for ScreenScraper API interactions."""
 
-from typing import Optional, Dict, Any, Tuple, Callable, Awaitable, Union
-from enum import Enum
 import asyncio
-import time
+import inspect
 import logging
 import sys
-import inspect
+import time
+from enum import Enum
+from typing import Any, Awaitable, Callable, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ Allows manual rate limit configuration while providing safety warnings.
 """
 
 import logging
-from typing import Optional, Dict, Any, NamedTuple
+from typing import Any, Dict, NamedTuple, Optional
 
 logger = logging.getLogger(__name__)
 

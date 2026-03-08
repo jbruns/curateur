@@ -34,12 +34,12 @@ def test_path_handler_media_and_basename(tmp_path):
 
     assert handler.normalize_path("a\\b\\c") == "a/b/c"
     assert handler.get_rom_basename("./Game.nes") == "Game"
-    
+
     # Test disc subdirectory - need to create actual directory
     disc_dir = rom_dir / "Game (Disc 1).cue"
     disc_dir.mkdir(parents=True)
     assert handler.get_rom_basename("./Game (Disc 1).cue") == "Game (Disc 1).cue"
-    
+
     # Test another disc subdirectory without "disc" in name
     armada_dir = rom_dir / "Armada (USA).cue"
     armada_dir.mkdir(parents=True)

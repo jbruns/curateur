@@ -7,23 +7,22 @@
 - Shutdown scenarios
 """
 
-from pathlib import Path
-from unittest.mock import Mock, AsyncMock, patch
+import asyncio
+
 import httpx
 import pytest
 import respx
-import asyncio
 
-from curateur.api.client import ScreenScraperClient, APIEndpoint
 from curateur.api.cache import MetadataCache
-from curateur.api.throttle import ThrottleManager, RateLimit
-from curateur.api.error_handler import SkippableAPIError, FatalAPIError
+from curateur.api.client import ScreenScraperClient
+from curateur.api.error_handler import SkippableAPIError
+from curateur.api.throttle import RateLimit, ThrottleManager
 from curateur.scanner.rom_types import ROMInfo, ROMType
-
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def base_config():
@@ -36,15 +35,8 @@ def base_config():
             "user_id": "testuser",
             "user_password": "testpass",
         },
-        "api": {
-            "request_timeout": 5,
-            "max_retries": 2,
-            "retry_backoff_seconds": 0.1
-        },
-        "scraping": {
-            "name_verification": "normal",
-            "scrape_mode": "changed"
-        },
+        "api": {"request_timeout": 5, "max_retries": 2, "retry_backoff_seconds": 0.1},
+        "scraping": {"name_verification": "normal", "scrape_mode": "changed"},
     }
 
 
@@ -67,13 +59,14 @@ def test_rom_info(tmp_path):
         query_filename="TestGame.nes",
         file_size=32768,
         hash_value="ABCD1234",
-        hash_type="crc32"
+        hash_type="crc32",
     )
 
 
 # ============================================================================
 # Tests for get_user_info - Error Handling
 # ============================================================================
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -84,7 +77,7 @@ async def test_get_user_info_timeout_error(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         with respx.mock:
@@ -107,7 +100,7 @@ async def test_get_user_info_connection_error(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         with respx.mock:
@@ -128,7 +121,7 @@ async def test_get_user_info_invalid_credentials(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         with respx.mock:
@@ -147,7 +140,7 @@ async def test_get_user_info_http_error(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         with respx.mock:
@@ -166,13 +159,12 @@ async def test_get_user_info_invalid_xml(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(
-                200,
-                content=b"<invalid xml"
+                200, content=b"<invalid xml"
             )
 
             with pytest.raises(SystemExit):
@@ -188,15 +180,14 @@ async def test_get_user_info_no_user_data(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         xml = b"<Data><empty></empty></Data>"
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             with pytest.raises(SystemExit):
@@ -212,7 +203,7 @@ async def test_get_user_info_insufficient_level(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         xml = b"""
@@ -227,8 +218,7 @@ async def test_get_user_info_insufficient_level(base_config, throttle):
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             with pytest.raises(SystemExit):
@@ -244,7 +234,7 @@ async def test_get_user_info_success(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         xml = b"""
@@ -262,20 +252,20 @@ async def test_get_user_info_success(base_config, throttle):
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             result = await client.get_user_info()
 
-            assert result['niveau'] == 1
-            assert result['maxthreads'] == 3
+            assert result["niveau"] == 1
+            assert result["maxthreads"] == 3
             assert client._rate_limits_initialized is True
 
 
 # ============================================================================
 # Tests for query_game - Error Scenarios
 # ============================================================================
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -286,7 +276,7 @@ async def test_query_game_shutdown_requested(base_config, throttle, test_rom_inf
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         shutdown_event = asyncio.Event()
@@ -308,7 +298,7 @@ async def test_query_game_unknown_platform(base_config, throttle, tmp_path):
         system="unknown_system",  # Unknown platform
         query_filename="game.bin",
         file_size=1024,
-        hash_value="ABC123"
+        hash_value="ABC123",
     )
 
     async with httpx.AsyncClient() as http_client:
@@ -316,7 +306,7 @@ async def test_query_game_unknown_platform(base_config, throttle, tmp_path):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         with pytest.raises(SkippableAPIError, match="Platform not mapped"):
@@ -325,14 +315,16 @@ async def test_query_game_unknown_platform(base_config, throttle, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_query_game_name_verification_failure(base_config, throttle, test_rom_info):
+async def test_query_game_name_verification_failure(
+    base_config, throttle, test_rom_info
+):
     """Test query_game handles name verification failure."""
     async with httpx.AsyncClient() as http_client:
         client = ScreenScraperClient(
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         # Response with very different name
@@ -351,8 +343,7 @@ async def test_query_game_name_verification_failure(base_config, throttle, test_
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             with pytest.raises(SkippableAPIError, match="Name verification failed"):
@@ -363,6 +354,7 @@ async def test_query_game_name_verification_failure(base_config, throttle, test_
 # Tests for search_game
 # ============================================================================
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_search_game_success(base_config, throttle, tmp_path):
@@ -372,7 +364,7 @@ async def test_search_game_success(base_config, throttle, tmp_path):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         # Create ROMInfo for the search
@@ -384,7 +376,7 @@ async def test_search_game_success(base_config, throttle, tmp_path):
             system="nes",
             query_filename="Alpha Quest",
             file_size=32768,
-            hash_value="ABC123"
+            hash_value="ABC123",
         )
 
         xml = b"""
@@ -408,15 +400,14 @@ async def test_search_game_success(base_config, throttle, tmp_path):
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/jeuRecherche.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             results = await client.search_game(rom_info)
 
             assert len(results) == 2
-            assert results[0]['name'] == "Alpha Quest"
-            assert results[1]['name'] == "Alpha Quest 2"
+            assert results[0]["name"] == "Alpha Quest"
+            assert results[1]["name"] == "Alpha Quest 2"
 
 
 @pytest.mark.unit
@@ -428,7 +419,7 @@ async def test_search_game_no_results(base_config, throttle, tmp_path):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         # Create ROMInfo for the search
@@ -440,7 +431,7 @@ async def test_search_game_no_results(base_config, throttle, tmp_path):
             system="nes",
             query_filename="NonexistentGame",
             file_size=32768,
-            hash_value="ABC123"
+            hash_value="ABC123",
         )
 
         xml = b"""
@@ -454,8 +445,7 @@ async def test_search_game_no_results(base_config, throttle, tmp_path):
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/jeuRecherche.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             results = await client.search_game(rom_info)
@@ -472,7 +462,7 @@ async def test_search_game_unknown_platform(base_config, throttle, tmp_path):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         # Create ROMInfo with unknown platform
@@ -484,7 +474,7 @@ async def test_search_game_unknown_platform(base_config, throttle, tmp_path):
             system="unknown_platform",
             query_filename="Test",
             file_size=32768,
-            hash_value="ABC123"
+            hash_value="ABC123",
         )
 
         with pytest.raises(SkippableAPIError, match="Platform not mapped"):
@@ -495,14 +485,12 @@ async def test_search_game_unknown_platform(base_config, throttle, tmp_path):
 # Tests for get_user_limits
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_get_user_limits_not_initialized(base_config, throttle):
     """Test get_user_limits when not initialized."""
     client = ScreenScraperClient(
-        config=base_config,
-        throttle_manager=throttle,
-        client=None,
-        cache=None
+        config=base_config, throttle_manager=throttle, client=None, cache=None
     )
 
     assert client.get_user_limits() is None
@@ -517,7 +505,7 @@ async def test_get_user_limits_after_get_user_info(base_config, throttle):
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=None
+            cache=None,
         )
 
         xml = b"""
@@ -533,25 +521,27 @@ async def test_get_user_limits_after_get_user_info(base_config, throttle):
 
         with respx.mock:
             respx.get("https://api.screenscraper.fr/api2/ssuserInfos.php").respond(
-                200,
-                content=xml
+                200, content=xml
             )
 
             await client.get_user_info()
 
             limits = client.get_user_limits()
             assert limits is not None
-            assert limits['maxthreads'] == 4
-            assert limits['maxrequestspermin'] == 80
+            assert limits["maxthreads"] == 4
+            assert limits["maxrequestspermin"] == 80
 
 
 # ============================================================================
 # Tests for cache integration scenarios
 # ============================================================================
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_query_game_cache_miss_then_hit(base_config, throttle, test_rom_info, tmp_path):
+async def test_query_game_cache_miss_then_hit(
+    base_config, throttle, test_rom_info, tmp_path
+):
     """Test cache miss followed by cache hit."""
     cache = MetadataCache(gamelist_directory=tmp_path)
 
@@ -560,7 +550,7 @@ async def test_query_game_cache_miss_then_hit(base_config, throttle, test_rom_in
             config=base_config,
             throttle_manager=throttle,
             client=http_client,
-            cache=cache
+            cache=cache,
         )
 
         xml = b"""
@@ -577,14 +567,13 @@ async def test_query_game_cache_miss_then_hit(base_config, throttle, test_rom_in
         """
 
         with respx.mock:
-            mock_route = respx.get("https://api.screenscraper.fr/api2/jeuInfos.php").respond(
-                200,
-                content=xml
-            )
+            mock_route = respx.get(
+                "https://api.screenscraper.fr/api2/jeuInfos.php"
+            ).respond(200, content=xml)
 
             # First call - cache miss
             result1 = await client.query_game(test_rom_info)
-            assert result1['name'] == "TestGame"
+            assert result1["name"] == "TestGame"
             assert mock_route.called
 
             # Reset mock
@@ -592,7 +581,7 @@ async def test_query_game_cache_miss_then_hit(base_config, throttle, test_rom_in
 
             # Second call - cache hit
             result2 = await client.query_game(test_rom_info)
-            assert result2['name'] == "TestGame"
+            assert result2["name"] == "TestGame"
             assert not mock_route.called  # Should not call API again
 
 
@@ -600,27 +589,21 @@ async def test_query_game_cache_miss_then_hit(base_config, throttle, test_rom_in
 # Tests for _build_redacted_url edge cases
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_build_redacted_url_handles_empty_params(base_config, throttle):
     """Test _build_redacted_url with minimal params."""
     client = ScreenScraperClient(
-        config=base_config,
-        throttle_manager=throttle,
-        client=None,
-        cache=None
+        config=base_config, throttle_manager=throttle, client=None, cache=None
     )
 
     url = "https://api.test.com/endpoint"
-    params = {
-        'devpassword': 'secret',
-        'sspassword': 'pass',
-        'other': 'value'
-    }
+    params = {"devpassword": "secret", "sspassword": "pass", "other": "value"}
 
     redacted = client._build_redacted_url(url, params)
 
-    assert 'secret' not in redacted
-    assert 'sspassword=pass' not in redacted  # Check the value isn't exposed
-    assert 'devpassword=secret' not in redacted
-    assert 'redacted' in redacted
-    assert 'other=value' in redacted
+    assert "secret" not in redacted
+    assert "sspassword=pass" not in redacted  # Check the value isn't exposed
+    assert "devpassword=secret" not in redacted
+    assert "redacted" in redacted
+    assert "other=value" in redacted

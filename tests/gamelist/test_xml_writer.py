@@ -1,16 +1,19 @@
-from pathlib import Path
-
 import pytest
 from lxml import etree
 
-from curateur.gamelist.xml_writer import GamelistWriter
 from curateur.gamelist.game_entry import GameEntry, GamelistMetadata
+from curateur.gamelist.xml_writer import GamelistWriter
 
 
 @pytest.mark.unit
 def test_xml_writer_writes_provider_and_entries(tmp_path):
     entries = [
-        GameEntry(path="./Alpha.zip", name="Alpha", favorite=True, extra_fields={"sortname": "Alpha, The"}),
+        GameEntry(
+            path="./Alpha.zip",
+            name="Alpha",
+            favorite=True,
+            extra_fields={"sortname": "Alpha, The"},
+        ),
         GameEntry(path="./Beta.zip", name="Beta", rating=0.9),
     ]
     writer = GamelistWriter(GamelistMetadata(system="nes"))

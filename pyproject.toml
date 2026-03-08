@@ -60,9 +60,43 @@ dev = [
     "pytest-asyncio>=1.2.0,<2.0.0",
     "pytest-mock>=3.15.1,<4.0.0",
     "respx>=0.22.0,<0.23",  # HTTP mocking for httpx
-    "black>=25.12.0,<26.0.0",
+    "ruff>=0.11.0,<1.0.0",
 ]
 
 [tool.setuptools]
 packages = ["curateur", "curateur.api", "curateur.config", "curateur.scanner", 
             "curateur.media", "curateur.gamelist", "curateur.tools"]
+
+[tool.pytest.ini_options]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+markers = [
+    "unit: marks unit tests for single functions/classes",
+    "integration: marks integration tests that test multiple components together",
+    "e2e: marks end-to-end tests that exercise the full CLI/workflow",
+    "live: marks tests that make real API calls to ScreenScraper (deselect with '-m \"not live\"')",
+    "slow: marks tests that take significant time to run",
+]
+addopts = "-v --strict-markers --tb=short"
+testpaths = ["tests"]
+minversion = "3.8"
+
+[tool.coverage.run]
+source = ["curateur"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line length enforced by ruff format
+
+[tool.ruff.format]
+quote-style = "double"

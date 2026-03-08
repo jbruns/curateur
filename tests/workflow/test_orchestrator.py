@@ -1,10 +1,9 @@
-import asyncio
 from pathlib import Path
 
 import pytest
 
-from curateur.workflow.orchestrator import WorkflowOrchestrator
 from curateur.config.es_systems import SystemDefinition
+from curateur.workflow.orchestrator import WorkflowOrchestrator
 
 
 class DummyAPIClient:
@@ -23,16 +22,10 @@ class DummyWorkQueue:
         self.reset_called = True
 
     def get_stats(self):
-        return {"total": 0}
+        return {"processed": 0, "failed": 0, "pending": 0, "max_retries": 3}
 
     def get_failed_items(self):
         return []
-
-    def reset_for_new_system(self):
-        self.reset_called = True
-
-    def get_stats(self):
-        return {"processed": 0, "failed": 0, "pending": 0, "max_retries": 3}
 
 
 @pytest.mark.unit
@@ -59,16 +52,27 @@ async def test_scrape_system_no_roms(monkeypatch, tmp_path):
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=work_queue,
-        config={"runtime": {"enable_cache": False}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": False},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=True,
         clear_cache=True,
     )
 
-    monkeypatch.setattr("curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: []
+    )
+
     async def fake_scrape(*args, **kwargs):
         return [], []
+
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape)
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
 
     result = await orchestrator.scrape_system(system)
 
@@ -103,7 +107,12 @@ async def test_scrape_system_parse_failure_and_skip(monkeypatch, tmp_path):
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=work_queue,
-        config={"runtime": {"enable_cache": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=False,
         clear_cache=True,
     )
@@ -114,17 +123,34 @@ async def test_scrape_system_parse_failure_and_skip(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "curateur.workflow.orchestrator.scan_system",
         lambda *args, **kwargs: [
-            type("R", (), {"path": rom_file, "filename": "Alpha.nes", "basename": "Alpha", "rom_type": None, "system": "nes"})
+            type(
+                "R",
+                (),
+                {
+                    "path": rom_file,
+                    "filename": "Alpha.nes",
+                    "basename": "Alpha",
+                    "rom_type": None,
+                    "system": "nes",
+                },
+            )
         ],
     )
     # Parser raises, so existing_entries becomes []
-    monkeypatch.setattr("curateur.workflow.orchestrator.GamelistParser.parse_gamelist", lambda self, path: (_ for _ in ()).throw(Exception("bad xml")))
+    monkeypatch.setattr(
+        "curateur.workflow.orchestrator.GamelistParser.parse_gamelist",
+        lambda self, path: (_ for _ in ()).throw(Exception("bad xml")),
+    )
 
-    async def fake_scrape(system, roms, media_types, preferred_regions, existing_entries):
+    async def fake_scrape(
+        system, roms, media_types, preferred_regions, existing_entries
+    ):
         return [], []
 
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape)
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
 
     result = await orchestrator.scrape_system(system)
     assert result.total_roms == 1
@@ -154,7 +180,12 @@ async def test_scrape_system_integrity_failure_prompts_skip(monkeypatch, tmp_pat
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=work_queue,
-        config={"runtime": {"enable_cache": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=False,
         clear_cache=False,
     )
@@ -165,7 +196,17 @@ async def test_scrape_system_integrity_failure_prompts_skip(monkeypatch, tmp_pat
     monkeypatch.setattr(
         "curateur.workflow.orchestrator.scan_system",
         lambda *args, **kwargs: [
-            type("R", (), {"path": rom_file, "filename": "Alpha.nes", "basename": "Alpha", "rom_type": None, "system": "nes"})
+            type(
+                "R",
+                (),
+                {
+                    "path": rom_file,
+                    "filename": "Alpha.nes",
+                    "basename": "Alpha",
+                    "rom_type": None,
+                    "system": "nes",
+                },
+            )
         ],
     )
     # Existing gamelist with bad integrity; prompt returns False to skip
@@ -176,16 +217,29 @@ async def test_scrape_system_integrity_failure_prompts_skip(monkeypatch, tmp_pat
     monkeypatch.setattr(
         orchestrator.integrity_validator,
         "validate",
-        lambda entries, roms: type("V", (), {"is_valid": False, "match_ratio": 0.1, "missing_roms": [], "orphaned_entries": []}),
+        lambda entries, roms: type(
+            "V",
+            (),
+            {
+                "is_valid": False,
+                "match_ratio": 0.1,
+                "missing_roms": [],
+                "orphaned_entries": [],
+            },
+        ),
     )
     monkeypatch.setattr(
         orchestrator,
         "_prompt_gamelist_validation_failure",
         lambda system_name, validation_result: False,
     )
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
+
     async def fake_scrape(*args, **kwargs):
         return [], []
+
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape)
 
     result = await orchestrator.scrape_system(system)
@@ -194,7 +248,9 @@ async def test_scrape_system_integrity_failure_prompts_skip(monkeypatch, tmp_pat
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_scrape_system_cache_disabled_clear_cache_warning(monkeypatch, tmp_path, caplog):
+async def test_scrape_system_cache_disabled_clear_cache_warning(
+    monkeypatch, tmp_path, caplog
+):
     rom_dir = tmp_path / "roms"
     media_dir = tmp_path / "media"
     gamelist_dir = tmp_path / "gamelists"
@@ -215,21 +271,34 @@ async def test_scrape_system_cache_disabled_clear_cache_warning(monkeypatch, tmp
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=DummyWorkQueue(),
-        config={"runtime": {"enable_cache": False}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": False},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=True,
         clear_cache=True,
     )
 
     async def fake_scrape_none(*args, **kwargs):
         return [], []
-    monkeypatch.setattr("curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: [])
+
+    monkeypatch.setattr(
+        "curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: []
+    )
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape_none)
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
 
     with caplog.at_level("WARNING"):
         result = await orchestrator.scrape_system(system)
 
-    assert any("cache is DISABLED" in rec.message or "cache" in rec.message for rec in caplog.records)
+    assert any(
+        "cache is DISABLED" in rec.message or "cache" in rec.message
+        for rec in caplog.records
+    )
     assert result.total_roms == 0
 
 
@@ -256,7 +325,12 @@ async def test_scrape_system_writes_unmatched_and_not_found(monkeypatch, tmp_pat
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=DummyWorkQueue(),
-        config={"runtime": {"enable_cache": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=False,
         clear_cache=False,
     )
@@ -269,9 +343,20 @@ async def test_scrape_system_writes_unmatched_and_not_found(monkeypatch, tmp_pat
     monkeypatch.setattr(
         "curateur.workflow.orchestrator.scan_system",
         lambda *args, **kwargs: [
-            type("R", (), {"path": rom_file, "filename": "Game.nes", "basename": "Game", "rom_type": None, "system": "nes"})
+            type(
+                "R",
+                (),
+                {
+                    "path": rom_file,
+                    "filename": "Game.nes",
+                    "basename": "Game",
+                    "rom_type": None,
+                    "system": "nes",
+                },
+            )
         ],
     )
+
     # Return a not-found list of dicts to trigger summary write
     class SimpleRom:
         def __init__(self, filename):
@@ -283,15 +368,20 @@ async def test_scrape_system_writes_unmatched_and_not_found(monkeypatch, tmp_pat
 
     async def fake_scrape_not_found(*args, **kwargs):
         return [], [{"rom_info": SimpleRom("Game.nes"), "error": "404"}]
+
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape_not_found)
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
 
     result = await orchestrator.scrape_system(system)
     assert len(result.not_found_items) == 1
     nf = result.not_found_items[0]
     assert nf["error"] == "404"
     assert nf["rom_info"].filename == "Game.nes"
-    unmatched_file = orchestrator.paths["gamelists"] / system.name / "unmatched_roms.txt"
+    unmatched_file = (
+        orchestrator.paths["gamelists"] / system.name / "unmatched_roms.txt"
+    )
     not_found_file = orchestrator.paths["gamelists"] / system.name / "nes_not_found.txt"
     assert unmatched_file.exists()
     assert not_found_file.exists()
@@ -320,18 +410,35 @@ async def test_scrape_system_dry_run_skips_generate(monkeypatch, tmp_path):
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=DummyWorkQueue(),
-        config={"runtime": {"enable_cache": True, "dry_run": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True, "dry_run": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=True,
         clear_cache=False,
     )
 
-    monkeypatch.setattr("curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "curateur.workflow.orchestrator.scan_system", lambda *args, **kwargs: []
+    )
+
     async def fake_scrape(*args, **kwargs):
         return [], []
+
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape)
     # ensure _generate_gamelist would raise if called
-    monkeypatch.setattr(orchestrator, "_generate_gamelist", lambda *args, **kwargs: (_ for _ in ()).throw(Exception("should not be called")))
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator,
+        "_generate_gamelist",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            Exception("should not be called")
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
 
     result = await orchestrator.scrape_system(system)
     assert result.scraped == 0
@@ -360,7 +467,12 @@ async def test_write_unmatched_and_not_found_errors(monkeypatch, tmp_path, caplo
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=DummyWorkQueue(),
-        config={"runtime": {"enable_cache": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=False,
         clear_cache=False,
     )
@@ -372,17 +484,39 @@ async def test_write_unmatched_and_not_found_errors(monkeypatch, tmp_path, caplo
     monkeypatch.setattr(
         "curateur.workflow.orchestrator.scan_system",
         lambda *args, **kwargs: [
-            type("R", (), {"path": rom_file, "filename": "Game.nes", "basename": "Game", "rom_type": None, "system": "nes"})
+            type(
+                "R",
+                (),
+                {
+                    "path": rom_file,
+                    "filename": "Game.nes",
+                    "basename": "Game",
+                    "rom_type": None,
+                    "system": "nes",
+                },
+            )
         ],
     )
+
     async def fake_scrape(*args, **kwargs):
         # malformed not_found_items to trigger error in writer
         return [], [{"rom_info": None, "error": None}]
+
     monkeypatch.setattr(orchestrator, "_scrape_roms_parallel", fake_scrape)
-    monkeypatch.setattr(orchestrator, "_write_summary_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        orchestrator, "_write_summary_log", lambda *args, **kwargs: None
+    )
     # Force writing functions to raise
-    monkeypatch.setattr(orchestrator, "_write_unmatched_roms", lambda *args, **kwargs: (_ for _ in ()).throw(Exception("fail unmatched")))
-    monkeypatch.setattr(orchestrator, "_write_not_found_summary", lambda *args, **kwargs: (_ for _ in ()).throw(Exception("fail notfound")))
+    monkeypatch.setattr(
+        orchestrator,
+        "_write_unmatched_roms",
+        lambda *args, **kwargs: (_ for _ in ()).throw(Exception("fail unmatched")),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_write_not_found_summary",
+        lambda *args, **kwargs: (_ for _ in ()).throw(Exception("fail notfound")),
+    )
 
     with caplog.at_level("WARNING"):
         result = await orchestrator.scrape_system(system)
@@ -401,7 +535,13 @@ async def test_search_fallback_auto_select(monkeypatch, tmp_path):
     rom_info = type(
         "R",
         (),
-        {"filename": "Alpha.nes", "path": rom_dir / "Alpha.nes", "file_size": 1, "hash_value": None, "system": "nes"},
+        {
+            "filename": "Alpha.nes",
+            "path": rom_dir / "Alpha.nes",
+            "file_size": 1,
+            "hash_value": None,
+            "system": "nes",
+        },
     )
 
     orchestrator = WorkflowOrchestrator(
@@ -410,7 +550,12 @@ async def test_search_fallback_auto_select(monkeypatch, tmp_path):
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
         work_queue=DummyWorkQueue(),
-        config={"runtime": {"enable_cache": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
         dry_run=False,
         clear_cache=False,
         enable_search_fallback=True,
@@ -434,7 +579,12 @@ def test_generate_gamelist_returns_none_when_no_scraped_games(tmp_path):
         media_directory=tmp_path,
         gamelist_directory=tmp_path,
         work_queue=DummyWorkQueue(),
-        config={"runtime": {"enable_cache": True}, "scraping": {}, "paths": {}, "media": {}},
+        config={
+            "runtime": {"enable_cache": True},
+            "scraping": {},
+            "paths": {},
+            "media": {},
+        },
     )
     system = SystemDefinition(
         name="nes",

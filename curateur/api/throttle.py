@@ -158,8 +158,7 @@ class ThrottleManager:
                 if now < backoff_until:
                     wait_time = backoff_until - now
                     logger.warning(
-                        f"Rate limit backoff for {endpoint}: "
-                        f"waiting {wait_time:.1f}s"
+                        f"Rate limit backoff for {endpoint}: waiting {wait_time:.1f}s"
                     )
 
                     # Notify UI: Throttling active
@@ -200,8 +199,7 @@ class ThrottleManager:
 
                 if wait_time > 0:
                     logger.debug(
-                        f"Rate limit throttle for {endpoint}: "
-                        f"waiting {wait_time:.1f}s"
+                        f"Rate limit throttle for {endpoint}: waiting {wait_time:.1f}s"
                     )
 
                     # Notify UI: Throttling active

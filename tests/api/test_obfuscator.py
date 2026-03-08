@@ -1,7 +1,7 @@
 import pytest
 
-from curateur.api.obfuscator import obfuscate, deobfuscate
 from curateur.api import credentials
+from curateur.api.obfuscator import deobfuscate, obfuscate
 
 
 @pytest.mark.unit

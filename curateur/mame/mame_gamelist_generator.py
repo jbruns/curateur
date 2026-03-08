@@ -5,27 +5,25 @@ Orchestrates parsing, filtering, ROM copying, media organization, and gamelist g
 
 import logging
 import time
-from pathlib import Path
-from typing import Dict, List, Optional
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Optional
 
 from ..gamelist.game_entry import GameEntry, GamelistMetadata
-from ..gamelist.generator import GamelistGenerator
-from ..gamelist.xml_writer import GamelistWriter
-from ..gamelist.parser import GamelistParser
 from ..gamelist.integrity_validator import IntegrityValidator
-
-from .mame_xml_parser import MAMEXMLParser
+from ..gamelist.parser import GamelistParser
+from ..gamelist.xml_writer import GamelistWriter
 from .history_parser import HistoryParser
 from .ini_parser import (
     BestGamesParser,
+    GameOrNoGameParser,
     GenreParser,
     MultiplayerParser,
-    GameOrNoGameParser,
 )
+from .mame_media_organizer import MAMEMediaOrganizer
 from .mame_metadata_builder import MAMEMetadataBuilder, MAMEMetadataBuilderConfig
 from .mame_rom_copier import MAMEROMCopier
-from .mame_media_organizer import MAMEMediaOrganizer
+from .mame_xml_parser import MAMEXMLParser
 
 logger = logging.getLogger(__name__)
 

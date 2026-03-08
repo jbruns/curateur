@@ -1,9 +1,9 @@
 import pytest
 
 from curateur.config.es_systems import (
-    parse_es_systems,
-    get_systems_by_name,
     ESSystemsError,
+    get_systems_by_name,
+    parse_es_systems,
 )
 
 

@@ -8,13 +8,13 @@ configuration and ROM state (hash comparison, gamelist presence, etc.).
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
-from curateur.gamelist.game_entry import GameEntry
-from curateur.scanner.rom_types import ROMInfo, ROMType
-from curateur.media.media_types import to_singular
-from curateur.tools.organize_roms import split_base_and_disc
 from curateur.config.es_systems import SystemDefinition
+from curateur.gamelist.game_entry import GameEntry
+from curateur.media.media_types import to_singular
+from curateur.scanner.rom_types import ROMInfo, ROMType
+from curateur.tools.organize_roms import split_base_and_disc
 
 logger = logging.getLogger(__name__)
 

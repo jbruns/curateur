@@ -6,8 +6,8 @@ orchestrator to the Textual UI.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Literal
 from datetime import datetime
+from typing import Literal, Optional
 
 
 @dataclass(frozen=True)

@@ -9,8 +9,8 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from curateur.ui.events import LogEntryEvent
 from curateur.ui.event_bus import EventBus
+from curateur.ui.events import LogEntryEvent
 
 
 class EventLogHandler(logging.Handler):
@@ -62,7 +62,7 @@ class EventLogHandler(logging.Handler):
             self.event_bus.publish_sync(event)
             self._event_count += 1
 
-        except Exception as e:
+        except Exception:
             # Don't let logging errors crash the application
             # Use handleError to report the issue through logging's error handling
             self.handleError(record)

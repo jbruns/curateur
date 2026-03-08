@@ -5,8 +5,8 @@ Provides simple console output for tracking scraping progress.
 """
 
 import time
-from typing import List, Optional
 from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 @dataclass
@@ -64,10 +64,10 @@ class ProgressTracker:
             name=system_name, total_roms=total_roms, start_time=time.time()
         )
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Scraping {system_name}")
         print(f"Total ROMs: {total_roms}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
     def log_rom(self, rom_name: str, status: str, detail: str = "") -> None:
         """
@@ -141,14 +141,14 @@ class ProgressTracker:
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
 
-        print(f"\n{'-'*60}")
+        print(f"\n{'-' * 60}")
         print(f"System Complete: {self.current_system.name}")
         print(f"  Total:     {self.current_system.total_roms}")
         print(f"  Succeeded: {self.current_system.succeeded}")
         print(f"  Failed:    {self.current_system.failed}")
         print(f"  Skipped:   {self.current_system.skipped}")
         print(f"  Time:      {minutes}m {seconds}s")
-        print(f"{'-'*60}\n")
+        print(f"{'-' * 60}\n")
 
         self.systems.append(self.current_system)
         self.current_system = None
@@ -168,16 +168,16 @@ class ProgressTracker:
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("Final Summary")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Systems processed: {len(self.systems)}")
         print(f"Total ROMs:        {total_roms}")
         print(f"  Succeeded:       {total_succeeded}")
         print(f"  Failed:          {total_failed}")
         print(f"  Skipped:         {total_skipped}")
         print(f"Total time:        {minutes}m {seconds}s")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         # Show per-system breakdown
         if len(self.systems) > 1:

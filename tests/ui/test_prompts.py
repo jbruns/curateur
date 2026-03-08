@@ -30,7 +30,9 @@ def test_choose_validates_choices_and_default():
 def test_input_text_uses_default_and_validator():
     with patch.object(builtins, "input", side_effect=["", "bad", "good"]):
         ps = prompts.PromptSystem()
-        val = ps.input_text("Enter", default="default", validator=lambda x: x.startswith("g"))
+        val = ps.input_text(
+            "Enter", default="default", validator=lambda x: x.startswith("g")
+        )
         assert val == "good"
 
 

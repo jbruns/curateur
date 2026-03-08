@@ -5,11 +5,10 @@ Validates gamelist.xml entries against actual ROM files on disk and provides
 cleanup functionality for orphaned entries.
 """
 
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
-from dataclasses import dataclass
-import logging
-import shutil
 
 from .game_entry import GameEntry
 

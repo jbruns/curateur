@@ -1,6 +1,3 @@
-from pathlib import Path
-
-import json
 import pytest
 
 from curateur.api.cache import MetadataCache

@@ -5,22 +5,23 @@ Tests that sortname is correctly written to gamelist.xml files.
 """
 
 import pytest
-from pathlib import Path
+
 from curateur.gamelist.generator import GamelistGenerator
 
 
 def _parse_gamelist(gamelist_path):
     """Helper to parse gamelist.xml and return dict of games"""
     from lxml import etree
+
     tree = etree.parse(str(gamelist_path))
     root = tree.getroot()
 
     games = {}
-    for game in root.findall('game'):
-        path = game.find('path').text
+    for game in root.findall("game"):
+        path = game.find("path").text
         games[path] = {}
         for child in game:
-            if child.tag != 'path':
+            if child.tag != "path":
                 games[path][child.tag] = child.text
 
     return games
@@ -42,7 +43,7 @@ def test_sortname_written_to_xml_when_enabled(tmp_path):
         rom_directory=rom_dir,
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
-        auto_sortname_enabled=True
+        auto_sortname_enabled=True,
     )
 
     scraped_games = [
@@ -97,7 +98,7 @@ def test_sortname_not_written_when_disabled(tmp_path):
         rom_directory=rom_dir,
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
-        auto_sortname_enabled=False
+        auto_sortname_enabled=False,
     )
 
     scraped_games = [
@@ -138,7 +139,7 @@ def test_sortname_with_various_articles(tmp_path):
         rom_directory=rom_dir,
         media_directory=media_dir,
         gamelist_directory=gamelist_dir,
-        auto_sortname_enabled=True
+        auto_sortname_enabled=True,
     )
 
     scraped_games = [
